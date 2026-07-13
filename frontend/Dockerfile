@@ -8,6 +8,18 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm ci --legacy-peer-deps
 
+# Development image - run next dev with hot reload
+FROM base AS dev
+RUN apk add --no-cache libc6-compat
+WORKDIR /app
+COPY package.json package-lock.json* ./
+RUN npm ci --legacy-peer-deps
+COPY . .
+ENV NEXT_TELEMETRY_DISABLED 1
+EXPOSE 3000
+ENV PORT 3000
+CMD ["npm", "run", "dev", "--", "--hostname", "0.0.0.0"]
+
 # Rebuild the source code only when needed
 FROM base AS builder
 WORKDIR /app

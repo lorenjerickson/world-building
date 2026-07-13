@@ -5,8 +5,8 @@ export async function POST(request: Request) {
     const body = await request.json();
     const { prompt } = body;
 
-    // Call the FastAPI backend
-    const backendUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+    // Call the NestJS backend (use BACKEND_URL for server-side calls within Docker)
+    const backendUrl = process.env.BACKEND_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
     const response = await fetch(`${backendUrl}/api/generate`, {
       method: 'POST',
       headers: {

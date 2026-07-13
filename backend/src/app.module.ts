@@ -4,6 +4,8 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { GraphModule } from './graph/graph.module';
 import { GenerateModule } from './generate/generate.module';
+import { UploadsController } from './uploads.controller';
+import { CharacterArtController } from './character-art.controller';
 
 @Module({
   imports: [
@@ -16,7 +18,7 @@ import { GenerateModule } from './generate/generate.module';
     GraphModule,
     GenerateModule,
   ],
-  controllers: [AppController],
+  controllers: [AppController, UploadsController, CharacterArtController],
   providers: [AppService],
 })
 export class AppModule {}

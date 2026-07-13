@@ -4,6 +4,8 @@ import { Repository } from 'typeorm';
 import { World } from './entities/world.entity';
 import { GraphService } from '../graph/graph.service';
 import OpenAI from 'openai';
+import { GenerateElementDto } from './dto/generate-element.dto';
+
 
 @Injectable()
 export class GenerateService {
@@ -176,4 +178,162 @@ Ensure the JSON is valid. Only return the raw JSON object, no markdown styling. 
       }
     };
   }
+
+  async updateWorld(id: string, metadata: any, description?: string, triples?: any[]): Promise<any> {
+    this.logger.log(`Updating world metadata for world: ${id}`);
+    const world = await this.worldsRepository.findOne({ where: { id } });
+    if (!world) {
+      throw new Error(`World not found with ID ${id}`);
+    }
+
+    world.metadata = metadata;
+    if (description) {
+      world.generatedContent = description;
+    }
+
+    const savedWorld = await this.worldsRepository.save(world);
+
+    if (triples && Array.isArray(triples)) {
+      const triplesToInsert = triples.map(t => ({
+        subject: String(t.subject).trim(),
+        predicate: String(t.predicate).trim(),
+        object: String(t.object).trim()
+      }));
+      try {
+        await this.graphService.put(triplesToInsert);
+        this.logger.log(`Saved ${triplesToInsert.length} triples to LevelGraph for world update`);
+      } catch (graphError) {
+        this.logger.error('Failed to write triples to LevelGraph database', graphError);
+      }
+    }
+
+    return {
+      status: 'success',
+      world: savedWorld
+    };
+  }
+
+  async generateElement(worldId: string, elementType: string, dto: GenerateElementDto): Promise<any> {
+    this.logger.log(`Generating element of type ${elementType} for world ${worldId} with prompt: "${dto.prompt}"`);
+    const world = await this.worldsRepository.findOne({ where: { id: worldId } });
+    if (!world) {
+      throw new Error(`World not found with ID ${worldId}`);
+    }
+
+    const worldName = world.metadata?.name || 'Unnamed World';
+    const worldDesc = world.generatedContent || '';
+
+    let parentLocationName = '';
+    let parentLocationDesc = '';
+    if (dto.parentId && world.metadata?.locations) {
+      const parentLoc = world.metadata.locations.find((l: any) => l.id === dto.parentId);
+      if (parentLoc) {
+        parentLocationName = parentLoc.name;
+        parentLocationDesc = parentLoc.description;
+      }
+    }
+
+    let elementData: any;
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (apiKey && apiKey.trim().length > 0) {
+      try {
+        this.logger.log('Using OpenAI API for RPG Element generation...');
+        const openai = new OpenAI({ apiKey });
+
+        let contextPrompt = `The overarching world is called "${worldName}". Its setting/description is: "${worldDesc}".`;
+        if (dto.parentId && parentLocationName) {
+          contextPrompt += ` This new ${elementType} is located/nested directly within the parent location "${parentLocationName}" (which is described as: "${parentLocationDesc}"). Ensure its lore fits the parent context.`;
+        }
+
+        const systemPrompt = `You are an RPG World Builder. Generate a new ${elementType} for the RPG campaign world.
+${contextPrompt}
+
+You must output a JSON response in the following schema:
+{
+  "name": "Name of the generated ${elementType}",
+  "description": "A description of the generated ${elementType}",
+  "relations": [
+    {"subject": "Name of the generated ${elementType}", "predicate": "relationType", "object": "Related Entity"}
+  ]
 }
+
+Ensure the relations list connects this new element to the world or parent location, and other characters, places, or factions where appropriate.
+Ensure the JSON is valid. Only return the raw JSON object, no markdown styling. Do not wrap in backticks.`;
+
+        const completion = await openai.chat.completions.create({
+          model: 'gpt-4o-mini',
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: dto.prompt }
+          ],
+          response_format: { type: 'json_object' }
+        });
+
+        const textResponse = completion.choices[0]?.message?.content;
+        const cleaned = this.cleanJsonString(textResponse);
+        elementData = JSON.parse(cleaned);
+      } catch (error) {
+        this.logger.error('OpenAI generation for element failed, falling back to mock generator', error);
+        elementData = this.generateFallbackElement(worldName, elementType, dto.prompt, parentLocationName);
+      }
+    } else {
+      this.logger.log('OPENAI_API_KEY is not set. Using local procedural mock generator for element...');
+      elementData = this.generateFallbackElement(worldName, elementType, dto.prompt, parentLocationName);
+    }
+
+    return {
+      status: 'success',
+      element: {
+        name: elementData.name,
+        description: elementData.description,
+        relations: elementData.relations || []
+      }
+    };
+  }
+
+  private generateFallbackElement(worldName: string, elementType: string, prompt: string, parentLocationName?: string): any {
+    const capitalizedPrompt = prompt.charAt(0).toUpperCase() + prompt.slice(1);
+    
+    let name = '';
+    let description = '';
+    let relations: any[] = [];
+    
+    if (elementType === 'location') {
+      name = capitalizedPrompt.includes('Keep') || capitalizedPrompt.includes('City') || capitalizedPrompt.includes('Sanctuary') 
+        ? capitalizedPrompt 
+        : `The ${capitalizedPrompt} Keep`;
+      description = `A location in ${worldName}. It is known as ${name} and is described as: "${prompt}".`;
+      relations = [
+        { subject: name, predicate: 'locatedIn', object: parentLocationName || worldName }
+      ];
+    } else if (elementType === 'character') {
+      name = `Agent ${capitalizedPrompt}`;
+      description = `A notable NPC in ${worldName} who is: "${prompt}".`;
+      relations = [
+        { subject: name, predicate: 'livesIn', object: parentLocationName || worldName },
+        { subject: worldName, predicate: 'hasCharacter', object: name }
+      ];
+    } else if (elementType === 'organization') {
+      name = `The ${capitalizedPrompt} Faction`;
+      description = `An influential group operating in ${worldName}, established around: "${prompt}".`;
+      relations = [
+        { subject: name, predicate: 'operatesIn', object: parentLocationName || worldName }
+      ];
+    } else if (elementType === 'event') {
+      name = `The ${capitalizedPrompt} Conflict`;
+      description = `A historic event that shaped ${worldName}: "${prompt}".`;
+      relations = [
+        { subject: name, predicate: 'occurredIn', object: parentLocationName || worldName }
+      ];
+    } else { // item
+      name = `The ${capitalizedPrompt} Artifact`;
+      description = `A relic of power in ${worldName}: "${prompt}".`;
+      relations = [
+        { subject: name, predicate: 'locatedIn', object: parentLocationName || worldName }
+      ];
+    }
+    
+    return { name, description, relations };
+  }
+}
+

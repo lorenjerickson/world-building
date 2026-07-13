@@ -1,9 +1,16 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
+import { NestExpressApplication } from '@nestjs/platform-express';
+import * as express from 'express';
+import { join } from 'path';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  app.use('/uploads', express.static(join(process.cwd(), 'data', 'uploads'), {
+    immutable: true,
+    maxAge: '1y',
+  }));
   
   // Enable CORS since the frontend calls this API from port 3000
   app.enableCors();
