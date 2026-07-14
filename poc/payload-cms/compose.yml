@@ -1,0 +1,42 @@
+services:
+  cms-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: worldcms_poc
+      POSTGRES_USER: worldcms
+      POSTGRES_PASSWORD: worldcms-poc-only
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U worldcms -d worldcms_poc"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - cms_db_data:/var/lib/postgresql/data
+    networks:
+      - cms_private
+
+  cms:
+    build:
+      context: .
+    environment:
+      CMS_DATABASE_URL: postgresql://worldcms:worldcms-poc-only@cms-db:5432/worldcms_poc
+      PAYLOAD_SECRET: payload-poc-secret-not-for-production-use
+      CMS_INTERNAL_TOKEN: payload-poc-internal-token
+      NEXT_PUBLIC_SERVER_URL: http://cms:3000
+    expose:
+      - "3000"
+    depends_on:
+      cms-db:
+        condition: service_healthy
+    volumes:
+      - cms_uploads:/app/uploads
+    networks:
+      - cms_private
+
+volumes:
+  cms_db_data:
+  cms_uploads:
+
+networks:
+  cms_private:
+    internal: true
