@@ -19,6 +19,7 @@ import {
   numeric,
   jsonb,
   boolean,
+  type AnyPgColumn,
   pgEnum,
 } from "@payloadcms/db-postgres/drizzle/pg-core";
 import { sql, relations } from "@payloadcms/db-postgres/drizzle";
@@ -37,6 +38,125 @@ export const enum_worlds_status = pgEnum("enum_worlds_status", [
 ]);
 export const enum__worlds_v_version_status = pgEnum(
   "enum__worlds_v_version_status",
+  ["draft", "published"],
+);
+export const enum_rule_sets_lifecycle = pgEnum("enum_rule_sets_lifecycle", [
+  "active",
+  "deprecated",
+  "retired",
+]);
+export const enum_rule_sets_status = pgEnum("enum_rule_sets_status", [
+  "draft",
+  "published",
+]);
+export const enum__rule_sets_v_version_lifecycle = pgEnum(
+  "enum__rule_sets_v_version_lifecycle",
+  ["active", "deprecated", "retired"],
+);
+export const enum__rule_sets_v_version_status = pgEnum(
+  "enum__rule_sets_v_version_status",
+  ["draft", "published"],
+);
+export const enum_rule_modules_status = pgEnum("enum_rule_modules_status", [
+  "draft",
+  "published",
+]);
+export const enum__rule_modules_v_version_status = pgEnum(
+  "enum__rule_modules_v_version_status",
+  ["draft", "published"],
+);
+export const enum_rule_definitions_definition_type = pgEnum(
+  "enum_rule_definitions_definition_type",
+  [
+    "entity-type",
+    "trait",
+    "field",
+    "catalog",
+    "template",
+    "operation",
+    "effect",
+    "event",
+    "constraint",
+    "presentation",
+    "fixture",
+  ],
+);
+export const enum_rule_definitions_visibility = pgEnum(
+  "enum_rule_definitions_visibility",
+  ["exported", "private"],
+);
+export const enum_rule_definitions_status = pgEnum(
+  "enum_rule_definitions_status",
+  ["draft", "published"],
+);
+export const enum__rule_definitions_v_version_definition_type = pgEnum(
+  "enum__rule_definitions_v_version_definition_type",
+  [
+    "entity-type",
+    "trait",
+    "field",
+    "catalog",
+    "template",
+    "operation",
+    "effect",
+    "event",
+    "constraint",
+    "presentation",
+    "fixture",
+  ],
+);
+export const enum__rule_definitions_v_version_visibility = pgEnum(
+  "enum__rule_definitions_v_version_visibility",
+  ["exported", "private"],
+);
+export const enum__rule_definitions_v_version_status = pgEnum(
+  "enum__rule_definitions_v_version_status",
+  ["draft", "published"],
+);
+export const enum_rule_generation_policies_status = pgEnum(
+  "enum_rule_generation_policies_status",
+  ["draft", "published"],
+);
+export const enum__rule_generation_policies_v_version_status = pgEnum(
+  "enum__rule_generation_policies_v_version_status",
+  ["draft", "published"],
+);
+export const enum_rule_releases_lifecycle = pgEnum(
+  "enum_rule_releases_lifecycle",
+  ["published", "deprecated", "retired"],
+);
+export const enum_rule_migrations_reversibility = pgEnum(
+  "enum_rule_migrations_reversibility",
+  ["reversible", "checkpoint-only", "irreversible"],
+);
+export const enum_rule_migrations_status = pgEnum(
+  "enum_rule_migrations_status",
+  ["draft", "published"],
+);
+export const enum__rule_migrations_v_version_reversibility = pgEnum(
+  "enum__rule_migrations_v_version_reversibility",
+  ["reversible", "checkpoint-only", "irreversible"],
+);
+export const enum__rule_migrations_v_version_status = pgEnum(
+  "enum__rule_migrations_v_version_status",
+  ["draft", "published"],
+);
+export const enum_rule_documents_kind = pgEnum("enum_rule_documents_kind", [
+  "guide",
+  "example",
+  "reference",
+  "changelog",
+]);
+export const enum_rule_documents_status = pgEnum("enum_rule_documents_status", [
+  "draft",
+  "published",
+]);
+export const enum__rule_documents_v_version_kind = pgEnum(
+  "enum__rule_documents_v_version_kind",
+  ["guide", "example", "reference", "changelog"],
+);
+export const enum__rule_documents_v_version_status = pgEnum(
+  "enum__rule_documents_v_version_status",
   ["draft", "published"],
 );
 
@@ -492,6 +612,1056 @@ export const characters = pgTable(
   ],
 );
 
+export const rule_sets_tags = pgTable(
+  "rule_sets_tags",
+  {
+    _order: integer("_order").notNull(),
+    _parentID: integer("_parent_id").notNull(),
+    id: varchar("id").primaryKey(),
+    value: varchar("value"),
+  },
+  (columns) => [
+    index("rule_sets_tags_order_idx").on(columns._order),
+    index("rule_sets_tags_parent_id_idx").on(columns._parentID),
+    foreignKey({
+      columns: [columns["_parentID"]],
+      foreignColumns: [rule_sets.id],
+      name: "rule_sets_tags_parent_id_fk",
+    }).onDelete("cascade"),
+  ],
+);
+
+export const rule_sets = pgTable(
+  "rule_sets",
+  {
+    id: serial("id").primaryKey(),
+    workspace: integer("workspace_id").references(() => workspaces.id, {
+      onDelete: "set null",
+    }),
+    externalId: varchar("external_id"),
+    name: varchar("name"),
+    slug: varchar("slug"),
+    summary: varchar("summary"),
+    description: jsonb("description"),
+    lifecycle: enum_rule_sets_lifecycle("lifecycle").default("active"),
+    engineFeatureLevel: varchar("engine_feature_level"),
+    dashboard_icon: integer("dashboard_icon_id").references(() => media.id, {
+      onDelete: "set null",
+    }),
+    dashboard_accentColor: varchar("dashboard_accent_color"),
+    dashboard_featured: boolean("dashboard_featured").default(false),
+    updatedAt: timestamp("updated_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    })
+      .defaultNow()
+      .notNull(),
+    createdAt: timestamp("created_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    })
+      .defaultNow()
+      .notNull(),
+    _status: enum_rule_sets_status("_status").default("draft"),
+  },
+  (columns) => [
+    index("rule_sets_workspace_idx").on(columns.workspace),
+    uniqueIndex("rule_sets_external_id_idx").on(columns.externalId),
+    index("rule_sets_name_idx").on(columns.name),
+    index("rule_sets_slug_idx").on(columns.slug),
+    index("rule_sets_lifecycle_idx").on(columns.lifecycle),
+    index("rule_sets_dashboard_dashboard_icon_idx").on(columns.dashboard_icon),
+    index("rule_sets_updated_at_idx").on(columns.updatedAt),
+    index("rule_sets_created_at_idx").on(columns.createdAt),
+    index("rule_sets__status_idx").on(columns._status),
+  ],
+);
+
+export const _rule_sets_v_version_tags = pgTable(
+  "_rule_sets_v_version_tags",
+  {
+    _order: integer("_order").notNull(),
+    _parentID: integer("_parent_id").notNull(),
+    id: serial("id").primaryKey(),
+    value: varchar("value"),
+    _uuid: varchar("_uuid"),
+  },
+  (columns) => [
+    index("_rule_sets_v_version_tags_order_idx").on(columns._order),
+    index("_rule_sets_v_version_tags_parent_id_idx").on(columns._parentID),
+    foreignKey({
+      columns: [columns["_parentID"]],
+      foreignColumns: [_rule_sets_v.id],
+      name: "_rule_sets_v_version_tags_parent_id_fk",
+    }).onDelete("cascade"),
+  ],
+);
+
+export const _rule_sets_v = pgTable(
+  "_rule_sets_v",
+  {
+    id: serial("id").primaryKey(),
+    parent: integer("parent_id").references(() => rule_sets.id, {
+      onDelete: "set null",
+    }),
+    version_workspace: integer("version_workspace_id").references(
+      () => workspaces.id,
+      {
+        onDelete: "set null",
+      },
+    ),
+    version_externalId: varchar("version_external_id"),
+    version_name: varchar("version_name"),
+    version_slug: varchar("version_slug"),
+    version_summary: varchar("version_summary"),
+    version_description: jsonb("version_description"),
+    version_lifecycle:
+      enum__rule_sets_v_version_lifecycle("version_lifecycle").default(
+        "active",
+      ),
+    version_engineFeatureLevel: varchar("version_engine_feature_level"),
+    version_dashboard_icon: integer("version_dashboard_icon_id").references(
+      () => media.id,
+      {
+        onDelete: "set null",
+      },
+    ),
+    version_dashboard_accentColor: varchar("version_dashboard_accent_color"),
+    version_dashboard_featured: boolean("version_dashboard_featured").default(
+      false,
+    ),
+    version_updatedAt: timestamp("version_updated_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    }),
+    version_createdAt: timestamp("version_created_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    }),
+    version__status:
+      enum__rule_sets_v_version_status("version__status").default("draft"),
+    createdAt: timestamp("created_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    })
+      .defaultNow()
+      .notNull(),
+    latest: boolean("latest"),
+  },
+  (columns) => [
+    index("_rule_sets_v_parent_idx").on(columns.parent),
+    index("_rule_sets_v_version_version_workspace_idx").on(
+      columns.version_workspace,
+    ),
+    index("_rule_sets_v_version_version_external_id_idx").on(
+      columns.version_externalId,
+    ),
+    index("_rule_sets_v_version_version_name_idx").on(columns.version_name),
+    index("_rule_sets_v_version_version_slug_idx").on(columns.version_slug),
+    index("_rule_sets_v_version_version_lifecycle_idx").on(
+      columns.version_lifecycle,
+    ),
+    index("_rule_sets_v_version_dashboard_version_dashboard_icon_idx").on(
+      columns.version_dashboard_icon,
+    ),
+    index("_rule_sets_v_version_version_updated_at_idx").on(
+      columns.version_updatedAt,
+    ),
+    index("_rule_sets_v_version_version_created_at_idx").on(
+      columns.version_createdAt,
+    ),
+    index("_rule_sets_v_version_version__status_idx").on(
+      columns.version__status,
+    ),
+    index("_rule_sets_v_created_at_idx").on(columns.createdAt),
+    index("_rule_sets_v_updated_at_idx").on(columns.updatedAt),
+    index("_rule_sets_v_latest_idx").on(columns.latest),
+  ],
+);
+
+export const rule_modules = pgTable(
+  "rule_modules",
+  {
+    id: serial("id").primaryKey(),
+    workspace: integer("workspace_id").references(() => workspaces.id, {
+      onDelete: "set null",
+    }),
+    ruleSet: integer("rule_set_id").references(() => rule_sets.id, {
+      onDelete: "set null",
+    }),
+    externalId: varchar("external_id"),
+    namespace: varchar("namespace"),
+    name: varchar("name"),
+    description: jsonb("description"),
+    sortOrder: numeric("sort_order", { mode: "number" }).default(0),
+    requiredEngineFeatureLevel: varchar("required_engine_feature_level"),
+    dependencies: jsonb("dependencies").default(sql`'[]'::jsonb`),
+    exports: jsonb("exports").default(sql`'[]'::jsonb`),
+    updatedAt: timestamp("updated_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    })
+      .defaultNow()
+      .notNull(),
+    createdAt: timestamp("created_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    })
+      .defaultNow()
+      .notNull(),
+    _status: enum_rule_modules_status("_status").default("draft"),
+  },
+  (columns) => [
+    index("rule_modules_workspace_idx").on(columns.workspace),
+    index("rule_modules_rule_set_idx").on(columns.ruleSet),
+    uniqueIndex("rule_modules_external_id_idx").on(columns.externalId),
+    index("rule_modules_namespace_idx").on(columns.namespace),
+    index("rule_modules_name_idx").on(columns.name),
+    index("rule_modules_updated_at_idx").on(columns.updatedAt),
+    index("rule_modules_created_at_idx").on(columns.createdAt),
+    index("rule_modules__status_idx").on(columns._status),
+  ],
+);
+
+export const _rule_modules_v = pgTable(
+  "_rule_modules_v",
+  {
+    id: serial("id").primaryKey(),
+    parent: integer("parent_id").references(() => rule_modules.id, {
+      onDelete: "set null",
+    }),
+    version_workspace: integer("version_workspace_id").references(
+      () => workspaces.id,
+      {
+        onDelete: "set null",
+      },
+    ),
+    version_ruleSet: integer("version_rule_set_id").references(
+      () => rule_sets.id,
+      {
+        onDelete: "set null",
+      },
+    ),
+    version_externalId: varchar("version_external_id"),
+    version_namespace: varchar("version_namespace"),
+    version_name: varchar("version_name"),
+    version_description: jsonb("version_description"),
+    version_sortOrder: numeric("version_sort_order", {
+      mode: "number",
+    }).default(0),
+    version_requiredEngineFeatureLevel: varchar(
+      "version_required_engine_feature_level",
+    ),
+    version_dependencies: jsonb("version_dependencies").default(
+      sql`'[]'::jsonb`,
+    ),
+    version_exports: jsonb("version_exports").default(sql`'[]'::jsonb`),
+    version_updatedAt: timestamp("version_updated_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    }),
+    version_createdAt: timestamp("version_created_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    }),
+    version__status:
+      enum__rule_modules_v_version_status("version__status").default("draft"),
+    createdAt: timestamp("created_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    })
+      .defaultNow()
+      .notNull(),
+    latest: boolean("latest"),
+  },
+  (columns) => [
+    index("_rule_modules_v_parent_idx").on(columns.parent),
+    index("_rule_modules_v_version_version_workspace_idx").on(
+      columns.version_workspace,
+    ),
+    index("_rule_modules_v_version_version_rule_set_idx").on(
+      columns.version_ruleSet,
+    ),
+    index("_rule_modules_v_version_version_external_id_idx").on(
+      columns.version_externalId,
+    ),
+    index("_rule_modules_v_version_version_namespace_idx").on(
+      columns.version_namespace,
+    ),
+    index("_rule_modules_v_version_version_name_idx").on(columns.version_name),
+    index("_rule_modules_v_version_version_updated_at_idx").on(
+      columns.version_updatedAt,
+    ),
+    index("_rule_modules_v_version_version_created_at_idx").on(
+      columns.version_createdAt,
+    ),
+    index("_rule_modules_v_version_version__status_idx").on(
+      columns.version__status,
+    ),
+    index("_rule_modules_v_created_at_idx").on(columns.createdAt),
+    index("_rule_modules_v_updated_at_idx").on(columns.updatedAt),
+    index("_rule_modules_v_latest_idx").on(columns.latest),
+  ],
+);
+
+export const rule_definitions_tags = pgTable(
+  "rule_definitions_tags",
+  {
+    _order: integer("_order").notNull(),
+    _parentID: integer("_parent_id").notNull(),
+    id: varchar("id").primaryKey(),
+    value: varchar("value"),
+  },
+  (columns) => [
+    index("rule_definitions_tags_order_idx").on(columns._order),
+    index("rule_definitions_tags_parent_id_idx").on(columns._parentID),
+    foreignKey({
+      columns: [columns["_parentID"]],
+      foreignColumns: [rule_definitions.id],
+      name: "rule_definitions_tags_parent_id_fk",
+    }).onDelete("cascade"),
+  ],
+);
+
+export const rule_definitions = pgTable(
+  "rule_definitions",
+  {
+    id: serial("id").primaryKey(),
+    workspace: integer("workspace_id").references(() => workspaces.id, {
+      onDelete: "set null",
+    }),
+    ruleSet: integer("rule_set_id").references(() => rule_sets.id, {
+      onDelete: "set null",
+    }),
+    module: integer("module_id").references(() => rule_modules.id, {
+      onDelete: "set null",
+    }),
+    externalId: varchar("external_id"),
+    definitionType: enum_rule_definitions_definition_type("definition_type"),
+    name: varchar("name"),
+    description: jsonb("description"),
+    schemaVersion: numeric("schema_version", { mode: "number" }).default(1),
+    visibility:
+      enum_rule_definitions_visibility("visibility").default("exported"),
+    body: jsonb("body"),
+    presentation: jsonb("presentation"),
+    clonedFrom: integer("cloned_from_id").references(
+      (): AnyPgColumn => rule_definitions.id,
+      {
+        onDelete: "set null",
+      },
+    ),
+    provenance: jsonb("provenance"),
+    updatedAt: timestamp("updated_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    })
+      .defaultNow()
+      .notNull(),
+    createdAt: timestamp("created_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    })
+      .defaultNow()
+      .notNull(),
+    _status: enum_rule_definitions_status("_status").default("draft"),
+  },
+  (columns) => [
+    index("rule_definitions_workspace_idx").on(columns.workspace),
+    index("rule_definitions_rule_set_idx").on(columns.ruleSet),
+    index("rule_definitions_module_idx").on(columns.module),
+    uniqueIndex("rule_definitions_external_id_idx").on(columns.externalId),
+    index("rule_definitions_definition_type_idx").on(columns.definitionType),
+    index("rule_definitions_name_idx").on(columns.name),
+    index("rule_definitions_cloned_from_idx").on(columns.clonedFrom),
+    index("rule_definitions_updated_at_idx").on(columns.updatedAt),
+    index("rule_definitions_created_at_idx").on(columns.createdAt),
+    index("rule_definitions__status_idx").on(columns._status),
+  ],
+);
+
+export const _rule_definitions_v_version_tags = pgTable(
+  "_rule_definitions_v_version_tags",
+  {
+    _order: integer("_order").notNull(),
+    _parentID: integer("_parent_id").notNull(),
+    id: serial("id").primaryKey(),
+    value: varchar("value"),
+    _uuid: varchar("_uuid"),
+  },
+  (columns) => [
+    index("_rule_definitions_v_version_tags_order_idx").on(columns._order),
+    index("_rule_definitions_v_version_tags_parent_id_idx").on(
+      columns._parentID,
+    ),
+    foreignKey({
+      columns: [columns["_parentID"]],
+      foreignColumns: [_rule_definitions_v.id],
+      name: "_rule_definitions_v_version_tags_parent_id_fk",
+    }).onDelete("cascade"),
+  ],
+);
+
+export const _rule_definitions_v = pgTable(
+  "_rule_definitions_v",
+  {
+    id: serial("id").primaryKey(),
+    parent: integer("parent_id").references(() => rule_definitions.id, {
+      onDelete: "set null",
+    }),
+    version_workspace: integer("version_workspace_id").references(
+      () => workspaces.id,
+      {
+        onDelete: "set null",
+      },
+    ),
+    version_ruleSet: integer("version_rule_set_id").references(
+      () => rule_sets.id,
+      {
+        onDelete: "set null",
+      },
+    ),
+    version_module: integer("version_module_id").references(
+      () => rule_modules.id,
+      {
+        onDelete: "set null",
+      },
+    ),
+    version_externalId: varchar("version_external_id"),
+    version_definitionType: enum__rule_definitions_v_version_definition_type(
+      "version_definition_type",
+    ),
+    version_name: varchar("version_name"),
+    version_description: jsonb("version_description"),
+    version_schemaVersion: numeric("version_schema_version", {
+      mode: "number",
+    }).default(1),
+    version_visibility:
+      enum__rule_definitions_v_version_visibility("version_visibility").default(
+        "exported",
+      ),
+    version_body: jsonb("version_body"),
+    version_presentation: jsonb("version_presentation"),
+    version_clonedFrom: integer("version_cloned_from_id").references(
+      () => rule_definitions.id,
+      {
+        onDelete: "set null",
+      },
+    ),
+    version_provenance: jsonb("version_provenance"),
+    version_updatedAt: timestamp("version_updated_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    }),
+    version_createdAt: timestamp("version_created_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    }),
+    version__status:
+      enum__rule_definitions_v_version_status("version__status").default(
+        "draft",
+      ),
+    createdAt: timestamp("created_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    })
+      .defaultNow()
+      .notNull(),
+    latest: boolean("latest"),
+  },
+  (columns) => [
+    index("_rule_definitions_v_parent_idx").on(columns.parent),
+    index("_rule_definitions_v_version_version_workspace_idx").on(
+      columns.version_workspace,
+    ),
+    index("_rule_definitions_v_version_version_rule_set_idx").on(
+      columns.version_ruleSet,
+    ),
+    index("_rule_definitions_v_version_version_module_idx").on(
+      columns.version_module,
+    ),
+    index("_rule_definitions_v_version_version_external_id_idx").on(
+      columns.version_externalId,
+    ),
+    index("_rule_definitions_v_version_version_definition_type_idx").on(
+      columns.version_definitionType,
+    ),
+    index("_rule_definitions_v_version_version_name_idx").on(
+      columns.version_name,
+    ),
+    index("_rule_definitions_v_version_version_cloned_from_idx").on(
+      columns.version_clonedFrom,
+    ),
+    index("_rule_definitions_v_version_version_updated_at_idx").on(
+      columns.version_updatedAt,
+    ),
+    index("_rule_definitions_v_version_version_created_at_idx").on(
+      columns.version_createdAt,
+    ),
+    index("_rule_definitions_v_version_version__status_idx").on(
+      columns.version__status,
+    ),
+    index("_rule_definitions_v_created_at_idx").on(columns.createdAt),
+    index("_rule_definitions_v_updated_at_idx").on(columns.updatedAt),
+    index("_rule_definitions_v_latest_idx").on(columns.latest),
+  ],
+);
+
+export const rule_generation_policies = pgTable(
+  "rule_generation_policies",
+  {
+    id: serial("id").primaryKey(),
+    workspace: integer("workspace_id").references(() => workspaces.id, {
+      onDelete: "set null",
+    }),
+    ruleSet: integer("rule_set_id").references(() => rule_sets.id, {
+      onDelete: "set null",
+    }),
+    module: integer("module_id").references(() => rule_modules.id, {
+      onDelete: "set null",
+    }),
+    externalId: varchar("external_id"),
+    name: varchar("name"),
+    description: jsonb("description"),
+    capabilities: jsonb("capabilities").default(sql`'[]'::jsonb`),
+    artifactKinds: jsonb("artifact_kinds").default(sql`'[]'::jsonb`),
+    prohibitions: jsonb("prohibitions").default(sql`'[]'::jsonb`),
+    policy: jsonb("policy"),
+    schemaVersion: numeric("schema_version", { mode: "number" }).default(1),
+    updatedAt: timestamp("updated_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    })
+      .defaultNow()
+      .notNull(),
+    createdAt: timestamp("created_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    })
+      .defaultNow()
+      .notNull(),
+    _status: enum_rule_generation_policies_status("_status").default("draft"),
+  },
+  (columns) => [
+    index("rule_generation_policies_workspace_idx").on(columns.workspace),
+    index("rule_generation_policies_rule_set_idx").on(columns.ruleSet),
+    index("rule_generation_policies_module_idx").on(columns.module),
+    uniqueIndex("rule_generation_policies_external_id_idx").on(
+      columns.externalId,
+    ),
+    index("rule_generation_policies_name_idx").on(columns.name),
+    index("rule_generation_policies_updated_at_idx").on(columns.updatedAt),
+    index("rule_generation_policies_created_at_idx").on(columns.createdAt),
+    index("rule_generation_policies__status_idx").on(columns._status),
+  ],
+);
+
+export const _rule_generation_policies_v = pgTable(
+  "_rule_generation_policies_v",
+  {
+    id: serial("id").primaryKey(),
+    parent: integer("parent_id").references(() => rule_generation_policies.id, {
+      onDelete: "set null",
+    }),
+    version_workspace: integer("version_workspace_id").references(
+      () => workspaces.id,
+      {
+        onDelete: "set null",
+      },
+    ),
+    version_ruleSet: integer("version_rule_set_id").references(
+      () => rule_sets.id,
+      {
+        onDelete: "set null",
+      },
+    ),
+    version_module: integer("version_module_id").references(
+      () => rule_modules.id,
+      {
+        onDelete: "set null",
+      },
+    ),
+    version_externalId: varchar("version_external_id"),
+    version_name: varchar("version_name"),
+    version_description: jsonb("version_description"),
+    version_capabilities: jsonb("version_capabilities").default(
+      sql`'[]'::jsonb`,
+    ),
+    version_artifactKinds: jsonb("version_artifact_kinds").default(
+      sql`'[]'::jsonb`,
+    ),
+    version_prohibitions: jsonb("version_prohibitions").default(
+      sql`'[]'::jsonb`,
+    ),
+    version_policy: jsonb("version_policy"),
+    version_schemaVersion: numeric("version_schema_version", {
+      mode: "number",
+    }).default(1),
+    version_updatedAt: timestamp("version_updated_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    }),
+    version_createdAt: timestamp("version_created_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    }),
+    version__status:
+      enum__rule_generation_policies_v_version_status(
+        "version__status",
+      ).default("draft"),
+    createdAt: timestamp("created_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    })
+      .defaultNow()
+      .notNull(),
+    latest: boolean("latest"),
+  },
+  (columns) => [
+    index("_rule_generation_policies_v_parent_idx").on(columns.parent),
+    index("_rule_generation_policies_v_version_version_workspace_idx").on(
+      columns.version_workspace,
+    ),
+    index("_rule_generation_policies_v_version_version_rule_set_idx").on(
+      columns.version_ruleSet,
+    ),
+    index("_rule_generation_policies_v_version_version_module_idx").on(
+      columns.version_module,
+    ),
+    index("_rule_generation_policies_v_version_version_external_id_idx").on(
+      columns.version_externalId,
+    ),
+    index("_rule_generation_policies_v_version_version_name_idx").on(
+      columns.version_name,
+    ),
+    index("_rule_generation_policies_v_version_version_updated_at_idx").on(
+      columns.version_updatedAt,
+    ),
+    index("_rule_generation_policies_v_version_version_created_at_idx").on(
+      columns.version_createdAt,
+    ),
+    index("_rule_generation_policies_v_version_version__status_idx").on(
+      columns.version__status,
+    ),
+    index("_rule_generation_policies_v_created_at_idx").on(columns.createdAt),
+    index("_rule_generation_policies_v_updated_at_idx").on(columns.updatedAt),
+    index("_rule_generation_policies_v_latest_idx").on(columns.latest),
+  ],
+);
+
+export const rule_releases = pgTable(
+  "rule_releases",
+  {
+    id: serial("id").primaryKey(),
+    workspace: integer("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, {
+        onDelete: "set null",
+      }),
+    ruleSet: integer("rule_set_id")
+      .notNull()
+      .references(() => rule_sets.id, {
+        onDelete: "set null",
+      }),
+    externalId: varchar("external_id").notNull(),
+    version: varchar("version").notNull(),
+    contentHash: varchar("content_hash").notNull(),
+    engineCompatibility: jsonb("engine_compatibility").notNull(),
+    dependencyLock: jsonb("dependency_lock")
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    manifest: jsonb("manifest").notNull(),
+    sourceSnapshot: jsonb("source_snapshot").notNull(),
+    publishedBy: integer("published_by_id")
+      .notNull()
+      .references(() => users.id, {
+        onDelete: "set null",
+      }),
+    publishedAt: timestamp("published_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    }).notNull(),
+    releaseNotes: jsonb("release_notes"),
+    lifecycle: enum_rule_releases_lifecycle("lifecycle")
+      .notNull()
+      .default("published"),
+    updatedAt: timestamp("updated_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    })
+      .defaultNow()
+      .notNull(),
+    createdAt: timestamp("created_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    })
+      .defaultNow()
+      .notNull(),
+  },
+  (columns) => [
+    index("rule_releases_workspace_idx").on(columns.workspace),
+    index("rule_releases_rule_set_idx").on(columns.ruleSet),
+    uniqueIndex("rule_releases_external_id_idx").on(columns.externalId),
+    index("rule_releases_version_idx").on(columns.version),
+    index("rule_releases_content_hash_idx").on(columns.contentHash),
+    index("rule_releases_published_by_idx").on(columns.publishedBy),
+    index("rule_releases_published_at_idx").on(columns.publishedAt),
+    index("rule_releases_lifecycle_idx").on(columns.lifecycle),
+    index("rule_releases_updated_at_idx").on(columns.updatedAt),
+    index("rule_releases_created_at_idx").on(columns.createdAt),
+  ],
+);
+
+export const rule_migrations = pgTable(
+  "rule_migrations",
+  {
+    id: serial("id").primaryKey(),
+    workspace: integer("workspace_id").references(() => workspaces.id, {
+      onDelete: "set null",
+    }),
+    ruleSet: integer("rule_set_id").references(() => rule_sets.id, {
+      onDelete: "set null",
+    }),
+    externalId: varchar("external_id"),
+    name: varchar("name"),
+    sourceRelease: integer("source_release_id").references(
+      () => rule_releases.id,
+      {
+        onDelete: "set null",
+      },
+    ),
+    targetRelease: integer("target_release_id").references(
+      () => rule_releases.id,
+      {
+        onDelete: "set null",
+      },
+    ),
+    transformations: jsonb("transformations"),
+    rehearsal: jsonb("rehearsal"),
+    reversibility:
+      enum_rule_migrations_reversibility("reversibility").default("reversible"),
+    schemaVersion: numeric("schema_version", { mode: "number" }).default(1),
+    updatedAt: timestamp("updated_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    })
+      .defaultNow()
+      .notNull(),
+    createdAt: timestamp("created_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    })
+      .defaultNow()
+      .notNull(),
+    _status: enum_rule_migrations_status("_status").default("draft"),
+  },
+  (columns) => [
+    index("rule_migrations_workspace_idx").on(columns.workspace),
+    index("rule_migrations_rule_set_idx").on(columns.ruleSet),
+    uniqueIndex("rule_migrations_external_id_idx").on(columns.externalId),
+    index("rule_migrations_source_release_idx").on(columns.sourceRelease),
+    index("rule_migrations_target_release_idx").on(columns.targetRelease),
+    index("rule_migrations_updated_at_idx").on(columns.updatedAt),
+    index("rule_migrations_created_at_idx").on(columns.createdAt),
+    index("rule_migrations__status_idx").on(columns._status),
+  ],
+);
+
+export const _rule_migrations_v = pgTable(
+  "_rule_migrations_v",
+  {
+    id: serial("id").primaryKey(),
+    parent: integer("parent_id").references(() => rule_migrations.id, {
+      onDelete: "set null",
+    }),
+    version_workspace: integer("version_workspace_id").references(
+      () => workspaces.id,
+      {
+        onDelete: "set null",
+      },
+    ),
+    version_ruleSet: integer("version_rule_set_id").references(
+      () => rule_sets.id,
+      {
+        onDelete: "set null",
+      },
+    ),
+    version_externalId: varchar("version_external_id"),
+    version_name: varchar("version_name"),
+    version_sourceRelease: integer("version_source_release_id").references(
+      () => rule_releases.id,
+      {
+        onDelete: "set null",
+      },
+    ),
+    version_targetRelease: integer("version_target_release_id").references(
+      () => rule_releases.id,
+      {
+        onDelete: "set null",
+      },
+    ),
+    version_transformations: jsonb("version_transformations"),
+    version_rehearsal: jsonb("version_rehearsal"),
+    version_reversibility: enum__rule_migrations_v_version_reversibility(
+      "version_reversibility",
+    ).default("reversible"),
+    version_schemaVersion: numeric("version_schema_version", {
+      mode: "number",
+    }).default(1),
+    version_updatedAt: timestamp("version_updated_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    }),
+    version_createdAt: timestamp("version_created_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    }),
+    version__status:
+      enum__rule_migrations_v_version_status("version__status").default(
+        "draft",
+      ),
+    createdAt: timestamp("created_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    })
+      .defaultNow()
+      .notNull(),
+    latest: boolean("latest"),
+  },
+  (columns) => [
+    index("_rule_migrations_v_parent_idx").on(columns.parent),
+    index("_rule_migrations_v_version_version_workspace_idx").on(
+      columns.version_workspace,
+    ),
+    index("_rule_migrations_v_version_version_rule_set_idx").on(
+      columns.version_ruleSet,
+    ),
+    index("_rule_migrations_v_version_version_external_id_idx").on(
+      columns.version_externalId,
+    ),
+    index("_rule_migrations_v_version_version_source_release_idx").on(
+      columns.version_sourceRelease,
+    ),
+    index("_rule_migrations_v_version_version_target_release_idx").on(
+      columns.version_targetRelease,
+    ),
+    index("_rule_migrations_v_version_version_updated_at_idx").on(
+      columns.version_updatedAt,
+    ),
+    index("_rule_migrations_v_version_version_created_at_idx").on(
+      columns.version_createdAt,
+    ),
+    index("_rule_migrations_v_version_version__status_idx").on(
+      columns.version__status,
+    ),
+    index("_rule_migrations_v_created_at_idx").on(columns.createdAt),
+    index("_rule_migrations_v_updated_at_idx").on(columns.updatedAt),
+    index("_rule_migrations_v_latest_idx").on(columns.latest),
+  ],
+);
+
+export const rule_documents = pgTable(
+  "rule_documents",
+  {
+    id: serial("id").primaryKey(),
+    workspace: integer("workspace_id").references(() => workspaces.id, {
+      onDelete: "set null",
+    }),
+    ruleSet: integer("rule_set_id").references(() => rule_sets.id, {
+      onDelete: "set null",
+    }),
+    module: integer("module_id").references(() => rule_modules.id, {
+      onDelete: "set null",
+    }),
+    externalId: varchar("external_id"),
+    title: varchar("title"),
+    kind: enum_rule_documents_kind("kind").default("guide"),
+    body: jsonb("body"),
+    sortOrder: numeric("sort_order", { mode: "number" }).default(0),
+    updatedAt: timestamp("updated_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    })
+      .defaultNow()
+      .notNull(),
+    createdAt: timestamp("created_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    })
+      .defaultNow()
+      .notNull(),
+    _status: enum_rule_documents_status("_status").default("draft"),
+  },
+  (columns) => [
+    index("rule_documents_workspace_idx").on(columns.workspace),
+    index("rule_documents_rule_set_idx").on(columns.ruleSet),
+    index("rule_documents_module_idx").on(columns.module),
+    uniqueIndex("rule_documents_external_id_idx").on(columns.externalId),
+    index("rule_documents_title_idx").on(columns.title),
+    index("rule_documents_updated_at_idx").on(columns.updatedAt),
+    index("rule_documents_created_at_idx").on(columns.createdAt),
+    index("rule_documents__status_idx").on(columns._status),
+  ],
+);
+
+export const _rule_documents_v = pgTable(
+  "_rule_documents_v",
+  {
+    id: serial("id").primaryKey(),
+    parent: integer("parent_id").references(() => rule_documents.id, {
+      onDelete: "set null",
+    }),
+    version_workspace: integer("version_workspace_id").references(
+      () => workspaces.id,
+      {
+        onDelete: "set null",
+      },
+    ),
+    version_ruleSet: integer("version_rule_set_id").references(
+      () => rule_sets.id,
+      {
+        onDelete: "set null",
+      },
+    ),
+    version_module: integer("version_module_id").references(
+      () => rule_modules.id,
+      {
+        onDelete: "set null",
+      },
+    ),
+    version_externalId: varchar("version_external_id"),
+    version_title: varchar("version_title"),
+    version_kind:
+      enum__rule_documents_v_version_kind("version_kind").default("guide"),
+    version_body: jsonb("version_body"),
+    version_sortOrder: numeric("version_sort_order", {
+      mode: "number",
+    }).default(0),
+    version_updatedAt: timestamp("version_updated_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    }),
+    version_createdAt: timestamp("version_created_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    }),
+    version__status:
+      enum__rule_documents_v_version_status("version__status").default("draft"),
+    createdAt: timestamp("created_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    })
+      .defaultNow()
+      .notNull(),
+    latest: boolean("latest"),
+  },
+  (columns) => [
+    index("_rule_documents_v_parent_idx").on(columns.parent),
+    index("_rule_documents_v_version_version_workspace_idx").on(
+      columns.version_workspace,
+    ),
+    index("_rule_documents_v_version_version_rule_set_idx").on(
+      columns.version_ruleSet,
+    ),
+    index("_rule_documents_v_version_version_module_idx").on(
+      columns.version_module,
+    ),
+    index("_rule_documents_v_version_version_external_id_idx").on(
+      columns.version_externalId,
+    ),
+    index("_rule_documents_v_version_version_title_idx").on(
+      columns.version_title,
+    ),
+    index("_rule_documents_v_version_version_updated_at_idx").on(
+      columns.version_updatedAt,
+    ),
+    index("_rule_documents_v_version_version_created_at_idx").on(
+      columns.version_createdAt,
+    ),
+    index("_rule_documents_v_version_version__status_idx").on(
+      columns.version__status,
+    ),
+    index("_rule_documents_v_created_at_idx").on(columns.createdAt),
+    index("_rule_documents_v_updated_at_idx").on(columns.updatedAt),
+    index("_rule_documents_v_latest_idx").on(columns.latest),
+  ],
+);
+
 export const payload_kv = pgTable(
   "payload_kv",
   {
@@ -542,6 +1712,13 @@ export const payload_locked_documents_rels = pgTable(
     worldsID: integer("worlds_id"),
     locationsID: integer("locations_id"),
     charactersID: integer("characters_id"),
+    "rule-setsID": integer("rule_sets_id"),
+    "rule-modulesID": integer("rule_modules_id"),
+    "rule-definitionsID": integer("rule_definitions_id"),
+    "rule-generation-policiesID": integer("rule_generation_policies_id"),
+    "rule-releasesID": integer("rule_releases_id"),
+    "rule-migrationsID": integer("rule_migrations_id"),
+    "rule-documentsID": integer("rule_documents_id"),
   },
   (columns) => [
     index("payload_locked_documents_rels_order_idx").on(columns.order),
@@ -558,6 +1735,27 @@ export const payload_locked_documents_rels = pgTable(
     ),
     index("payload_locked_documents_rels_characters_id_idx").on(
       columns.charactersID,
+    ),
+    index("payload_locked_documents_rels_rule_sets_id_idx").on(
+      columns["rule-setsID"],
+    ),
+    index("payload_locked_documents_rels_rule_modules_id_idx").on(
+      columns["rule-modulesID"],
+    ),
+    index("payload_locked_documents_rels_rule_definitions_id_idx").on(
+      columns["rule-definitionsID"],
+    ),
+    index("payload_locked_documents_rels_rule_generation_policies_i_idx").on(
+      columns["rule-generation-policiesID"],
+    ),
+    index("payload_locked_documents_rels_rule_releases_id_idx").on(
+      columns["rule-releasesID"],
+    ),
+    index("payload_locked_documents_rels_rule_migrations_id_idx").on(
+      columns["rule-migrationsID"],
+    ),
+    index("payload_locked_documents_rels_rule_documents_id_idx").on(
+      columns["rule-documentsID"],
     ),
     foreignKey({
       columns: [columns["parent"]],
@@ -593,6 +1791,41 @@ export const payload_locked_documents_rels = pgTable(
       columns: [columns["charactersID"]],
       foreignColumns: [characters.id],
       name: "payload_locked_documents_rels_characters_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [columns["rule-setsID"]],
+      foreignColumns: [rule_sets.id],
+      name: "payload_locked_documents_rels_rule_sets_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [columns["rule-modulesID"]],
+      foreignColumns: [rule_modules.id],
+      name: "payload_locked_documents_rels_rule_modules_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [columns["rule-definitionsID"]],
+      foreignColumns: [rule_definitions.id],
+      name: "payload_locked_documents_rels_rule_definitions_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [columns["rule-generation-policiesID"]],
+      foreignColumns: [rule_generation_policies.id],
+      name: "payload_locked_documents_rels_rule_generation_policies_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [columns["rule-releasesID"]],
+      foreignColumns: [rule_releases.id],
+      name: "payload_locked_documents_rels_rule_releases_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [columns["rule-migrationsID"]],
+      foreignColumns: [rule_migrations.id],
+      name: "payload_locked_documents_rels_rule_migrations_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [columns["rule-documentsID"]],
+      foreignColumns: [rule_documents.id],
+      name: "payload_locked_documents_rels_rule_documents_fk",
     }).onDelete("cascade"),
   ],
 );
@@ -828,6 +2061,339 @@ export const relations_characters = relations(characters, ({ one }) => ({
     relationName: "portrait",
   }),
 }));
+export const relations_rule_sets_tags = relations(
+  rule_sets_tags,
+  ({ one }) => ({
+    _parentID: one(rule_sets, {
+      fields: [rule_sets_tags._parentID],
+      references: [rule_sets.id],
+      relationName: "tags",
+    }),
+  }),
+);
+export const relations_rule_sets = relations(rule_sets, ({ one, many }) => ({
+  workspace: one(workspaces, {
+    fields: [rule_sets.workspace],
+    references: [workspaces.id],
+    relationName: "workspace",
+  }),
+  dashboard_icon: one(media, {
+    fields: [rule_sets.dashboard_icon],
+    references: [media.id],
+    relationName: "dashboard_icon",
+  }),
+  tags: many(rule_sets_tags, {
+    relationName: "tags",
+  }),
+}));
+export const relations__rule_sets_v_version_tags = relations(
+  _rule_sets_v_version_tags,
+  ({ one }) => ({
+    _parentID: one(_rule_sets_v, {
+      fields: [_rule_sets_v_version_tags._parentID],
+      references: [_rule_sets_v.id],
+      relationName: "version_tags",
+    }),
+  }),
+);
+export const relations__rule_sets_v = relations(
+  _rule_sets_v,
+  ({ one, many }) => ({
+    parent: one(rule_sets, {
+      fields: [_rule_sets_v.parent],
+      references: [rule_sets.id],
+      relationName: "parent",
+    }),
+    version_workspace: one(workspaces, {
+      fields: [_rule_sets_v.version_workspace],
+      references: [workspaces.id],
+      relationName: "version_workspace",
+    }),
+    version_dashboard_icon: one(media, {
+      fields: [_rule_sets_v.version_dashboard_icon],
+      references: [media.id],
+      relationName: "version_dashboard_icon",
+    }),
+    version_tags: many(_rule_sets_v_version_tags, {
+      relationName: "version_tags",
+    }),
+  }),
+);
+export const relations_rule_modules = relations(rule_modules, ({ one }) => ({
+  workspace: one(workspaces, {
+    fields: [rule_modules.workspace],
+    references: [workspaces.id],
+    relationName: "workspace",
+  }),
+  ruleSet: one(rule_sets, {
+    fields: [rule_modules.ruleSet],
+    references: [rule_sets.id],
+    relationName: "ruleSet",
+  }),
+}));
+export const relations__rule_modules_v = relations(
+  _rule_modules_v,
+  ({ one }) => ({
+    parent: one(rule_modules, {
+      fields: [_rule_modules_v.parent],
+      references: [rule_modules.id],
+      relationName: "parent",
+    }),
+    version_workspace: one(workspaces, {
+      fields: [_rule_modules_v.version_workspace],
+      references: [workspaces.id],
+      relationName: "version_workspace",
+    }),
+    version_ruleSet: one(rule_sets, {
+      fields: [_rule_modules_v.version_ruleSet],
+      references: [rule_sets.id],
+      relationName: "version_ruleSet",
+    }),
+  }),
+);
+export const relations_rule_definitions_tags = relations(
+  rule_definitions_tags,
+  ({ one }) => ({
+    _parentID: one(rule_definitions, {
+      fields: [rule_definitions_tags._parentID],
+      references: [rule_definitions.id],
+      relationName: "tags",
+    }),
+  }),
+);
+export const relations_rule_definitions = relations(
+  rule_definitions,
+  ({ one, many }) => ({
+    workspace: one(workspaces, {
+      fields: [rule_definitions.workspace],
+      references: [workspaces.id],
+      relationName: "workspace",
+    }),
+    ruleSet: one(rule_sets, {
+      fields: [rule_definitions.ruleSet],
+      references: [rule_sets.id],
+      relationName: "ruleSet",
+    }),
+    module: one(rule_modules, {
+      fields: [rule_definitions.module],
+      references: [rule_modules.id],
+      relationName: "module",
+    }),
+    clonedFrom: one(rule_definitions, {
+      fields: [rule_definitions.clonedFrom],
+      references: [rule_definitions.id],
+      relationName: "clonedFrom",
+    }),
+    tags: many(rule_definitions_tags, {
+      relationName: "tags",
+    }),
+  }),
+);
+export const relations__rule_definitions_v_version_tags = relations(
+  _rule_definitions_v_version_tags,
+  ({ one }) => ({
+    _parentID: one(_rule_definitions_v, {
+      fields: [_rule_definitions_v_version_tags._parentID],
+      references: [_rule_definitions_v.id],
+      relationName: "version_tags",
+    }),
+  }),
+);
+export const relations__rule_definitions_v = relations(
+  _rule_definitions_v,
+  ({ one, many }) => ({
+    parent: one(rule_definitions, {
+      fields: [_rule_definitions_v.parent],
+      references: [rule_definitions.id],
+      relationName: "parent",
+    }),
+    version_workspace: one(workspaces, {
+      fields: [_rule_definitions_v.version_workspace],
+      references: [workspaces.id],
+      relationName: "version_workspace",
+    }),
+    version_ruleSet: one(rule_sets, {
+      fields: [_rule_definitions_v.version_ruleSet],
+      references: [rule_sets.id],
+      relationName: "version_ruleSet",
+    }),
+    version_module: one(rule_modules, {
+      fields: [_rule_definitions_v.version_module],
+      references: [rule_modules.id],
+      relationName: "version_module",
+    }),
+    version_clonedFrom: one(rule_definitions, {
+      fields: [_rule_definitions_v.version_clonedFrom],
+      references: [rule_definitions.id],
+      relationName: "version_clonedFrom",
+    }),
+    version_tags: many(_rule_definitions_v_version_tags, {
+      relationName: "version_tags",
+    }),
+  }),
+);
+export const relations_rule_generation_policies = relations(
+  rule_generation_policies,
+  ({ one }) => ({
+    workspace: one(workspaces, {
+      fields: [rule_generation_policies.workspace],
+      references: [workspaces.id],
+      relationName: "workspace",
+    }),
+    ruleSet: one(rule_sets, {
+      fields: [rule_generation_policies.ruleSet],
+      references: [rule_sets.id],
+      relationName: "ruleSet",
+    }),
+    module: one(rule_modules, {
+      fields: [rule_generation_policies.module],
+      references: [rule_modules.id],
+      relationName: "module",
+    }),
+  }),
+);
+export const relations__rule_generation_policies_v = relations(
+  _rule_generation_policies_v,
+  ({ one }) => ({
+    parent: one(rule_generation_policies, {
+      fields: [_rule_generation_policies_v.parent],
+      references: [rule_generation_policies.id],
+      relationName: "parent",
+    }),
+    version_workspace: one(workspaces, {
+      fields: [_rule_generation_policies_v.version_workspace],
+      references: [workspaces.id],
+      relationName: "version_workspace",
+    }),
+    version_ruleSet: one(rule_sets, {
+      fields: [_rule_generation_policies_v.version_ruleSet],
+      references: [rule_sets.id],
+      relationName: "version_ruleSet",
+    }),
+    version_module: one(rule_modules, {
+      fields: [_rule_generation_policies_v.version_module],
+      references: [rule_modules.id],
+      relationName: "version_module",
+    }),
+  }),
+);
+export const relations_rule_releases = relations(rule_releases, ({ one }) => ({
+  workspace: one(workspaces, {
+    fields: [rule_releases.workspace],
+    references: [workspaces.id],
+    relationName: "workspace",
+  }),
+  ruleSet: one(rule_sets, {
+    fields: [rule_releases.ruleSet],
+    references: [rule_sets.id],
+    relationName: "ruleSet",
+  }),
+  publishedBy: one(users, {
+    fields: [rule_releases.publishedBy],
+    references: [users.id],
+    relationName: "publishedBy",
+  }),
+}));
+export const relations_rule_migrations = relations(
+  rule_migrations,
+  ({ one }) => ({
+    workspace: one(workspaces, {
+      fields: [rule_migrations.workspace],
+      references: [workspaces.id],
+      relationName: "workspace",
+    }),
+    ruleSet: one(rule_sets, {
+      fields: [rule_migrations.ruleSet],
+      references: [rule_sets.id],
+      relationName: "ruleSet",
+    }),
+    sourceRelease: one(rule_releases, {
+      fields: [rule_migrations.sourceRelease],
+      references: [rule_releases.id],
+      relationName: "sourceRelease",
+    }),
+    targetRelease: one(rule_releases, {
+      fields: [rule_migrations.targetRelease],
+      references: [rule_releases.id],
+      relationName: "targetRelease",
+    }),
+  }),
+);
+export const relations__rule_migrations_v = relations(
+  _rule_migrations_v,
+  ({ one }) => ({
+    parent: one(rule_migrations, {
+      fields: [_rule_migrations_v.parent],
+      references: [rule_migrations.id],
+      relationName: "parent",
+    }),
+    version_workspace: one(workspaces, {
+      fields: [_rule_migrations_v.version_workspace],
+      references: [workspaces.id],
+      relationName: "version_workspace",
+    }),
+    version_ruleSet: one(rule_sets, {
+      fields: [_rule_migrations_v.version_ruleSet],
+      references: [rule_sets.id],
+      relationName: "version_ruleSet",
+    }),
+    version_sourceRelease: one(rule_releases, {
+      fields: [_rule_migrations_v.version_sourceRelease],
+      references: [rule_releases.id],
+      relationName: "version_sourceRelease",
+    }),
+    version_targetRelease: one(rule_releases, {
+      fields: [_rule_migrations_v.version_targetRelease],
+      references: [rule_releases.id],
+      relationName: "version_targetRelease",
+    }),
+  }),
+);
+export const relations_rule_documents = relations(
+  rule_documents,
+  ({ one }) => ({
+    workspace: one(workspaces, {
+      fields: [rule_documents.workspace],
+      references: [workspaces.id],
+      relationName: "workspace",
+    }),
+    ruleSet: one(rule_sets, {
+      fields: [rule_documents.ruleSet],
+      references: [rule_sets.id],
+      relationName: "ruleSet",
+    }),
+    module: one(rule_modules, {
+      fields: [rule_documents.module],
+      references: [rule_modules.id],
+      relationName: "module",
+    }),
+  }),
+);
+export const relations__rule_documents_v = relations(
+  _rule_documents_v,
+  ({ one }) => ({
+    parent: one(rule_documents, {
+      fields: [_rule_documents_v.parent],
+      references: [rule_documents.id],
+      relationName: "parent",
+    }),
+    version_workspace: one(workspaces, {
+      fields: [_rule_documents_v.version_workspace],
+      references: [workspaces.id],
+      relationName: "version_workspace",
+    }),
+    version_ruleSet: one(rule_sets, {
+      fields: [_rule_documents_v.version_ruleSet],
+      references: [rule_sets.id],
+      relationName: "version_ruleSet",
+    }),
+    version_module: one(rule_modules, {
+      fields: [_rule_documents_v.version_module],
+      references: [rule_modules.id],
+      relationName: "version_module",
+    }),
+  }),
+);
 export const relations_payload_kv = relations(payload_kv, () => ({}));
 export const relations_payload_locked_documents_rels = relations(
   payload_locked_documents_rels,
@@ -866,6 +2432,41 @@ export const relations_payload_locked_documents_rels = relations(
       fields: [payload_locked_documents_rels.charactersID],
       references: [characters.id],
       relationName: "characters",
+    }),
+    "rule-setsID": one(rule_sets, {
+      fields: [payload_locked_documents_rels["rule-setsID"]],
+      references: [rule_sets.id],
+      relationName: "rule-sets",
+    }),
+    "rule-modulesID": one(rule_modules, {
+      fields: [payload_locked_documents_rels["rule-modulesID"]],
+      references: [rule_modules.id],
+      relationName: "rule-modules",
+    }),
+    "rule-definitionsID": one(rule_definitions, {
+      fields: [payload_locked_documents_rels["rule-definitionsID"]],
+      references: [rule_definitions.id],
+      relationName: "rule-definitions",
+    }),
+    "rule-generation-policiesID": one(rule_generation_policies, {
+      fields: [payload_locked_documents_rels["rule-generation-policiesID"]],
+      references: [rule_generation_policies.id],
+      relationName: "rule-generation-policies",
+    }),
+    "rule-releasesID": one(rule_releases, {
+      fields: [payload_locked_documents_rels["rule-releasesID"]],
+      references: [rule_releases.id],
+      relationName: "rule-releases",
+    }),
+    "rule-migrationsID": one(rule_migrations, {
+      fields: [payload_locked_documents_rels["rule-migrationsID"]],
+      references: [rule_migrations.id],
+      relationName: "rule-migrations",
+    }),
+    "rule-documentsID": one(rule_documents, {
+      fields: [payload_locked_documents_rels["rule-documentsID"]],
+      references: [rule_documents.id],
+      relationName: "rule-documents",
     }),
   }),
 );
@@ -910,6 +2511,29 @@ type DatabaseSchema = {
   enum_media_purpose: typeof enum_media_purpose;
   enum_worlds_status: typeof enum_worlds_status;
   enum__worlds_v_version_status: typeof enum__worlds_v_version_status;
+  enum_rule_sets_lifecycle: typeof enum_rule_sets_lifecycle;
+  enum_rule_sets_status: typeof enum_rule_sets_status;
+  enum__rule_sets_v_version_lifecycle: typeof enum__rule_sets_v_version_lifecycle;
+  enum__rule_sets_v_version_status: typeof enum__rule_sets_v_version_status;
+  enum_rule_modules_status: typeof enum_rule_modules_status;
+  enum__rule_modules_v_version_status: typeof enum__rule_modules_v_version_status;
+  enum_rule_definitions_definition_type: typeof enum_rule_definitions_definition_type;
+  enum_rule_definitions_visibility: typeof enum_rule_definitions_visibility;
+  enum_rule_definitions_status: typeof enum_rule_definitions_status;
+  enum__rule_definitions_v_version_definition_type: typeof enum__rule_definitions_v_version_definition_type;
+  enum__rule_definitions_v_version_visibility: typeof enum__rule_definitions_v_version_visibility;
+  enum__rule_definitions_v_version_status: typeof enum__rule_definitions_v_version_status;
+  enum_rule_generation_policies_status: typeof enum_rule_generation_policies_status;
+  enum__rule_generation_policies_v_version_status: typeof enum__rule_generation_policies_v_version_status;
+  enum_rule_releases_lifecycle: typeof enum_rule_releases_lifecycle;
+  enum_rule_migrations_reversibility: typeof enum_rule_migrations_reversibility;
+  enum_rule_migrations_status: typeof enum_rule_migrations_status;
+  enum__rule_migrations_v_version_reversibility: typeof enum__rule_migrations_v_version_reversibility;
+  enum__rule_migrations_v_version_status: typeof enum__rule_migrations_v_version_status;
+  enum_rule_documents_kind: typeof enum_rule_documents_kind;
+  enum_rule_documents_status: typeof enum_rule_documents_status;
+  enum__rule_documents_v_version_kind: typeof enum__rule_documents_v_version_kind;
+  enum__rule_documents_v_version_status: typeof enum__rule_documents_v_version_status;
   users_sessions: typeof users_sessions;
   users: typeof users;
   workspaces: typeof workspaces;
@@ -921,6 +2545,23 @@ type DatabaseSchema = {
   _worlds_v_rels: typeof _worlds_v_rels;
   locations: typeof locations;
   characters: typeof characters;
+  rule_sets_tags: typeof rule_sets_tags;
+  rule_sets: typeof rule_sets;
+  _rule_sets_v_version_tags: typeof _rule_sets_v_version_tags;
+  _rule_sets_v: typeof _rule_sets_v;
+  rule_modules: typeof rule_modules;
+  _rule_modules_v: typeof _rule_modules_v;
+  rule_definitions_tags: typeof rule_definitions_tags;
+  rule_definitions: typeof rule_definitions;
+  _rule_definitions_v_version_tags: typeof _rule_definitions_v_version_tags;
+  _rule_definitions_v: typeof _rule_definitions_v;
+  rule_generation_policies: typeof rule_generation_policies;
+  _rule_generation_policies_v: typeof _rule_generation_policies_v;
+  rule_releases: typeof rule_releases;
+  rule_migrations: typeof rule_migrations;
+  _rule_migrations_v: typeof _rule_migrations_v;
+  rule_documents: typeof rule_documents;
+  _rule_documents_v: typeof _rule_documents_v;
   payload_kv: typeof payload_kv;
   payload_locked_documents: typeof payload_locked_documents;
   payload_locked_documents_rels: typeof payload_locked_documents_rels;
@@ -938,6 +2579,23 @@ type DatabaseSchema = {
   relations__worlds_v: typeof relations__worlds_v;
   relations_locations: typeof relations_locations;
   relations_characters: typeof relations_characters;
+  relations_rule_sets_tags: typeof relations_rule_sets_tags;
+  relations_rule_sets: typeof relations_rule_sets;
+  relations__rule_sets_v_version_tags: typeof relations__rule_sets_v_version_tags;
+  relations__rule_sets_v: typeof relations__rule_sets_v;
+  relations_rule_modules: typeof relations_rule_modules;
+  relations__rule_modules_v: typeof relations__rule_modules_v;
+  relations_rule_definitions_tags: typeof relations_rule_definitions_tags;
+  relations_rule_definitions: typeof relations_rule_definitions;
+  relations__rule_definitions_v_version_tags: typeof relations__rule_definitions_v_version_tags;
+  relations__rule_definitions_v: typeof relations__rule_definitions_v;
+  relations_rule_generation_policies: typeof relations_rule_generation_policies;
+  relations__rule_generation_policies_v: typeof relations__rule_generation_policies_v;
+  relations_rule_releases: typeof relations_rule_releases;
+  relations_rule_migrations: typeof relations_rule_migrations;
+  relations__rule_migrations_v: typeof relations__rule_migrations_v;
+  relations_rule_documents: typeof relations_rule_documents;
+  relations__rule_documents_v: typeof relations__rule_documents_v;
   relations_payload_kv: typeof relations_payload_kv;
   relations_payload_locked_documents_rels: typeof relations_payload_locked_documents_rels;
   relations_payload_locked_documents: typeof relations_payload_locked_documents;

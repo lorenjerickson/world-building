@@ -73,6 +73,13 @@ export interface Config {
     worlds: World;
     locations: Location;
     characters: Character;
+    'rule-sets': RuleSet;
+    'rule-modules': RuleModule;
+    'rule-definitions': RuleDefinition;
+    'rule-generation-policies': RuleGenerationPolicy;
+    'rule-releases': RuleRelease;
+    'rule-migrations': RuleMigration;
+    'rule-documents': RuleDocument;
     'payload-kv': PayloadKv;
     'payload-locked-documents': PayloadLockedDocument;
     'payload-preferences': PayloadPreference;
@@ -86,6 +93,13 @@ export interface Config {
     worlds: WorldsSelect<false> | WorldsSelect<true>;
     locations: LocationsSelect<false> | LocationsSelect<true>;
     characters: CharactersSelect<false> | CharactersSelect<true>;
+    'rule-sets': RuleSetsSelect<false> | RuleSetsSelect<true>;
+    'rule-modules': RuleModulesSelect<false> | RuleModulesSelect<true>;
+    'rule-definitions': RuleDefinitionsSelect<false> | RuleDefinitionsSelect<true>;
+    'rule-generation-policies': RuleGenerationPoliciesSelect<false> | RuleGenerationPoliciesSelect<true>;
+    'rule-releases': RuleReleasesSelect<false> | RuleReleasesSelect<true>;
+    'rule-migrations': RuleMigrationsSelect<false> | RuleMigrationsSelect<true>;
+    'rule-documents': RuleDocumentsSelect<false> | RuleDocumentsSelect<true>;
     'payload-kv': PayloadKvSelect<false> | PayloadKvSelect<true>;
     'payload-locked-documents': PayloadLockedDocumentsSelect<false> | PayloadLockedDocumentsSelect<true>;
     'payload-preferences': PayloadPreferencesSelect<false> | PayloadPreferencesSelect<true>;
@@ -289,6 +303,380 @@ export interface Character {
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "rule-sets".
+ */
+export interface RuleSet {
+  id: number;
+  workspace: number | Workspace;
+  externalId: string;
+  name: string;
+  slug: string;
+  summary: string;
+  description?: {
+    root: {
+      type: string;
+      children: {
+        type: any;
+        version: number;
+        [k: string]: unknown;
+      }[];
+      direction: ('ltr' | 'rtl') | null;
+      format: 'left' | 'start' | 'center' | 'right' | 'end' | 'justify' | '';
+      indent: number;
+      version: number;
+    };
+    [k: string]: unknown;
+  } | null;
+  lifecycle: 'active' | 'deprecated' | 'retired';
+  engineFeatureLevel: string;
+  dashboard?: {
+    icon?: (number | null) | Media;
+    accentColor?: string | null;
+    featured?: boolean | null;
+  };
+  tags?:
+    | {
+        value: string;
+        id?: string | null;
+      }[]
+    | null;
+  updatedAt: string;
+  createdAt: string;
+  _status?: ('draft' | 'published') | null;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "rule-modules".
+ */
+export interface RuleModule {
+  id: number;
+  workspace: number | Workspace;
+  ruleSet: number | RuleSet;
+  externalId: string;
+  namespace: string;
+  name: string;
+  description?: {
+    root: {
+      type: string;
+      children: {
+        type: any;
+        version: number;
+        [k: string]: unknown;
+      }[];
+      direction: ('ltr' | 'rtl') | null;
+      format: 'left' | 'start' | 'center' | 'right' | 'end' | 'justify' | '';
+      indent: number;
+      version: number;
+    };
+    [k: string]: unknown;
+  } | null;
+  sortOrder: number;
+  requiredEngineFeatureLevel: string;
+  dependencies:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
+  exports:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
+  updatedAt: string;
+  createdAt: string;
+  _status?: ('draft' | 'published') | null;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "rule-definitions".
+ */
+export interface RuleDefinition {
+  id: number;
+  workspace: number | Workspace;
+  ruleSet: number | RuleSet;
+  module: number | RuleModule;
+  externalId: string;
+  definitionType:
+    | 'entity-type'
+    | 'trait'
+    | 'field'
+    | 'catalog'
+    | 'template'
+    | 'operation'
+    | 'effect'
+    | 'event'
+    | 'constraint'
+    | 'presentation'
+    | 'fixture';
+  name: string;
+  description?: {
+    root: {
+      type: string;
+      children: {
+        type: any;
+        version: number;
+        [k: string]: unknown;
+      }[];
+      direction: ('ltr' | 'rtl') | null;
+      format: 'left' | 'start' | 'center' | 'right' | 'end' | 'justify' | '';
+      indent: number;
+      version: number;
+    };
+    [k: string]: unknown;
+  } | null;
+  schemaVersion: number;
+  visibility: 'exported' | 'private';
+  body:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
+  presentation?:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
+  clonedFrom?: (number | null) | RuleDefinition;
+  provenance?:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
+  tags?:
+    | {
+        value: string;
+        id?: string | null;
+      }[]
+    | null;
+  updatedAt: string;
+  createdAt: string;
+  _status?: ('draft' | 'published') | null;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "rule-generation-policies".
+ */
+export interface RuleGenerationPolicy {
+  id: number;
+  workspace: number | Workspace;
+  ruleSet: number | RuleSet;
+  module?: (number | null) | RuleModule;
+  externalId: string;
+  name: string;
+  description?: {
+    root: {
+      type: string;
+      children: {
+        type: any;
+        version: number;
+        [k: string]: unknown;
+      }[];
+      direction: ('ltr' | 'rtl') | null;
+      format: 'left' | 'start' | 'center' | 'right' | 'end' | 'justify' | '';
+      indent: number;
+      version: number;
+    };
+    [k: string]: unknown;
+  } | null;
+  capabilities:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
+  artifactKinds:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
+  prohibitions:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
+  policy:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
+  schemaVersion: number;
+  updatedAt: string;
+  createdAt: string;
+  _status?: ('draft' | 'published') | null;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "rule-releases".
+ */
+export interface RuleRelease {
+  id: number;
+  workspace: number | Workspace;
+  ruleSet: number | RuleSet;
+  externalId: string;
+  version: string;
+  contentHash: string;
+  engineCompatibility:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
+  dependencyLock:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
+  manifest:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
+  sourceSnapshot:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
+  publishedBy: number | User;
+  publishedAt: string;
+  releaseNotes?: {
+    root: {
+      type: string;
+      children: {
+        type: any;
+        version: number;
+        [k: string]: unknown;
+      }[];
+      direction: ('ltr' | 'rtl') | null;
+      format: 'left' | 'start' | 'center' | 'right' | 'end' | 'justify' | '';
+      indent: number;
+      version: number;
+    };
+    [k: string]: unknown;
+  } | null;
+  lifecycle: 'published' | 'deprecated' | 'retired';
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "rule-migrations".
+ */
+export interface RuleMigration {
+  id: number;
+  workspace: number | Workspace;
+  ruleSet: number | RuleSet;
+  externalId: string;
+  name: string;
+  sourceRelease: number | RuleRelease;
+  targetRelease: number | RuleRelease;
+  transformations:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
+  rehearsal?:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
+  reversibility: 'reversible' | 'checkpoint-only' | 'irreversible';
+  schemaVersion: number;
+  updatedAt: string;
+  createdAt: string;
+  _status?: ('draft' | 'published') | null;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "rule-documents".
+ */
+export interface RuleDocument {
+  id: number;
+  workspace: number | Workspace;
+  ruleSet: number | RuleSet;
+  module?: (number | null) | RuleModule;
+  externalId: string;
+  title: string;
+  kind: 'guide' | 'example' | 'reference' | 'changelog';
+  body: {
+    root: {
+      type: string;
+      children: {
+        type: any;
+        version: number;
+        [k: string]: unknown;
+      }[];
+      direction: ('ltr' | 'rtl') | null;
+      format: 'left' | 'start' | 'center' | 'right' | 'end' | 'justify' | '';
+      indent: number;
+      version: number;
+    };
+    [k: string]: unknown;
+  };
+  sortOrder: number;
+  updatedAt: string;
+  createdAt: string;
+  _status?: ('draft' | 'published') | null;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "payload-kv".
  */
 export interface PayloadKv {
@@ -334,6 +722,34 @@ export interface PayloadLockedDocument {
     | ({
         relationTo: 'characters';
         value: number | Character;
+      } | null)
+    | ({
+        relationTo: 'rule-sets';
+        value: number | RuleSet;
+      } | null)
+    | ({
+        relationTo: 'rule-modules';
+        value: number | RuleModule;
+      } | null)
+    | ({
+        relationTo: 'rule-definitions';
+        value: number | RuleDefinition;
+      } | null)
+    | ({
+        relationTo: 'rule-generation-policies';
+        value: number | RuleGenerationPolicy;
+      } | null)
+    | ({
+        relationTo: 'rule-releases';
+        value: number | RuleRelease;
+      } | null)
+    | ({
+        relationTo: 'rule-migrations';
+        value: number | RuleMigration;
+      } | null)
+    | ({
+        relationTo: 'rule-documents';
+        value: number | RuleDocument;
       } | null);
   globalSlug?: string | null;
   user: {
@@ -490,6 +906,160 @@ export interface CharactersSelect<T extends boolean = true> {
   portrait?: T;
   updatedAt?: T;
   createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "rule-sets_select".
+ */
+export interface RuleSetsSelect<T extends boolean = true> {
+  workspace?: T;
+  externalId?: T;
+  name?: T;
+  slug?: T;
+  summary?: T;
+  description?: T;
+  lifecycle?: T;
+  engineFeatureLevel?: T;
+  dashboard?:
+    | T
+    | {
+        icon?: T;
+        accentColor?: T;
+        featured?: T;
+      };
+  tags?:
+    | T
+    | {
+        value?: T;
+        id?: T;
+      };
+  updatedAt?: T;
+  createdAt?: T;
+  _status?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "rule-modules_select".
+ */
+export interface RuleModulesSelect<T extends boolean = true> {
+  workspace?: T;
+  ruleSet?: T;
+  externalId?: T;
+  namespace?: T;
+  name?: T;
+  description?: T;
+  sortOrder?: T;
+  requiredEngineFeatureLevel?: T;
+  dependencies?: T;
+  exports?: T;
+  updatedAt?: T;
+  createdAt?: T;
+  _status?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "rule-definitions_select".
+ */
+export interface RuleDefinitionsSelect<T extends boolean = true> {
+  workspace?: T;
+  ruleSet?: T;
+  module?: T;
+  externalId?: T;
+  definitionType?: T;
+  name?: T;
+  description?: T;
+  schemaVersion?: T;
+  visibility?: T;
+  body?: T;
+  presentation?: T;
+  clonedFrom?: T;
+  provenance?: T;
+  tags?:
+    | T
+    | {
+        value?: T;
+        id?: T;
+      };
+  updatedAt?: T;
+  createdAt?: T;
+  _status?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "rule-generation-policies_select".
+ */
+export interface RuleGenerationPoliciesSelect<T extends boolean = true> {
+  workspace?: T;
+  ruleSet?: T;
+  module?: T;
+  externalId?: T;
+  name?: T;
+  description?: T;
+  capabilities?: T;
+  artifactKinds?: T;
+  prohibitions?: T;
+  policy?: T;
+  schemaVersion?: T;
+  updatedAt?: T;
+  createdAt?: T;
+  _status?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "rule-releases_select".
+ */
+export interface RuleReleasesSelect<T extends boolean = true> {
+  workspace?: T;
+  ruleSet?: T;
+  externalId?: T;
+  version?: T;
+  contentHash?: T;
+  engineCompatibility?: T;
+  dependencyLock?: T;
+  manifest?: T;
+  sourceSnapshot?: T;
+  publishedBy?: T;
+  publishedAt?: T;
+  releaseNotes?: T;
+  lifecycle?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "rule-migrations_select".
+ */
+export interface RuleMigrationsSelect<T extends boolean = true> {
+  workspace?: T;
+  ruleSet?: T;
+  externalId?: T;
+  name?: T;
+  sourceRelease?: T;
+  targetRelease?: T;
+  transformations?: T;
+  rehearsal?: T;
+  reversibility?: T;
+  schemaVersion?: T;
+  updatedAt?: T;
+  createdAt?: T;
+  _status?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "rule-documents_select".
+ */
+export interface RuleDocumentsSelect<T extends boolean = true> {
+  workspace?: T;
+  ruleSet?: T;
+  module?: T;
+  externalId?: T;
+  title?: T;
+  kind?: T;
+  body?: T;
+  sortOrder?: T;
+  updatedAt?: T;
+  createdAt?: T;
+  _status?: T;
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema

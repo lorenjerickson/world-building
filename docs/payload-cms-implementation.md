@@ -29,8 +29,13 @@ The PostgreSQL adapter contains literal, unconditional `push: false`. Model chan
 1. `20260714_230614_initial_schema`
 2. `20260714_230652_add_world_summary`
 3. `20260714_234515_add_media_storage_prefix`
+4. `20260715_003831_add_rule_set_collections`
 
 The third migration was generated while promoting the PoC to Payload 3.86.0 and adds the S3 adapter's media prefix column. Its `down` migration removes that column.
+
+The fourth migration establishes the authored rule-set foundation: workspace-scoped rule sets, modules, typed definitions, generation policies, immutable release snapshots, draft migrations, and documentation. Draft-capable collections use Payload versions; releases reject changes to canonical identity, manifest, source snapshot, dependency lock, publication identity, and hashes after creation.
+
+Application PostgreSQL now uses checked-in TypeORM migrations with `synchronize: false`. It stores compiled composition manifests and members, named gameplay-profile bindings, instances, effects, executions, ordered events, continuations, compiled artifacts, generated-content rule context, and AI-authoring sessions/proposals. These tables intentionally remain outside Payload because they are mutable runtime or coordination state. The persistence entities are marked non-synchronizing so the reviewed migrations—not TypeORM schema synchronization—remain authoritative.
 
 The CMS verification commands enforce:
 

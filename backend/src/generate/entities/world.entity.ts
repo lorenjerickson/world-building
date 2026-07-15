@@ -1,6 +1,6 @@
 import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn } from 'typeorm';
 
-@Entity('worlds')
+@Entity({ name: 'worlds', synchronize: false })
 export class World {
   @PrimaryGeneratedColumn('uuid')
   id: string;

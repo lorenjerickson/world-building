@@ -9,6 +9,13 @@ import sharp from 'sharp'
 import { Characters } from './collections/Characters'
 import { Locations } from './collections/Locations'
 import { Media } from './collections/Media'
+import { RuleDefinitions } from './collections/RuleDefinitions'
+import { RuleDocuments } from './collections/RuleDocuments'
+import { RuleGenerationPolicies } from './collections/RuleGenerationPolicies'
+import { RuleMigrations } from './collections/RuleMigrations'
+import { RuleModules } from './collections/RuleModules'
+import { RuleReleases } from './collections/RuleReleases'
+import { RuleSets } from './collections/RuleSets'
 import { Users } from './collections/Users'
 import { Workspaces } from './collections/Workspaces'
 import { Worlds } from './collections/Worlds'
@@ -20,7 +27,21 @@ export default buildConfig({
     user: Users.slug,
     importMap: { baseDir: path.resolve(dirname) },
   },
-  collections: [Users, Workspaces, Media, Worlds, Locations, Characters],
+  collections: [
+    Users,
+    Workspaces,
+    Media,
+    Worlds,
+    Locations,
+    Characters,
+    RuleSets,
+    RuleModules,
+    RuleDefinitions,
+    RuleGenerationPolicies,
+    RuleReleases,
+    RuleMigrations,
+    RuleDocuments,
+  ],
   db: postgresAdapter({
     migrationDir: path.resolve(dirname, 'migrations'),
     pool: { connectionString: process.env.CMS_DATABASE_URL || '' },

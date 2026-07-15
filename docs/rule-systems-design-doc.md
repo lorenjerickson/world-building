@@ -93,6 +93,7 @@ Clients may predict low-risk results, but NestJS validates and commits every aut
 | Term | Meaning |
 | --- | --- |
 | Rule set | A long-lived authored unit of rules, including its metadata, drafts, and release history |
+| Rule | Author-facing umbrella term for an addressable definition or coordinated group of definitions that expresses one mechanic |
 | Module | A namespace and dependency boundary within a rule set |
 | Definition | An addressable type, field, operation, effect, event, catalog, or UI description |
 | Draft | Mutable working content not used by active runtime bindings |
@@ -101,6 +102,7 @@ Clients may predict low-risk results, but NestJS validates and commits every aut
 | Gameplay profile | A named composition that a GM may apply to a world or campaign |
 | Binding | Association of a world or campaign with an exact composition hash |
 | Generation context | Immutable provenance describing the composition, generation policies, inputs, and model/tool versions used to create a world artifact |
+| Authoring proposal | A structured, validated draft patch produced by an AI-guided conversation but not applied until an authorized author accepts it |
 | Entity type | Schema for a kind of runtime object; its user-facing name is author-defined |
 | Trait | Reusable group of fields, constraints, operations, and event handlers |
 | Instance | Runtime object conforming to an entity type in a pinned composition |
@@ -139,9 +141,13 @@ This list is a coverage target, not a list of privileged engine types.
 flowchart LR
     UI["Next.js authoring and play UI"] -->|"Application REST and WebSocket"| API["NestJS API"]
     API --> Author["Rule authoring service"]
+    API --> Assistant["AI authoring orchestrator"]
     API --> Runtime["Authoritative rule runtime"]
     API --> Generator["World artifact generation"]
     Author --> Compiler["Validator and compiler"]
+    Assistant --> Author
+    Assistant --> Compiler
+    Assistant -->|"Constrained model adapter"| Model["AI model provider"]
     Compiler --> Composer["Rule-set composer"]
     Runtime --> Compiler
     Runtime --> Composer
@@ -169,6 +175,7 @@ flowchart LR
 - public APIs and DTOs;
 - Auth0 identity and application capability enforcement;
 - validation, compilation, composition, publishing orchestration, and dependency resolution;
+- AI-assisted intent classification, question planning, structured proposal generation, and proposal application;
 - generation-context resolution and enforcement;
 - runtime evaluation and transaction boundaries;
 - idempotency, audit, outbox, and real-time publication; and
@@ -178,6 +185,7 @@ flowchart LR
 
 - world/campaign composition profiles and bindings;
 - generation provenance and artifact applicability assessments;
+- AI authoring session state, proposal status, consent-aware transcript retention, token/cost accounting, and audit metadata;
 - runtime instances and state versions;
 - operation executions, recorded entropy, evaluation traces, and events;
 - idempotency records and migration jobs; and
@@ -475,12 +483,13 @@ An authorized author may fork a release into a new rule set. The fork receives n
 
 ## 15. Persistence design
 
-Exact schemas will be finalized with implementation migrations, but responsibilities should follow this shape.
+The initial persistence milestone is implemented. Payload owns authored and published rule-set content; application PostgreSQL owns immutable compositions and mutable runtime/authoring coordination state. Public rule-set APIs, compiler behavior, and dashboard UI remain later milestones.
 
 ### 15.1 Payload collections
 
 - `rule-sets`: identity, ownership, metadata, permissions, and current lifecycle pointers;
 - `rule-modules`: draft source documents partitioned for authoring;
+- `rule-definitions`: typed, stable-ID definitions with canonical JSON bodies, presentation metadata, clone provenance, and drafts;
 - `rule-releases`: immutable canonical manifests and source snapshots;
 - `rule-generation-policies`: authored generation contributions, schemas, vocabulary, and validation rules;
 - `rule-migrations`: source/target transformations and rehearsal results;
@@ -495,6 +504,8 @@ Payload model changes follow the repository policy: `push: false` remains litera
 - `rule_set_composition_members(composition_id, rule_set_id, release_id, release_hash, namespace_alias, policy_json)`;
 - `rule_set_bindings(binding_id, scope_type, scope_id, gameplay_profile_name, composition_id, composition_hash, state_version, status)`;
 - `artifact_rule_contexts(artifact_id, generation_job_id, composition_hash, policy_hash, applicable_releases, applicability_status, validation_summary)`;
+- `rule_authoring_sessions(session_id, rule_set_id, draft_id, actor_id, base_revision, status, model_metadata, retention_policy, timestamps)`;
+- `rule_authoring_proposals(proposal_id, session_id, base_revision, proposal_hash, patch, assumptions, validation_summary, status, decision_by, timestamps)`;
 - `rule_instances(instance_id, binding_id, type_id, state_json, state_version, created_by, timestamps)`;
 - `rule_effects(effect_instance_id, binding_id, target_id, definition_id, source_ref, state_json, expires_at, state_version)`;
 - `rule_executions(execution_id, binding_id, operation_id, actor_id, idempotency_key, input, result, trace_ref, status, timestamps)`;
@@ -510,6 +521,7 @@ Suggested module boundaries:
 
 - `RuleCatalogModule`: application DTOs and private Payload repository adapter;
 - `RuleAuthoringModule`: drafts, validation, testing, publication, diffs, and migrations;
+- `RuleAuthoringAssistantModule`: conversational sessions, model adapter, question planning, constrained tools, proposals, and usage/audit policy;
 - `RuleCompilerModule`: parsing, typing, normalization, dependency analysis, and artifact caching;
 - `RuleCompositionModule`: aggregate manifests, compatibility, conflict resolution, generation-policy composition, and profile activation;
 - `RuleRuntimeModule`: instance access, evaluation, transactions, traces, and continuations;
@@ -532,6 +544,13 @@ PUT    /api/rule-sets/:ruleSetId/drafts/:draftId/modules/:moduleId
 POST   /api/rule-sets/:ruleSetId/drafts/:draftId/validate
 POST   /api/rule-sets/:ruleSetId/drafts/:draftId/tests
 POST   /api/rule-sets/:ruleSetId/drafts/:draftId/publish
+GET    /api/rule-sets/:ruleSetId/drafts/:draftId/form-descriptors/:definitionType
+POST   /api/rule-sets/:ruleSetId/drafts/:draftId/definitions/:definitionId/clone
+POST   /api/rule-sets/:ruleSetId/drafts/:draftId/assistant-sessions
+POST   /api/rule-sets/:ruleSetId/drafts/:draftId/assistant-sessions/:sessionId/messages
+GET    /api/rule-sets/:ruleSetId/drafts/:draftId/assistant-sessions/:sessionId/proposals/:proposalId
+POST   /api/rule-sets/:ruleSetId/drafts/:draftId/assistant-sessions/:sessionId/proposals/:proposalId/apply
+POST   /api/rule-sets/:ruleSetId/drafts/:draftId/assistant-sessions/:sessionId/proposals/:proposalId/discard
 GET    /api/rule-sets/:ruleSetId/releases/:releaseId
 GET    /api/rule-sets/:ruleSetId/releases/:fromId/diff/:toId
 POST   /api/rule-set-compositions/validate
@@ -588,7 +607,19 @@ Clients retain unacknowledged idempotent commands across reconnect, resume from 
 
 ## 19. Authoring experience
 
-The authoring UI should provide:
+The authoring experience provides three interoperable modes over the same draft model: AI-guided conversation, structured forms, and advanced canonical JSON. A GM may begin in one mode and continue in another without conversion or loss. No mode may create semantics that the others cannot display, validate, and edit.
+
+### 19.1 First-class GM dashboard resource
+
+Rule sets are first-class resources on the GM dashboard alongside worlds and campaigns, not settings nested inside either resource. The dashboard provides a dedicated rule-set area with create, search, filter, sort, favorite, clone, import, and open actions. Each card or row shows the rule-set name, icon, lifecycle, current draft status, latest published release, active world/campaign usage, validation state, collaborator summary, and last update.
+
+The dashboard also surfaces gameplay profiles as compositions of rule sets. From a rule set, the GM can inspect releases, dependent compositions, bound worlds/campaigns, generation capabilities, outstanding migration impacts, and recent authoring activity. From a world or campaign, the GM can see the active gameplay profile and navigate back to every contributing rule set.
+
+Creating or cloning a rule set starts a draft and opens the authoring workspace. Dashboard visibility and actions are capability-filtered by NestJS; the browser does not query Payload directly. A validation or provider outage may disable affected actions but must not make existing rule sets disappear from the dashboard.
+
+### 19.2 Shared authoring workspace
+
+The workspace should provide:
 
 - a module and definition navigator with search and reference usage;
 - entity, trait, field, catalog, operation, effect, and event editors;
@@ -604,13 +635,68 @@ The authoring UI should provide:
 - localization and presentation previews; and
 - publish readiness with errors, warnings, approvals, and version notes.
 
-Advanced authors may edit canonical JSON, but it must pass the same schema, type, security, and reference validation. Unknown fields are rejected on import so typographical errors cannot silently change semantics. Invalid drafts remain saveable and recoverable; they simply cannot be published.
+Every edit uses revision-aware draft commands and produces the same semantic diff, validation diagnostics, undo history, and audit metadata regardless of authoring mode.
+
+### 19.3 AI-guided conversational authoring
+
+An AI assistant helps a GM turn natural-language intent into a complete, typed rule. It is a guided authoring interface, not an independent publisher or rule engine. The assistant operates only through NestJS authoring tools with the current user's capabilities; it cannot call Payload directly, bypass validation, mutate a published release, or execute arbitrary code.
+
+For a request such as “create a trait for creatures that have claws,” the assistant should:
+
+1. inspect the active draft's available definition types, entity types, existing traits, naming conventions, and applicable composition context;
+2. classify the request as one or more candidate rule types—such as a trait—using the rule-set metamodel rather than keyword-only matching;
+3. confirm the classification when confidence is low or when multiple structures would produce materially different semantics;
+4. identify required and consequential missing information;
+5. ask concise, context-sensitive follow-up questions until the proposed rule is complete enough to validate;
+6. produce a structured authoring proposal with assumptions, source definition IDs, proposed draft patch, validation results, example behavior, generated fixtures, and a human-readable diff;
+7. let the GM revise, accept, partially accept, or discard the proposal; and
+8. apply accepted changes atomically against the expected draft revision, then display the result in both conversation and forms.
+
+For the claw example, useful questions may include which entity types can receive the trait, whether claws are descriptive or enable an operation, what values or resources describe them, how an operation selects targets and resolves, whether multiple claw sources stack, what visibility and presentation are required, and whether the trait should influence creature or artifact generation. The question planner derives these questions from missing schema fields, validation constraints, and likely downstream consequences; this list is illustrative rather than hard-coded behavior for claws.
+
+The assistant should minimize unnecessary questions. It may propose clearly labeled defaults for low-risk presentation details, but it must ask before deciding semantics that affect state, resolution, visibility, composition compatibility, generation behavior, or migration. It must distinguish facts stated by the GM from inferred assumptions.
+
+Conversation responses are not canonical rules. Only schema-constrained proposals can modify a draft. Before acceptance, NestJS reparses and validates the proposed patch independently of the model, checks permissions and draft revision, runs affected fixtures, and reports errors or warnings. The assistant may explain diagnostics and propose repairs, but it cannot suppress publication gates.
+
+The conversation must support interruption and resumption, explicit “show me the form” and “show the diff” transitions, undo of accepted proposals through normal draft history, and recovery from stale revisions. If another collaborator changes a referenced definition, the assistant rebases only after showing the conflict and receiving confirmation for semantic changes.
+
+### 19.4 Form-based authoring
+
+Every supported definition type has a schema-driven form generated from application-owned authoring descriptors. Forms provide labels, help, appropriate controls, reference pickers, validation, conditional sections, expression and pipeline builders, generation settings, and advanced fields. The form descriptor and AI tool schema derive from the same metamodel so required fields and validation cannot drift between modes.
+
+Forms support create, view, edit, validate, compare, undo, and clone operations. Complex fields may open specialized builders, but saving still produces a typed draft command. Advanced authors may edit canonical JSON, which must pass the same schema, type, security, and reference validation. Unknown fields are rejected so typographical errors cannot silently change semantics. Invalid drafts remain saveable and recoverable; they simply cannot be published.
+
+### 19.5 Cloning rules
+
+An authorized author may clone a rule to use it as the starting point for a similar rule. “Rule” may represent one definition or a coordinated root definition with owned private dependencies. Before cloning, the UI shows the clone boundary and whether referenced definitions will be copied, preserved as references, or omitted.
+
+Cloning follows these rules:
+
+- every cloned definition receives a new stable ID and a non-conflicting author-editable name;
+- references among definitions inside the clone boundary are remapped to the new IDs;
+- references outside the boundary remain unchanged only when they are accessible and compatible in the destination draft;
+- definitions elsewhere in the draft are never redirected to the clone automatically;
+- source provenance is recorded as `clonedFrom` metadata but creates no live inheritance or synchronization relationship;
+- cloning from a published release creates mutable definitions in a draft and never alters the release;
+- cross-workspace cloning requires explicit read/reuse permission and preserves license and attribution metadata;
+- private, hidden, or unauthorized dependencies are not leaked through clone previews or errors; and
+- the complete clone is validated and applied atomically against the expected draft revision.
+
+After cloning, the form and AI assistant should highlight values likely to require differentiation, such as labels, selectors, resource costs, stacking identities, generation capabilities, and tests. The assistant may offer to walk the GM through those differences, but the clone is usable through forms without AI.
+
+### 19.6 Model integration and retention
+
+The NestJS AI authoring orchestrator presents the model with a narrow, versioned tool contract for inspecting authorized draft summaries, retrieving relevant definition schemas, asking questions, validating a candidate, and submitting a proposal. It should retrieve only the minimum relevant rule-set context instead of placing an entire large draft in every prompt. Model-provider details remain behind an adapter so authoring semantics do not depend on one model.
+
+Conversation sessions store model/tool versions, prompt-template version, referenced draft revision, tool calls, proposal hashes, acceptance decisions, usage, and errors. Product policy must define whether raw transcripts are retained, their retention period, and whether users can delete or exclude them from model improvement. Accepted rule definitions and their audit history remain independently durable even if a transcript is deleted.
+
+### 19.7 Collaborative authoring
 
 Future collaborative authoring operates on drafts only. Stable definition IDs and module boundaries allow command-based or CRDT-backed document editing. The GM controls collaborators and permissions. Publication remains a single authoritative, audited action and never occurs by eventual merge alone.
 
 ## 20. Authorization, privacy, and security
 
-Capabilities should distinguish view, use, create, edit, test, publish, compose, bind, activate, generate, adapt artifacts, migrate, and administer. They are scoped to workspace and, where applicable, rule set, composition, world, or campaign. A GM may delegate play capabilities without granting access to hidden definitions or private evaluation data.
+Capabilities should distinguish view, use, create, edit, clone, use authoring assistant, test, publish, compose, bind, activate, generate, adapt artifacts, migrate, and administer. They are scoped to workspace and, where applicable, rule set, composition, world, or campaign. A GM may delegate play capabilities without granting access to hidden definitions, assistant context, or private evaluation data.
 
 Security requirements include:
 
@@ -623,8 +709,12 @@ Security requirements include:
 - malware scanning and private authorization for associated files;
 - provenance, license, and attribution metadata on imports and assets;
 - authoritative generation-context resolution so callers cannot omit an active rule set or submit an unvalidated composition hash;
-- rate limits for compilation, preview, publication, and execution; and
-- immutable audit records for publication, binding, migration, and privileged overrides.
+- treat user text, imported definitions, retrieved lore, and model output as untrusted data that cannot change tool permissions or system instructions;
+- strict model tool schemas, server-side argument validation, least-privilege context retrieval, output-size limits, and no provider-held CMS or database credentials;
+- redact inaccessible definitions and secrets from prompts, transcripts, diagnostics, traces, and model-provider logs;
+- per-user/workspace model budgets, cancellation, timeout, abuse controls, and cost visibility;
+- rate limits for assistant turns, cloning, compilation, preview, publication, and execution; and
+- immutable audit records for assistant proposal decisions, cloning, publication, binding, migration, and privileged overrides.
 
 The platform may enable users to author rule sets they have the right to use. Official examples and fixtures should demonstrate abstract patterns or original rule sets rather than redistribute protected rule text, artwork, or trademarks.
 
@@ -663,6 +753,8 @@ Compiled artifacts are created atomically and retained for every bound compositi
 
 Engine upgrades maintain compatibility with existing artifacts or provide an offline recompilation and verification procedure before deployment. A bad draft or compiler failure cannot mutate a published release.
 
+AI authoring is an optional, degradable interface. If the model provider is slow or unavailable, current drafts, forms, cloning, validation, and publication remain usable. Retrying a message or proposal application is idempotent. A partially streamed response has no draft effect, and an interrupted accepted proposal is either committed atomically or not applied. Model refusal, malformed output, context limits, and tool failures produce recoverable assistant errors rather than raw provider responses.
+
 ## 23. Import and export
 
 The portable package is canonical UTF-8 JSON plus referenced assets or a manifest-addressed archive. It contains format version, rule-set identity, release metadata, modules, locked dependencies, generation contributions, migrations, localization, fixtures, asset checksums, provenance, and optional signature. A composition export contains its exact member releases and conflict decisions or immutable references and hashes sufficient to verify them.
@@ -673,11 +765,11 @@ Canonical serialization sorts object keys and ID-addressed definitions so hashes
 
 ## 24. Observability and audit
 
-Metrics should cover compilation and composition duration and failures, artifact cache hit rate, generation-policy conflicts, artifact-applicability counts, evaluation duration by step/operator, budget rejections, operation conflicts, idempotent replays, continuation age, migration throughput, outbox lag, and real-time publication latency. High-cardinality rule-set, composition, user, or instance IDs belong in traces/log fields, not metric labels.
+Metrics should cover compilation and composition duration and failures, artifact cache hit rate, generation-policy conflicts, artifact-applicability counts, assistant turn latency and errors, proposal validation/acceptance/revision rates, token and cost usage, clone failures, evaluation duration by step/operator, budget rejections, operation conflicts, idempotent replays, continuation age, migration throughput, outbox lag, and real-time publication latency. High-cardinality rule-set, composition, authoring-session, user, or instance IDs belong in traces/log fields, not metric labels.
 
 Distributed traces link the inbound request or WebSocket command to Payload reads, artifact lookup, database transaction, outbox, and event publication. Evaluation traces are product/audit data with a retention and visibility policy; operational traces must not copy hidden rule state or private chat/content indiscriminately.
 
-Audit records capture who changed a draft, who published, release hashes, who changed a binding, migration previews and approvals, administrative overrides, and import provenance.
+Audit records capture who changed a draft, whether a change originated from a form, clone, JSON edit, or accepted assistant proposal, proposal/model/prompt hashes where policy permits, who published, release hashes, who changed a binding, migration previews and approvals, administrative overrides, and import provenance.
 
 ## 25. Testing strategy
 
@@ -711,6 +803,13 @@ Audit records capture who changed a draft, who published, release hashes, who ch
 ### 25.4 Authoring and migration
 
 - round-trip visual editor/canonical JSON tests;
+- contract tests proving forms and AI tools use the same metamodel, required fields, and validation;
+- conversational scenario tests for intent classification, ambiguity, relevant follow-up questions, assumption disclosure, revision, and proposal application;
+- evaluation suites measuring classification, question completeness, valid-patch rate, unnecessary-question rate, and unsupported-claim rate across diverse original mechanics;
+- adversarial tests for prompt injection in GM text and retrieved definitions, unauthorized context retrieval, malformed tool arguments, oversized output, and hidden-data leakage;
+- tests proving AI proposals cannot bypass authorization, publication gates, expected revisions, or independent server validation;
+- degraded-mode tests showing forms, cloning, validation, and publication work without a model provider;
+- clone tests for new IDs, internal reference remapping, preserved external references, dependency boundaries, provenance, naming conflicts, cross-workspace permissions, and atomic rollback;
 - invalid-draft recovery and precise source diagnostics;
 - publication immutability and dependency-lock tests;
 - clean, populated, interrupted, resumed, and reverse migration tests; and
@@ -735,10 +834,12 @@ Reference fixtures should be small original rule sets designed to cover disparat
 
 - Add Payload collections and checked-in CMS migrations.
 - Implement NestJS repository, compiler, validation APIs, artifact cache, and publication workflow.
-- Build module/entity/field/expression/generation-contribution editors, fixtures, trace viewer, and semantic diff.
+- Build schema-driven forms for module/entity/field/expression/generation-contribution editing, fixtures, trace viewer, and semantic diff.
+- Implement safe rule cloning with dependency preview, ID remapping, provenance, and permission enforcement.
+- Implement the AI authoring orchestrator, model adapter, schema-constrained tools, conversational UI, proposal review/apply workflow, evaluation suite, usage controls, and transcript policy.
 - Add import/export source packages.
 
-**Exit:** a GM can create, validate, test, publish, export, and re-import an immutable rule-set release.
+**Exit:** a GM can create a complete rule through guided conversation, edit the same rule through forms, clone it safely, validate and test it, and publish, export, and re-import an immutable rule-set release. The form and clone workflows remain functional when AI is unavailable.
 
 ### Phase 2: composition, generation context, and bindings
 
@@ -788,6 +889,10 @@ Reference fixtures should be small original rule sets designed to cover disparat
 | CMS becomes a gameplay bottleneck | Keep runtime state and compiled artifacts outside Payload's hot path |
 | LevelGraph diverges from canonical state | Transactional outbox, idempotent projection, lag monitoring, and full rebuild support |
 | Definitions become coupled to UI widgets | Semantics live in types/expressions; presentation hints are optional with fallback renderers |
+| AI proposes incomplete or incorrect mechanics | Schema-derived questions, explicit assumptions, constrained proposals, independent validation, fixtures, human review, and no automatic publication |
+| Prompt injection or retrieved content drives unauthorized actions | Treat all content as untrusted, expose least-privilege typed tools, validate every call server-side, and never give the model service credentials |
+| AI availability or cost blocks authoring | Equivalent form and clone workflows, provider adapter, budgets, cancellation, cost visibility, and graceful degradation |
+| Cloning creates broken or accidentally shared references | Preview clone boundaries, generate new IDs, remap internal references, validate external references, and apply atomically |
 | Package sharing creates IP or malware risk | Provenance/licensing metadata, quarantine, scanning, signatures, moderation, and no executable code |
 
 ## 28. Alternatives considered
@@ -803,6 +908,10 @@ This permits flexibility but provides no portable semantics, authoritative valid
 ### Allow JavaScript/TypeScript rule plugins
 
 Code is maximally expressive but creates isolation, deployment, versioning, denial-of-service, determinism, portability, and trust problems. Rejected for user-authored rule sets. A separately governed trusted extension mechanism could be reconsidered only after demonstrated gaps in the declarative model.
+
+### Let an AI assistant write directly to drafts
+
+Direct model writes reduce UI steps but make hallucinations, prompt injection, stale revisions, and accidental semantic changes difficult to detect or recover. Rejected. The assistant produces schema-constrained proposals that NestJS independently validates and an authorized GM explicitly accepts.
 
 ### Execute rules in Payload hooks
 
@@ -822,21 +931,25 @@ The initial feature is complete when:
 
 1. Two structurally different original rule sets are authored using only public primitives and pass their fixture suites.
 2. A GM can create, validate, publish, compose, bind, and export rule sets without deploying code.
-3. Published releases and their dependency locks are immutable and content-addressed.
-4. A validated composition has a canonical manifest and hash, exact member releases, deterministic conflict decisions, and a compiled aggregate artifact.
-5. The same world can select different gameplay profiles whose aggregate rule sets produce different mechanics and generation behavior.
-6. Every generated world artifact records the applicable rule sets, composition and policy hashes, generation versions, and validation result.
-7. A rule set enabling an original magical mechanic permits matching magic artifacts; a profile excluding that mechanic prevents their generation and mechanical use.
-8. Changing profiles classifies existing artifacts and requires an explicit retain, hide, adapt, block, or resolution decision rather than silently deleting them.
-9. A populated campaign can preview and apply an explicit release or composition migration with checkpoint recovery.
-10. Derived values, effects, resources, random results, operations, and event reactions produce deterministic replay from recorded inputs.
-11. Runtime operations are transactional, idempotent, capability-checked, budgeted, and auditable.
-12. Browser clients access rule definitions and state only through NestJS; Payload remains network-private.
-13. Active runtime execution does not require a synchronous Payload request.
-14. LevelGraph can be erased and rebuilt without loss of canonical rule, composition, generation provenance, or instance data.
-15. Multiple clients reconcile optimistic presentation with authoritative sequenced events and recover after disconnect.
-16. Security tests demonstrate tenant isolation and prevent hidden fields or traces from reaching unauthorized viewers.
-17. Representative load tests meet agreed service-level objectives or document approved limits.
+3. Given an underspecified request such as “create a trait for creatures that have claws,” the AI assistant identifies a suitable rule type, asks relevant follow-up questions, states its assumptions, and produces a valid reviewable proposal rather than silently inventing consequential mechanics.
+4. A GM can accept, revise, partially accept, or discard an AI proposal, and only an accepted, independently validated proposal changes the draft.
+5. Every AI-authored rule is editable through the same form experience, and forms, cloning, validation, and publication remain functional when the model provider is unavailable.
+6. Cloning a rule creates new stable IDs, correctly remaps internal references, preserves authorized external references and provenance, and never redirects existing consumers automatically.
+7. Published releases and their dependency locks are immutable and content-addressed.
+8. A validated composition has a canonical manifest and hash, exact member releases, deterministic conflict decisions, and a compiled aggregate artifact.
+9. The same world can select different gameplay profiles whose aggregate rule sets produce different mechanics and generation behavior.
+10. Every generated world artifact records the applicable rule sets, composition and policy hashes, generation versions, and validation result.
+11. A rule set enabling an original magical mechanic permits matching magic artifacts; a profile excluding that mechanic prevents their generation and mechanical use.
+12. Changing profiles classifies existing artifacts and requires an explicit retain, hide, adapt, block, or resolution decision rather than silently deleting them.
+13. A populated campaign can preview and apply an explicit release or composition migration with checkpoint recovery.
+14. Derived values, effects, resources, random results, operations, and event reactions produce deterministic replay from recorded inputs.
+15. Runtime operations are transactional, idempotent, capability-checked, budgeted, and auditable.
+16. Browser clients access rule definitions and state only through NestJS; Payload remains network-private.
+17. Active runtime execution does not require a synchronous Payload request.
+18. LevelGraph can be erased and rebuilt without loss of canonical rule, composition, generation provenance, or instance data.
+19. Multiple clients reconcile optimistic presentation with authoritative sequenced events and recover after disconnect.
+20. Security tests demonstrate tenant isolation and prevent hidden fields, assistant context, or traces from reaching unauthorized viewers.
+21. Representative load tests meet agreed service-level objectives or document approved limits.
 
 ## 30. Open decisions
 
@@ -849,6 +962,10 @@ The following require spikes or product decisions before implementation is locke
 - Which generation-policy conflicts can use explicit precedence and which must always block composition?
 - Which artifact kinds require strict applicability, and which may remain narrative-only when their originating rule set is inactive?
 - What retention policy applies to user prompts and other generation-context inputs?
+- Which model providers and deployment modes satisfy privacy, latency, structured-output, and cost requirements?
+- What assistant transcript retention and model-improvement consent defaults should apply by workspace?
+- Should cloning support a whole dependency subgraph in the first release or only one root and its owned private definitions?
+- Which semantic decisions always require an explicit answer rather than an AI-proposed default?
 - Which world facts are safe and stable enough to expose to rule expressions?
 - How should long-running participant choices appear in the session UI and expire?
 - Which trace details are retained, for how long, and at what visibility levels?

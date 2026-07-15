@@ -9,22 +9,26 @@
     "start": "nest start",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
-    "start:prod": "node dist/main"
+    "start:prod": "node dist/main",
+    "migration:run": "npm run build && typeorm migration:run -d dist/database/data-source.js",
+    "migration:show": "npm run build && typeorm migration:show -d dist/database/data-source.js",
+    "migration:revert": "npm run build && typeorm migration:revert -d dist/database/data-source.js"
   },
   "dependencies": {
     "@nestjs/common": "^10.0.0",
     "@nestjs/core": "^10.0.0",
     "@nestjs/platform-express": "^10.0.0",
     "@nestjs/typeorm": "^10.0.2",
-    "typeorm": "^0.3.20",
-    "pg": "^8.11.5",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.14.1",
     "level": "^8.0.1",
     "levelgraph": "^4.0.0",
+    "node-llama-cpp": "^3.19.0",
     "openai": "^4.52.0",
-    "class-validator": "^0.14.1",
-    "class-transformer": "^0.5.1",
+    "pg": "^8.11.5",
     "reflect-metadata": "^0.2.2",
-    "rxjs": "^7.8.1"
+    "rxjs": "^7.8.1",
+    "typeorm": "^0.3.20"
   },
   "devDependencies": {
     "@nestjs/cli": "^10.0.0",
@@ -32,5 +36,11 @@
     "@types/express": "^4.17.21",
     "@types/node": "^20.12.7",
     "typescript": "^5.4.5"
+  },
+  "allowScripts": {
+    "node-llama-cpp@3.19.0": true,
+    "fsevents@2.3.3": true,
+    "classic-level@1.4.1": true,
+    "@nestjs/core@10.4.22": true
   }
 }
