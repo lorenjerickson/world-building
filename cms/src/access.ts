@@ -23,7 +23,7 @@ export const authenticated: Access = ({ req: { user } }) => Boolean(user)
 export const setActorWorkspace: FieldHook = ({ operation, req, value }) => {
   if (operation === 'create' && req.user) {
     const actor = req.user as UserWithWorkspace
-    if (actor.role !== 'admin') return relationshipID(actor.workspace)
+    if (actor.role !== 'admin' || value == null) return relationshipID(actor.workspace)
   }
   return value
 }

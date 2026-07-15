@@ -1,9 +1,51 @@
 import type { MigrationInterface, QueryRunner } from 'typeorm';
 
+const legacyName = 'CreateRuleSetPersistence2026071501100';
+const expectedTables = [
+  'rule_set_compositions',
+  'rule_set_composition_members',
+  'rule_set_bindings',
+  'rule_instances',
+  'rule_effects',
+  'rule_executions',
+  'rule_events',
+  'rule_continuations',
+  'rule_artifacts',
+  'artifact_rule_contexts',
+  'rule_authoring_sessions',
+  'rule_authoring_proposals',
+];
+
 export class CreateRuleSetPersistence1784077260000 implements MigrationInterface {
   name = 'CreateRuleSetPersistence1784077260000';
 
   async up(queryRunner: QueryRunner): Promise<void> {
+    const legacyMigration = await queryRunner.query(
+      'SELECT 1 FROM "migrations" WHERE "name" = $1 LIMIT 1',
+      [legacyName],
+    );
+    if (legacyMigration.length > 0) {
+      const missingTables = await queryRunner.query(
+        `
+          SELECT "tableName"
+          FROM unnest($1::text[]) AS expected("tableName")
+          WHERE to_regclass('public.' || quote_ident("tableName")) IS NULL
+        `,
+        [expectedTables],
+      );
+      if (missingTables.length > 0) {
+        throw new Error(
+          `${legacyName} is recorded, but these tables are missing: ${missingTables
+            .map((row: { tableName: string }) => row.tableName)
+            .join(', ')}`,
+        );
+      }
+
+      // This migration was originally run under a different timestamp. Returning
+      // lets TypeORM record the released identity without replaying identical DDL.
+      return;
+    }
+
     await queryRunner.query(`
       CREATE TABLE "rule_set_compositions" (
         "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),

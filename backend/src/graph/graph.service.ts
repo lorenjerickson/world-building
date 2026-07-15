@@ -52,6 +52,21 @@ export class GraphService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
+  async del(triples: any | any[]): Promise<void> {
+    const values = Array.isArray(triples) ? triples : [triples];
+    if (!values.length) return;
+    return new Promise((resolve, reject) => {
+      this.db.del(values, (err: any) => {
+        if (err) {
+          this.logger.error('Failed to delete triples from LevelGraph', err);
+          reject(err);
+        } else {
+          resolve();
+        }
+      });
+    });
+  }
+
   async get(pattern: any): Promise<any[]> {
     return new Promise((resolve, reject) => {
       this.db.get(pattern, (err: any, list: any[]) => {

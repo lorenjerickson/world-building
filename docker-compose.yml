@@ -24,13 +24,21 @@ services:
     volumes:
       - ./backend:/app
       - uploads_data:/app/data/uploads
+      - ./models:/models:ro
     environment:
       - DATABASE_URL=postgresql://worldbuilder:password123@db:5432/worlddb
       - CMS_BASE_URL=http://cms:3000
       - CMS_INTERNAL_TOKEN=${CMS_INTERNAL_TOKEN:?Set CMS_INTERNAL_TOKEN in .env}
+      - RULE_API_INTERNAL_TOKEN=${RULE_API_INTERNAL_TOKEN:?Set RULE_API_INTERNAL_TOKEN in .env}
+      - LLM_PROVIDER=${LLM_PROVIDER:-openai}
+      - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-2048}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_LLM_MODEL=${OPENAI_LLM_MODEL:-gpt-4o-mini}
       - OPENAI_PORTRAIT_IMAGE_MODEL=${OPENAI_PORTRAIT_IMAGE_MODEL:-gpt-image-2}
       - OPENAI_TOKEN_IMAGE_MODEL=${OPENAI_TOKEN_IMAGE_MODEL:-gpt-image-1.5}
+      - LLAMA_MODEL_PATH=${LLAMA_MODEL_PATH:-/models/model.gguf}
+      - LLAMA_CONTEXT_SIZE=${LLAMA_CONTEXT_SIZE:-8192}
+      - LLAMA_GPU_LAYERS=${LLAMA_GPU_LAYERS:-auto}
     depends_on:
       db:
         condition: service_healthy
@@ -56,6 +64,12 @@ services:
     environment:
       - NEXT_PUBLIC_API_URL=http://localhost:8000
       - BACKEND_URL=http://backend:8000
+      - RULE_API_INTERNAL_TOKEN=${RULE_API_INTERNAL_TOKEN:?Set RULE_API_INTERNAL_TOKEN in .env}
+      - AUTH0_BASE_URL=${AUTH0_BASE_URL:-${APP_BASE_URL:?Set AUTH0_BASE_URL or APP_BASE_URL in .env}}
+      - AUTH0_ISSUER_BASE_URL=${AUTH0_ISSUER_BASE_URL:-https://${AUTH0_DOMAIN:?Set AUTH0_ISSUER_BASE_URL or AUTH0_DOMAIN in .env}}
+      - AUTH0_CLIENT_ID=${AUTH0_CLIENT_ID:?Set AUTH0_CLIENT_ID in .env}
+      - AUTH0_CLIENT_SECRET=${AUTH0_CLIENT_SECRET:?Set AUTH0_CLIENT_SECRET in .env}
+      - AUTH0_SECRET=${AUTH0_SECRET:?Set AUTH0_SECRET in .env}
       # Docker Desktop file-system events are not always forwarded to Linux
       # containers, so let Next/Watchpack poll the bind mount for HMR changes.
       - WATCHPACK_POLLING=true

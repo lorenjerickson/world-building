@@ -1,7 +1,8 @@
-import { Controller, Post, Put, Body, Param, HttpCode, HttpStatus } from '@nestjs/common';
+import { Controller, Delete, Post, Put, Body, Param, HttpCode, HttpStatus, UseGuards } from '@nestjs/common';
 import { GenerateService } from './generate.service';
 import { GenerateDto } from './dto/generate.dto';
 import { GenerateElementDto } from './dto/generate-element.dto';
+import { RuleApiActorGuard } from '../rules/api/rule-api-actor';
 
 @Controller('api/generate')
 export class GenerateController {
@@ -22,6 +23,13 @@ export class GenerateController {
     return this.generateService.updateWorld(id, body.metadata, body.description, body.triples);
   }
 
+  @Delete('world/:id')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(RuleApiActorGuard)
+  deleteWorld(@Param('id') id: string) {
+    return this.generateService.deleteWorld(id);
+  }
+
   @Post('world/:id/:elementType')
   @HttpCode(HttpStatus.OK)
   async generateElement(
@@ -32,4 +40,3 @@ export class GenerateController {
     return this.generateService.generateElement(worldId, elementType, generateElementDto);
   }
 }
-

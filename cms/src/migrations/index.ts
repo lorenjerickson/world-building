@@ -2,6 +2,7 @@ import * as migration_20260714_230614_initial_schema from './20260714_230614_ini
 import * as migration_20260714_230652_add_world_summary from './20260714_230652_add_world_summary';
 import * as migration_20260714_234515_add_media_storage_prefix from './20260714_234515_add_media_storage_prefix';
 import * as migration_20260715_003831_add_rule_set_collections from './20260715_003831_add_rule_set_collections';
+import * as migration_20260715_142221_phase2_definition_types from './20260715_142221_phase2_definition_types';
 
 export const migrations = [
   {
@@ -22,6 +23,11 @@ export const migrations = [
   {
     up: migration_20260715_003831_add_rule_set_collections.up,
     down: migration_20260715_003831_add_rule_set_collections.down,
-    name: '20260715_003831_add_rule_set_collections'
+    name: '20260715_003831_add_rule_set_collections',
+  },
+  {
+    up: migration_20260715_142221_phase2_definition_types.up,
+    down: migration_20260715_142221_phase2_definition_types.down,
+    name: '20260715_142221_phase2_definition_types'
   },
 ];

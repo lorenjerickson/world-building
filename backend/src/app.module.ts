@@ -9,6 +9,7 @@ import { CharacterArtController } from './character-art.controller';
 import { CmsModule } from './cms/cms.module';
 import { applicationEntities } from './database/entities';
 import { applicationMigrations } from './database/migrations';
+import { RulesModule } from './rules/rules.module';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { applicationMigrations } from './database/migrations';
     GraphModule,
     GenerateModule,
     CmsModule,
+    RulesModule,
   ],
   controllers: [AppController, UploadsController, CharacterArtController],
   providers: [AppService],

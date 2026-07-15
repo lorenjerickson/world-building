@@ -17,8 +17,8 @@ The current application has:
 - a NestJS 10 backend on port 8000;
 - PostgreSQL through TypeORM for generated worlds;
 - a LevelGraph store for lore relationships;
-- Auth0 integration in the frontend, with a local demo fallback;
-- a session route that currently renders static fixture summaries; and
+- mandatory Auth0 authentication for frontend pages and application APIs;
+- session routes without a persistent session catalog or realtime transport; and
 - no shared domain package, persistent session model, backend authorization layer, or realtime transport.
 
 The desired experience is a live tabletop session shared by distributed players. Movement, visual effects, sound cues, chat, dice, presence, and other common multiplayer interactions should feel immediate. Network delays and short outages must not corrupt the session or make the interface unnecessarily sluggish. The same underlying transport should later support GM-enabled collaboration in world editors.

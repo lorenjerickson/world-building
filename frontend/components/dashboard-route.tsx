@@ -5,9 +5,10 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { DashboardView } from "@/components/dashboard-view";
 import type { WorldAsset } from "@/components/world-view";
+import { deleteWorldArtifact } from "@/lib/artifact-deletion";
 
 export function DashboardRoute() {
-  const { user } = useUser();
+  const { user, isLoading } = useUser();
   const router = useRouter();
   const [worlds, setWorlds] = useState<WorldAsset[]>([]);
   useEffect(() => {
@@ -20,13 +21,18 @@ export function DashboardRoute() {
     }
   }, []);
 
+  if (isLoading || !user) return null;
+
   return (
     <DashboardView
-      user={user || { name: "Demo GameMaster", email: "demo@aethelgard.net" }}
+      user={user}
       worldsHistory={worlds}
-      onLogout={() => router.push("/")}
+      onLogout={() => window.location.assign("/api/auth/logout")}
       onBeginWorldBuilding={(world) => router.push(world ? `/world/${encodeURIComponent(world.id)}` : "/world/new")}
-      onOpenCampaign={(worldId, campaignId) => router.push(`/world/${encodeURIComponent(worldId)}/campaign/${encodeURIComponent(campaignId)}`)}
+      onDeleteWorld={async (world) => {
+        await deleteWorldArtifact(world);
+        setWorlds((items) => items.filter((item) => item.id !== world.id));
+      }}
     />
   );
 }

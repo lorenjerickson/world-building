@@ -1,10 +1,10 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { World } from './entities/world.entity';
 import { GraphService } from '../graph/graph.service';
-import OpenAI from 'openai';
 import { GenerateElementDto } from './dto/generate-element.dto';
+import { LlmService } from '../llm/llm.service';
 
 
 @Injectable()
@@ -15,6 +15,7 @@ export class GenerateService {
     @InjectRepository(World)
     private readonly worldsRepository: Repository<World>,
     private readonly graphService: GraphService,
+    private readonly llmService: LlmService,
   ) {}
 
   private cleanJsonString(str: string): string {
@@ -81,11 +82,9 @@ export class GenerateService {
     this.logger.log(`Starting generation for prompt: "${prompt}"`);
     let worldData: any;
 
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (apiKey && apiKey.trim().length > 0) {
+    if (this.llmService.isConfigured) {
       try {
-        this.logger.log('Using OpenAI API for RPG World generation...');
-        const openai = new OpenAI({ apiKey });
+        this.logger.log(`Using ${this.llmService.provider} for RPG World generation...`);
         const systemPrompt = `You are an RPG World Builder. Generate a fantasy or sci-fi world based on the user's prompt. 
 You must output a JSON response in the following schema:
 {
@@ -100,25 +99,23 @@ You must output a JSON response in the following schema:
 }
 Ensure the JSON is valid. Only return the raw JSON object, no markdown styling. Do not wrap in backticks.`;
 
-        const completion = await openai.chat.completions.create({
-          model: 'gpt-4o-mini',
+        const completion = await this.llmService.complete({
           messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: prompt }
           ],
-          response_format: { type: 'json_object' }
+          responseFormat: 'json',
         });
 
-        const textResponse = completion.choices[0]?.message?.content;
-        this.logger.log('OpenAI API responded. Processing JSON...');
-        const cleaned = this.cleanJsonString(textResponse);
+        this.logger.log(`${completion.provider} responded. Processing JSON...`);
+        const cleaned = this.cleanJsonString(completion.text);
         worldData = JSON.parse(cleaned);
       } catch (error) {
-        this.logger.error('OpenAI generation failed or parsed incorrectly, falling back to mock generator', error);
+        this.logger.error('LLM generation failed or parsed incorrectly, falling back to mock generator', error);
         worldData = this.generateFallbackWorld(prompt);
       }
     } else {
-      this.logger.log('OPENAI_API_KEY is not set. Using local procedural mock generator...');
+      this.logger.log(`${this.llmService.provider} is not configured. Using local procedural mock generator...`);
       worldData = this.generateFallbackWorld(prompt);
     }
 
@@ -159,6 +156,8 @@ Ensure the JSON is valid. Only return the raw JSON object, no markdown styling. 
 
       try {
         await this.graphService.put(triplesToInsert);
+        savedWorld.metadata = { ...savedWorld.metadata, triples: triplesToInsert };
+        await this.worldsRepository.save(savedWorld);
         this.logger.log(`Saved ${triplesToInsert.length} triples to LevelGraph`);
       } catch (graphError) {
         this.logger.error('Failed to write triples to LevelGraph database', graphError);
@@ -213,6 +212,26 @@ Ensure the JSON is valid. Only return the raw JSON object, no markdown styling. 
     };
   }
 
+  async deleteWorld(id: string): Promise<{ deleted: true; id: string }> {
+    const world = await this.worldsRepository.findOne({ where: { id } });
+    if (!world) {
+      throw new NotFoundException({
+        code: 'WORLD_NOT_FOUND',
+        message: 'The requested world was not found.',
+        retryable: false,
+      });
+    }
+
+    const triples = Array.isArray(world.metadata?.triples)
+      ? world.metadata.triples.filter((triple: any) =>
+        triple && typeof triple.subject === 'string' && typeof triple.predicate === 'string' && typeof triple.object === 'string')
+      : [];
+    await this.graphService.del(triples);
+    await this.worldsRepository.remove(world);
+    this.logger.log(`Deleted world ${id} and ${triples.length} associated graph triples.`);
+    return { deleted: true, id };
+  }
+
   async generateElement(worldId: string, elementType: string, dto: GenerateElementDto): Promise<any> {
     this.logger.log(`Generating element of type ${elementType} for world ${worldId} with prompt: "${dto.prompt}"`);
     const world = await this.worldsRepository.findOne({ where: { id: worldId } });
@@ -234,11 +253,9 @@ Ensure the JSON is valid. Only return the raw JSON object, no markdown styling. 
     }
 
     let elementData: any;
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (apiKey && apiKey.trim().length > 0) {
+    if (this.llmService.isConfigured) {
       try {
-        this.logger.log('Using OpenAI API for RPG Element generation...');
-        const openai = new OpenAI({ apiKey });
+        this.logger.log(`Using ${this.llmService.provider} for RPG Element generation...`);
 
         let contextPrompt = `The overarching world is called "${worldName}". Its setting/description is: "${worldDesc}".`;
         if (dto.parentId && parentLocationName) {
@@ -260,24 +277,22 @@ You must output a JSON response in the following schema:
 Ensure the relations list connects this new element to the world or parent location, and other characters, places, or factions where appropriate.
 Ensure the JSON is valid. Only return the raw JSON object, no markdown styling. Do not wrap in backticks.`;
 
-        const completion = await openai.chat.completions.create({
-          model: 'gpt-4o-mini',
+        const completion = await this.llmService.complete({
           messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: dto.prompt }
           ],
-          response_format: { type: 'json_object' }
+          responseFormat: 'json',
         });
 
-        const textResponse = completion.choices[0]?.message?.content;
-        const cleaned = this.cleanJsonString(textResponse);
+        const cleaned = this.cleanJsonString(completion.text);
         elementData = JSON.parse(cleaned);
       } catch (error) {
-        this.logger.error('OpenAI generation for element failed, falling back to mock generator', error);
+        this.logger.error('LLM generation for element failed, falling back to mock generator', error);
         elementData = this.generateFallbackElement(worldName, elementType, dto.prompt, parentLocationName);
       }
     } else {
-      this.logger.log('OPENAI_API_KEY is not set. Using local procedural mock generator for element...');
+      this.logger.log(`${this.llmService.provider} is not configured. Using local procedural mock generator for element...`);
       elementData = this.generateFallbackElement(worldName, elementType, dto.prompt, parentLocationName);
     }
 
@@ -335,5 +350,5 @@ Ensure the JSON is valid. Only return the raw JSON object, no markdown styling. 
     
     return { name, description, relations };
   }
-}
 
+}

@@ -7,6 +7,7 @@ import { join } from 'path';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  app.enableShutdownHooks();
   app.use('/uploads', express.static(join(process.cwd(), 'data', 'uploads'), {
     immutable: true,
     maxAge: '1y',
