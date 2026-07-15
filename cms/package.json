@@ -1,0 +1,50 @@
+{
+  "name": "world-building-cms",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "cross-env NODE_OPTIONS=--no-deprecation next build",
+    "dev": "cross-env NODE_OPTIONS=--no-deprecation next dev --hostname 127.0.0.1 --port 3100",
+    "start": "cross-env NODE_OPTIONS=--no-deprecation next start --hostname 127.0.0.1 --port 3100",
+    "start:container": "cross-env NODE_OPTIONS=--no-deprecation next start --hostname 0.0.0.0 --port 3000",
+    "generate:importmap": "cross-env NODE_OPTIONS=--no-deprecation payload generate:importmap",
+    "generate:types": "cross-env NODE_OPTIONS=--no-deprecation payload generate:types",
+    "generate:db-schema": "cross-env NODE_OPTIONS=--no-deprecation payload generate:db-schema",
+    "migrate": "cross-env NODE_OPTIONS=--no-deprecation payload migrate",
+    "migrate:create": "cross-env NODE_OPTIONS=--no-deprecation payload migrate:create",
+    "migrate:down": "cross-env NODE_OPTIONS=--no-deprecation payload migrate:down",
+    "migrate:status": "cross-env NODE_OPTIONS=--no-deprecation payload migrate:status",
+    "payload": "cross-env NODE_OPTIONS=--no-deprecation payload",
+    "test:acceptance": "cross-env NODE_OPTIONS=--no-deprecation tsx scripts/run-acceptance.ts",
+    "verify:generated": "node scripts/verify-generated.mjs",
+    "verify:migrations": "node scripts/verify-migrations.mjs",
+    "verify:policy": "node scripts/verify-policy.mjs",
+    "cms:verify-schema": "npm run verify:policy && npm run verify:generated && npm run verify:migrations && npm run migrate:status && npm run build"
+  },
+  "dependencies": {
+    "@payloadcms/db-postgres": "3.86.0",
+    "@payloadcms/next": "3.86.0",
+    "@payloadcms/richtext-lexical": "3.86.0",
+    "@payloadcms/storage-s3": "3.86.0",
+    "@payloadcms/ui": "3.86.0",
+    "cross-env": "7.0.3",
+    "dotenv": "16.4.7",
+    "graphql": "16.11.0",
+    "next": "16.2.10",
+    "payload": "3.86.0",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "sharp": "0.34.2"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "tsx": "4.21.0",
+    "typescript": "6.0.2"
+  },
+  "engines": {
+    "node": ">=20.9.0"
+  }
+}

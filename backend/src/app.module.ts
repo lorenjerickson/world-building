@@ -6,6 +6,7 @@ import { GraphModule } from './graph/graph.module';
 import { GenerateModule } from './generate/generate.module';
 import { UploadsController } from './uploads.controller';
 import { CharacterArtController } from './character-art.controller';
+import { CmsModule } from './cms/cms.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { CharacterArtController } from './character-art.controller';
     }),
     GraphModule,
     GenerateModule,
+    CmsModule,
   ],
   controllers: [AppController, UploadsController, CharacterArtController],
   providers: [AppService],

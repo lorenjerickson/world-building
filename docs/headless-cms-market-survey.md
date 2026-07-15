@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | PoC completed; conditional recommendation |
+| Status | CMS foundation implemented; content migration pending |
 | Survey date | 2026-07-14 |
 | Decision owner | Application team |
 | Recommendation | Payload CMS with PostgreSQL and S3-compatible object storage; separate service required initially |
@@ -24,7 +24,7 @@ Store media bytes outside PostgreSQL:
 - CMS/PostgreSQL: media record, ownership, relationships, purpose, tags, provenance, dimensions, MIME type, checksum, lifecycle state, and object key; and
 - delivery: signed URLs or a controlled media proxy for private assets, with a CDN for public/cacheable derivatives.
 
-The targeted proof of concept is complete. It demonstrated code-only schema changes and rollback, Auth0 identity propagation, private asset authorization, multipart generated-image ingestion, rich-text round trips, and acceptable single-machine query behavior with representative nested world content. It also identified a dependency blocker in the then-current Next.js 16.2.2/Payload 3.84 stack. Release `v0.1.1` upgrades the application frontend to Next.js 16.2.10; the separate CMS must use a mutually compatible current Payload release and repeat the suite before content migration. See [Payload CMS proof-of-concept results](./payload-cms-poc-results.md).
+The targeted proof of concept is complete. It demonstrated code-only schema changes and rollback, Auth0 identity propagation, private asset authorization, multipart generated-image ingestion, rich-text round trips, and acceptable single-machine query behavior with representative nested world content. It also identified a dependency blocker in the then-current Next.js 16.2.2/Payload 3.84 stack. Release `v0.1.1` upgraded the application frontend to Next.js 16.2.10. The separate service is now implemented with Payload 3.86.0 and Next.js 16.2.10, and the suite passes against private PostgreSQL and S3-compatible storage. See [Payload CMS proof-of-concept results](./payload-cms-poc-results.md) and [Payload CMS service implementation](./payload-cms-implementation.md).
 
 ## 2. Requirements and constraints
 

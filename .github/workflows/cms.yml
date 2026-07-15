@@ -1,0 +1,72 @@
+name: CMS verification
+
+on:
+  pull_request:
+    paths:
+      - "AGENTS.md"
+      - "backend/src/cms/**"
+      - "cms/**"
+      - "docker-compose.yml"
+      - ".github/workflows/cms.yml"
+  push:
+    branches: [main]
+    paths:
+      - "AGENTS.md"
+      - "backend/src/cms/**"
+      - "cms/**"
+      - "docker-compose.yml"
+      - ".github/workflows/cms.yml"
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    env:
+      CMS_POSTGRES_PASSWORD: cms-ci-database-password
+      CMS_PAYLOAD_SECRET: cms-ci-payload-secret-at-least-32-characters
+      CMS_INTERNAL_TOKEN: cms-ci-internal-service-token
+      CMS_S3_ACCESS_KEY_ID: cms-ci-storage-key
+      CMS_S3_SECRET_ACCESS_KEY: cms-ci-storage-secret-key
+      CMS_S3_BUCKET: worldcms-media
+      CMS_S3_REGION: us-east-1
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: cms/package-lock.json
+
+      - name: Install CMS dependencies
+        working-directory: cms
+        run: npm ci --legacy-peer-deps
+
+      - name: Verify schema and Docker policy
+        working-directory: cms
+        run: npm run verify:policy && npm run verify:generated && npm run verify:migrations
+
+      - name: Build clean private CMS stack
+        run: docker compose up --build --detach cms
+
+      - name: Wait for CMS health
+        run: |
+          for attempt in $(seq 1 30); do
+            status=$(docker inspect --format='{{.State.Health.Status}}' "$(docker compose ps -q cms)")
+            if [ "$status" = "healthy" ]; then exit 0; fi
+            sleep 2
+          done
+          exit 1
+
+      - name: Verify clean migration status
+        run: docker compose exec -T cms npm run migrate:status
+
+      - name: Run CMS acceptance suite
+        run: docker compose exec -T -e CMS_BASE_URL=http://127.0.0.1:3000 cms npm run test:acceptance
+
+      - name: Capture CMS logs
+        if: always()
+        run: docker compose logs --no-color cms cms-db cms-storage cms-storage-init
+
+      - name: Stop CMS stack
+        if: always()
+        run: docker compose down --volumes

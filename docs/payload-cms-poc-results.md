@@ -18,7 +18,7 @@ At the time of this run, Payload 3.84.0 was the newest tested release whose `@pa
 3. do not colocate Payload with the existing frontend until the frontend is independently upgraded and this suite passes again; and
 4. make a clean audit and the checks in this PoC release gates.
 
-This is a dependency-version constraint, not a failure of Payload's content, authorization, upload, or migration model. Follow-up release `v0.1.1` upgraded the application frontend to Next.js 16.2.10. The separate CMS implementation must repeat this suite with the selected current Payload release and its own Next.js 16.2.10 runtime.
+This is a dependency-version constraint, not a failure of Payload's content, authorization, upload, or migration model. Follow-up release `v0.1.1` upgraded the application frontend to Next.js 16.2.10. The separate CMS implementation subsequently repeated and passed this suite with Payload 3.86.0, Next.js 16.2.10, PostgreSQL 17, and private S3-compatible storage. See [Payload CMS service implementation](./payload-cms-implementation.md).
 
 ## 2. Tested stack and compatibility
 
