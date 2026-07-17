@@ -1,7 +1,7 @@
 'use client';
 
 import type { FormEvent } from 'react';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { DeleteArtifactButton } from './delete-artifact-button';
 import {
   buildGuidedTraitBody,
@@ -41,6 +41,69 @@ import {
   newGrant,
   type GrantDraft,
 } from './guided-trait-grants-editor';
+
+// ── Tag editor ────────────────────────────────────────────────────────────────
+
+function TagEditor({ tags, onChange, knownTags }: {
+  tags: string[];
+  onChange: (tags: string[]) => void;
+  knownTags: string[];
+}) {
+  const [input, setInput] = useState('');
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  const trimmed = input.trim();
+  const suggestions = trimmed
+    ? knownTags.filter((t) => t.toLowerCase().includes(trimmed.toLowerCase()) && !tags.includes(t))
+    : [];
+
+  function commit(value: string) {
+    const tag = value.trim();
+    if (tag && !tags.includes(tag)) onChange([...tags, tag]);
+    setInput('');
+    setOpen(false);
+  }
+
+  function remove(tag: string) { onChange(tags.filter((t) => t !== tag)); }
+
+  return (
+    <div className="tag-editor" ref={wrapRef}>
+      <div className="tag-editor-field" onClick={() => wrapRef.current?.querySelector('input')?.focus()}>
+        {tags.map((tag) => (
+          <span key={tag} className="tag-badge">
+            {tag}
+            <button type="button" className="tag-badge-remove" aria-label={`Remove ${tag}`} onClick={(e) => { e.stopPropagation(); remove(tag); }}>×</button>
+          </span>
+        ))}
+        <input
+          type="text"
+          className="tag-editor-input"
+          value={input}
+          placeholder={tags.length === 0 ? 'Add tags…' : ''}
+          onChange={(e) => { setInput(e.target.value); setOpen(true); }}
+          onFocus={() => setOpen(true)}
+          onBlur={() => setTimeout(() => setOpen(false), 150)}
+          onKeyDown={(e) => {
+            if ((e.key === ' ' || e.key === 'Tab') && trimmed) { e.preventDefault(); commit(trimmed); }
+            if (e.key === 'Enter') { e.preventDefault(); if (trimmed) commit(trimmed); }
+            if (e.key === 'Backspace' && !input && tags.length > 0) remove(tags[tags.length - 1]);
+            if (e.key === 'Escape') { setInput(''); setOpen(false); }
+          }}
+        />
+      </div>
+      {open && suggestions.length > 0 && (
+        <div className="tag-suggestions">
+          {suggestions.map((s) => (
+            <button key={s} type="button" className="tag-suggestion" onMouseDown={() => commit(s)}>{s}</button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Forms ──────────────────────────────────────────────────────────────────────
 
 type ChildFormProps<T> = {
   onCancel: () => void;
@@ -111,7 +174,7 @@ export function RuleDefinitionCreateForm({ definitions, modules, onCancel, onCre
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [visibility, setVisibility] = useState<'exported' | 'private'>('exported');
-  const [tags, setTags] = useState('');
+  const [tags, setTags] = useState<string[]>([]);
   const [body, setBody] = useState('{}');
   const [bodyLabelSynced, setBodyLabelSynced] = useState(false);
   const [authoringExperience, setAuthoringExperience] = useState<'grants' | 'vision' | 'running' | 'advanced'>('grants');
@@ -167,7 +230,7 @@ export function RuleDefinitionCreateForm({ definitions, modules, onCancel, onCre
         description: description.trim() || undefined,
         moduleId: Number(moduleId),
         name: name.trim(),
-        tags: tags.split(',').map((tag) => tag.trim()).filter(Boolean),
+        tags,
         visibility,
       });
       onCreated(definition);
@@ -184,7 +247,7 @@ export function RuleDefinitionCreateForm({ definitions, modules, onCancel, onCre
         <label className="rule-set-field"><span>Name</span><input required maxLength={160} value={name} onChange={(event) => { const n = event.target.value; setName(n); if (definitionType === 'field' && bodyLabelSynced) setBody(JSON.stringify({ label: n }, null, 2)); }} placeholder="Clawed" autoFocus /></label>
         <label className="rule-set-field"><span>Module</span><select required value={moduleId} onChange={(event) => setModuleId(event.target.value)}>{modules.map((module) => <option key={module.id} value={module.id}>{module.name} ({module.namespace})</option>)}</select></label>
         <label className="rule-set-field"><span>Definition type</span><select value={definitionType} onChange={(event) => { const type = event.target.value as RuleDefinitionType; setDefinitionType(type); setDiagnostics([]); const resolutionTypes: RuleDefinitionType[] = ['modifier', 'check', 'resource', 'effect', 'event', 'operation']; setResolutionDraft(resolutionTypes.includes(type) ? defaultResolutionDraft(type as ResolutionAuthoringDraft['kind']) : undefined); setTemplateDraft(type === 'template' ? defaultTemplateDraft() : undefined); if (type === 'field') { setBody(JSON.stringify({ label: name.trim() }, null, 2)); setBodyLabelSynced(true); } else { setBodyLabelSynced(false); } }}>{ruleDefinitionTypes.map((type) => <option key={type} value={type}>{type}</option>)}</select></label>
-        <label className="rule-set-field"><span>Visibility</span><select value={visibility} onChange={(event) => setVisibility(event.target.value as 'exported' | 'private')}><option value="exported">Exported</option><option value="private">Private</option></select></label>
+        <label className="guided-rule-checkbox rule-set-field"><input type="checkbox" checked={visibility === 'exported'} onChange={(e) => setVisibility(e.target.checked ? 'exported' : 'private')} /><span>Visible</span></label>
         {definitionType === 'trait' && <label className="rule-set-field rule-set-field-wide"><span>Authoring experience</span><select value={authoringExperience} onChange={(event) => {
           const experience = event.target.value as 'grants' | 'vision' | 'running' | 'advanced';
           setAuthoringExperience(experience);
@@ -197,7 +260,7 @@ export function RuleDefinitionCreateForm({ definitions, modules, onCancel, onCre
           }
         }}><option value="grants">Grants editor</option><option value="vision">Guided visual-perception trait</option><option value="running">Guided running trait</option><option value="advanced">Advanced JSON draft</option></select><small>The grants editor defines what this trait gives to any entity that holds it.</small></label>}
         <label className="rule-set-field rule-set-field-wide"><span>Description</span><textarea maxLength={20000} rows={3} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Explain what this rule means and when it applies." /></label>
-        <label className="rule-set-field rule-set-field-wide"><span>Tags</span><input value={tags} onChange={(event) => setTags(event.target.value)} placeholder="creature, anatomy" /></label>
+        <div className="rule-set-field rule-set-field-wide"><span>Tags</span><TagEditor tags={tags} onChange={setTags} knownTags={[...new Set(definitions.flatMap((d) => d.tags))].sort()} /></div>
         {definitionType === 'trait' && authoringExperience === 'grants'
           ? <GuidedTraitGrantsEditor
               traitName={name}
@@ -303,8 +366,8 @@ export function RuleDefinitionEditForm({ artifact, definitions, modules, onCance
   const [description, setDescription] = useState(artifact.description ?? '');
   const [moduleId, setModuleId] = useState(artifact.moduleId);
   const [visibility, setVisibility] = useState(artifact.visibility);
-  const [schemaVersion, setSchemaVersion] = useState(String(artifact.schemaVersion));
-  const [tags, setTags] = useState(artifact.tags.join(', '));
+  const [schemaVersion] = useState(String(artifact.schemaVersion));
+  const [tags, setTags] = useState<string[]>(artifact.tags);
   const [body, setBody] = useState(JSON.stringify(artifact.body, null, 2));
   const [guidedDraft, setGuidedDraft] = useState<GuidedTraitDraft | undefined>(() => artifact.definitionType === 'trait' ? guidedTraitDraftFromBody(artifact.body) : undefined);
   const [diagnostics, setDiagnostics] = useState<AuthoringDiagnostic[]>([]);
@@ -313,7 +376,7 @@ export function RuleDefinitionEditForm({ artifact, definitions, modules, onCance
   const [instantiationResult, setInstantiationResult] = useState<TemplateInstantiationResult>();
   const [instantiationError, setInstantiationError] = useState<string>();
   const [bulkCreating, setBulkCreating] = useState(false);
-  const [presentation, setPresentation] = useState(JSON.stringify(artifact.presentation ?? {}, null, 2));
+  const presentation = JSON.stringify(artifact.presentation ?? {});
   const [error, setError] = useState<string>();
   const [submitting, setSubmitting] = useState(false);
   const [grantsDraft, setGrantsDraft] = useState<GrantDraft[] | null>(() =>
@@ -389,7 +452,7 @@ export function RuleDefinitionEditForm({ artifact, definitions, modules, onCance
         name: name.trim(),
         presentation: parsedPresentation as Record<string, unknown>,
         schemaVersion: Number(schemaVersion),
-        tags: tags.split(',').map((tag) => tag.trim()).filter(Boolean),
+        tags,
         visibility,
       });
       onSaved(definition);
@@ -413,14 +476,21 @@ export function RuleDefinitionEditForm({ artifact, definitions, modules, onCance
 
   return (
     <form className="rule-set-child-form rule-set-artifact-editor" onSubmit={submit}>
-      <div className="rule-set-editor-heading"><div><span className="eyebrow">Edit or rename {artifact.definitionType}</span><h4>{artifact.name}</h4></div><span className="badge">{artifact.status}</span></div>
+      <div className="rule-set-editor-heading">
+        <div>
+          <span className="eyebrow">Edit or rename {artifact.definitionType}</span>
+          <h4>{artifact.name}</h4>
+          <span className="definition-schema-label">schema version: "{artifact.definitionType}/{schemaVersion}"</span>
+        </div>
+        <div className="rule-set-editor-heading-right">
+          <label className="guided-rule-checkbox"><input type="checkbox" checked={visibility === 'exported'} onChange={(e) => setVisibility(e.target.checked ? 'exported' : 'private')} /><span>Visible</span></label>
+          <span className="badge">{artifact.status}</span>
+        </div>
+      </div>
       <div className="rule-set-form-grid">
         <label className="rule-set-field"><span>Name</span><input required maxLength={160} value={name} onChange={(event) => setName(event.target.value)} autoFocus /></label>
         <label className="rule-set-field"><span>Module</span><select value={moduleId} onChange={(e) => setModuleId(Number(e.target.value))}>{modules.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}</select></label>
-        <label className="rule-set-field"><span>Definition type</span><input value={artifact.definitionType} disabled /></label>
-        <label className="rule-set-field"><span>Visibility</span><select value={visibility} onChange={(event) => setVisibility(event.target.value as 'exported' | 'private')}><option value="exported">Exported</option><option value="private">Private</option></select></label>
-        <label className="rule-set-field"><span>Schema version</span><input required type="number" min={1} value={schemaVersion} onChange={(event) => setSchemaVersion(event.target.value)} /></label>
-        <label className="rule-set-field"><span>Tags</span><input value={tags} onChange={(event) => setTags(event.target.value)} placeholder="creature, anatomy" /></label>
+        <div className="rule-set-field rule-set-field-wide"><span>Tags</span><TagEditor tags={tags} onChange={setTags} knownTags={[...new Set(definitions.flatMap((d) => d.tags))].sort()} /></div>
         <label className="rule-set-field rule-set-field-wide"><span>Description</span><textarea maxLength={20000} rows={4} value={description} onChange={(event) => setDescription(event.target.value)} /></label>
         {artifact.definitionType === 'trait' && grantsDraft !== null
           ? <GuidedTraitGrantsEditor
@@ -461,9 +531,6 @@ export function RuleDefinitionEditForm({ artifact, definitions, modules, onCance
               : grantsDraft === null
                 ? <label className="rule-set-field rule-set-field-wide"><span>Rule data (JSON)</span><textarea className="rule-set-json-field" rows={10} value={body} onChange={(event) => setBody(event.target.value)} spellCheck={false} /></label>
                 : null}
-        {(guidedDraft || resolutionDraft)
-          ? <details className="guided-rule-advanced rule-set-field-wide"><summary>Advanced presentation data</summary><label className="rule-set-field"><span>Presentation (JSON)</span><textarea className="rule-set-json-field" rows={7} value={presentation} onChange={(event) => setPresentation(event.target.value)} spellCheck={false} /></label></details>
-          : <label className="rule-set-field rule-set-field-wide"><span>Presentation (JSON)</span><textarea className="rule-set-json-field" rows={7} value={presentation} onChange={(event) => setPresentation(event.target.value)} spellCheck={false} /></label>}
       </div>
       {error && <p className="rule-set-notice error" role="alert">{error}</p>}
       {conflict && (
@@ -498,7 +565,7 @@ export function RuleDefinitionEditForm({ artifact, definitions, modules, onCance
       <div className="rule-set-form-actions">
         <DeleteArtifactButton artifactName={artifact.name} artifactType="definition" onDelete={onDelete} />
         <div className="rule-set-editor-save-actions">
-          <button className="secondary-action" type="button" onClick={() => setShowHistory((v) => !v)}>{showHistory ? 'Hide history' : 'Edit history'}</button>
+          <button className="secondary-action" type="button" onClick={() => setShowHistory((v) => !v)}>{showHistory ? 'Hide History' : 'History'}</button>
           <button className="secondary-action" type="button" onClick={onCancel}>Cancel</button>
           {!conflict && <button className="primary-action" type="submit" disabled={submitting}>{submitting ? 'Saving…' : 'Save definition'}</button>}
         </div>

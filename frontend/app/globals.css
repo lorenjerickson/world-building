@@ -675,8 +675,9 @@ body {
 .rule-set-artifact-editor .rule-set-form-actions { align-items: flex-start; }
 .rule-set-artifact-editor .artifact-delete-control { margin: 0 auto 0 0; }
 .rule-set-editor-save-actions { align-items: center; display: flex; gap: 10px; }
-.rule-set-editor-heading { align-items: center; display: flex; justify-content: space-between; margin-bottom: 18px; }
+.rule-set-editor-heading { align-items: flex-start; display: flex; justify-content: space-between; margin-bottom: 18px; }
 .rule-set-editor-heading h4 { color: #fff; font-size: 1.15rem; margin: 4px 0 0; }
+.rule-set-editor-heading-right { align-items: center; display: flex; flex-direction: row; gap: 12px; }
 .rule-set-artifact-editor { background: rgba(5, 3, 6, .28); border: 1px solid rgba(229, 182, 76, .16); border-radius: 13px; padding: 18px; }
 .rule-set-artifact-link { background: none; border: 0; color: #fff; cursor: pointer; font: inherit; font-weight: 700; padding: 0; text-align: left; }
 .rule-set-artifact-link:hover { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
@@ -780,7 +781,31 @@ body {
 .grant-required-toggle:hover { background: rgba(229, 182, 76, .08); border-bottom-color: transparent; border-radius: 4px; }
 .guided-grant-remove { background: none; border: 0; color: var(--muted); cursor: pointer; font: inherit; font-size: 1.1rem; line-height: 1; margin-left: auto; padding: 0 2px; }
 .guided-grant-remove:hover { color: #f56565; }
-/* ComboToken — searchable, optionally hierarchical inline picker */
+/* Slot accepted-trait chips — a ComboToken paired with an inline × */
+.combo-option-create { border-bottom: 1px solid rgba(255,255,255,.07); color: var(--accent); font-style: italic; margin-bottom: 4px; }
+.combo-option-create strong { font-style: normal; }
+/* slot-affinity any/all mode toggle */
+.slot-affinity-mode-toggle { background: rgba(229,182,76,.12); border: 1px solid rgba(229,182,76,.3); border-radius: 6px; color: var(--accent); cursor: pointer; font: inherit; font-size: .82rem; font-weight: 700; letter-spacing: .03em; padding: 1px 7px; transition: background .12s, border-color .12s; }
+.slot-affinity-mode-toggle:hover { background: rgba(229,182,76,.22); border-color: var(--accent); }
+.slot-affinity-mode-toggle.is-all { background: rgba(148,48,229,.18); border-color: rgba(148,48,229,.5); color: #c084fc; }
+.slot-affinity-mode-toggle.is-all:hover { background: rgba(148,48,229,.28); }
+.guided-grant-trait-ref { align-items: center; display: inline-flex; gap: 2px; }
+.guided-grant-trait-ref-remove { background: none; border: 0; color: var(--muted); cursor: pointer; font: inherit; font-size: .9rem; line-height: 1; padding: 0 2px; }
+.guided-grant-trait-ref-remove:hover { color: #f56565; }
+/* Tag editor — badge-based tag input */
+.tag-editor { position: relative; width: 100%; }
+.tag-editor-field { align-items: center; background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.12); border-radius: 8px; cursor: text; display: flex; flex-wrap: wrap; gap: 5px; min-height: 38px; padding: 5px 8px; transition: border-color .15s; }
+.tag-editor-field:focus-within { border-color: rgba(229,182,76,.5); }
+.tag-badge { align-items: center; background: rgba(229,182,76,.15); border: 1px solid rgba(229,182,76,.3); border-radius: 5px; color: var(--accent); display: inline-flex; font-size: .8rem; font-weight: 600; gap: 3px; letter-spacing: .02em; padding: 4px 8px; }
+.tag-badge-remove { background: none; border: 0; color: rgba(229,182,76,.5); cursor: pointer; font: inherit; font-size: .9rem; line-height: 1; padding: 0 1px; }
+.tag-badge-remove:hover { color: #f56565; }
+.tag-editor-input,
+.rule-set-field .tag-editor-input { background: transparent !important; border: none !important; box-shadow: none !important; color: var(--accent); flex: 1 1 80px; font: inherit; font-size: .8rem; font-weight: 600; letter-spacing: .02em; min-width: 60px; opacity: .5; outline: none !important; padding: 0; width: auto; }
+.tag-suggestions { background: #1a1624; border: 1px solid rgba(255,255,255,.12); border-radius: 8px; box-shadow: 0 6px 24px rgba(0,0,0,.5); display: flex; flex-direction: column; left: 0; max-height: 180px; overflow-y: auto; position: absolute; right: 0; top: calc(100% + 4px); z-index: 40; }
+.tag-suggestion { background: none; border: 0; color: var(--text); cursor: pointer; font: inherit; font-size: .88rem; padding: 7px 12px; text-align: left; transition: background .1s; }
+.tag-suggestion:hover { background: rgba(255,255,255,.07); color: var(--accent); }
+/* Definition schema label + Show Config */
+.definition-schema-label { color: var(--muted); font-size: .8rem; font-weight: 500; letter-spacing: .04em; margin-left: 4px; opacity: .8; }/* ComboToken — searchable, optionally hierarchical inline picker */
 .combo-token-wrap { display: inline-flex; position: relative; }
 .combo-dropdown { background: #1b1228; border: 1px solid rgba(229, 182, 76, .38); border-radius: 10px; box-shadow: 0 10px 28px rgba(0,0,0,.65); display: flex; flex-direction: column; left: 0; max-height: 268px; min-width: 220px; overflow: hidden; position: absolute; top: calc(100% + 5px); z-index: 300; }
 .combo-search-wrap { border-bottom: 1px solid rgba(255,255,255,.07); padding: 8px; }

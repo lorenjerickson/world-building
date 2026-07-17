@@ -5,7 +5,7 @@ import type { RuleDefinitionResource } from '@/lib/rule-sets';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-export type GrantDataType = 'text' | 'number' | 'boolean' | 'enum' | 'trait' | 'modifier';
+export type GrantDataType = 'text' | 'number' | 'boolean' | 'enum' | 'trait' | 'modifier' | 'slot' | 'slot-affinity';
 export type ModifierOperation = 'increases' | 'decreases' | 'sets';
 
 export interface GrantDraft {
@@ -28,6 +28,14 @@ export interface GrantDraft {
   modifierOperation: ModifierOperation;
   modifierField: string;
   modifierAmount: string;
+  // slot
+  slotCount: string;
+  slotGrantTypes: string[];
+  acceptedTraits: string[];
+  acceptedTraitsMode: 'any' | 'all';
+  // slot-affinity
+  slotAffinityTypes: string[];
+  slotAffinityMode: 'any' | 'all';
 }
 
 export type TraitGrantsBody = {
@@ -49,6 +57,15 @@ type GrantEntry = {
   operation?: ModifierOperation;
   field?: string;
   amount?: number;
+  // slot
+  count?: number;
+  /** Type tags on the slot (e.g. ["armor", "hands"]). Replaces the old single slotType string. */
+  slotTypes?: string[];
+  acceptedTraits?: string[];
+  /** Matching mode for acceptedTraits: 'any' (OR) or 'all' (AND). Omitted means 'any'. */
+  acceptsMode?: 'any' | 'all';
+  // slot-affinity
+  mode?: 'any' | 'all';
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -59,6 +76,7 @@ export function newGrant(dataType: GrantDataType): GrantDraft {
     key: '', label: '', dataType, required: true,
     min: '', max: '', defaultNum: '', defaultStr: '', allowedValues: '', ref: '',
     modifierOperation: 'increases', modifierField: '', modifierAmount: '',
+    slotCount: '1', slotGrantTypes: [], acceptedTraits: [], acceptedTraitsMode: 'any', slotAffinityTypes: [], slotAffinityMode: 'any',
   };
 }
 
@@ -89,6 +107,18 @@ export function buildGrantsBody(grants: GrantDraft[]): TraitGrantsBody {
         entry.operation = g.modifierOperation;
         if (g.modifierField.trim()) entry.field = g.modifierField.trim();
         if (g.modifierAmount !== '') entry.amount = Number(g.modifierAmount);
+      } else if (g.dataType === 'slot') {
+        const tags = g.slotGrantTypes.filter(Boolean);
+        if (tags.length > 0) entry.slotTypes = tags;
+        if (g.slotCount !== '') entry.count = Number(g.slotCount);
+        if (g.acceptedTraits.length > 0) {
+          entry.acceptedTraits = g.acceptedTraits.filter(Boolean);
+          if (g.acceptedTraitsMode === 'all') entry.acceptsMode = 'all';
+        }
+      } else if (g.dataType === 'slot-affinity') {
+        const types = g.slotAffinityTypes.filter(Boolean);
+        if (types.length > 0) entry.slotTypes = types;
+        if (g.slotAffinityMode === 'all') entry.mode = 'all';
       }
       return entry;
     }),
@@ -114,6 +144,15 @@ export function grantsDraftFromBody(body: Record<string, unknown>): GrantDraft[]
     modifierOperation: (g.operation ?? 'increases') as ModifierOperation,
     modifierField: g.field ?? '',
     modifierAmount: g.amount != null ? String(g.amount) : '',
+    slotCount: g.count != null ? String(g.count) : '1',
+    // slotTypes is now an array for slot grants; accept legacy single-string slotType too
+    slotGrantTypes: g.dataType === 'slot'
+      ? (Array.isArray(g.slotTypes) ? g.slotTypes : (typeof (g as any).slotType === 'string' && (g as any).slotType ? [(g as any).slotType] : []))
+      : [],
+    acceptedTraits: Array.isArray(g.acceptedTraits) ? g.acceptedTraits : [],
+    acceptedTraitsMode: g.acceptsMode === 'all' ? 'all' : 'any',
+    slotAffinityTypes: g.dataType === 'slot-affinity' && Array.isArray(g.slotTypes) ? g.slotTypes : [],
+    slotAffinityMode: g.mode === 'all' ? 'all' : 'any',
   }));
 }
 
@@ -196,6 +235,8 @@ const DATA_TYPE_OPTIONS: ComboOption[] = [
   { value: 'enum',     label: 'one of…',     hint: 'enumerated' },
   { value: 'trait',    label: 'trait',       hint: 'trait reference' },
   { value: 'modifier', label: 'modifier',    hint: 'arithmetic change' },
+  { value: 'slot',         label: 'slot',            hint: 'equipment slot' },
+  { value: 'slot-affinity', label: 'slot-affinity',  hint: 'slot compatibility' },
 ];
 
 const BOOL_OPTIONS: ComboOption[] = [
@@ -218,6 +259,7 @@ function ComboToken({
   options,
   onSelect,
   hierarchical = false,
+  allowCreate = false,
   editingField,
   onEdit,
   onDone,
@@ -230,6 +272,8 @@ function ComboToken({
   options: ComboOption[];
   onSelect: (v: string) => void;
   hierarchical?: boolean;
+  /** When true, typing a value not in the list shows a "Create 'X'" option. */
+  allowCreate?: boolean;
   editingField: string | null;
   onEdit: (f: string) => void;
   onDone: () => void;
@@ -264,6 +308,11 @@ function ComboToken({
   const matchedOption = options.find((o) => o.value === value);
   const isUnresolvedRef = !matchedOption && GUID_RE.test(value ?? '');
   const currentLabel = matchedOption?.label ?? (isUnresolvedRef ? null : value || null);
+
+  // For allowCreate: whether the current search text is a new value not yet in options
+  const trimmedSearch = search.trim();
+  const searchIsNew = allowCreate && trimmedSearch.length > 0 &&
+    !options.some((o) => o.value.toLowerCase() === trimmedSearch.toLowerCase());
   const isSearching = search.length > 0;
 
   // Build list items (groups + leaves)
@@ -334,6 +383,7 @@ function ComboToken({
               onChange={(e) => setSearch(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Escape') { onDone(); }
+                if (e.key === 'Enter' && searchIsNew) { e.preventDefault(); handleSelect(trimmedSearch); }
                 if (e.key === 'Tab') { e.preventDefault(); e.shiftKey ? (onTabPrev ? onTabPrev() : onDone()) : (onTabNext ? onTabNext() : onDone()); }
               }}
             />
@@ -355,7 +405,13 @@ function ComboToken({
           )}
 
           <div className="combo-list" role="listbox">
-            {listItems.length === 0 && <div className="combo-empty">No matches</div>}
+            {searchIsNew && (
+              <button type="button" className="combo-option combo-option-create"
+                onClick={() => handleSelect(trimmedSearch)}>
+                Create <strong>"{trimmedSearch}"</strong>
+              </button>
+            )}
+            {listItems.length === 0 && !searchIsNew && <div className="combo-empty">No matches</div>}
             {listItems.map((item) => {
               if (item.kind === 'group') {
                 return (
@@ -434,14 +490,47 @@ function Token({
   );
 }
 
+// ── Slot type vocabulary ──────────────────────────────────────────────────────
+
+/**
+ * Collect all slotType strings currently defined in the rule set.
+ * Scans the body of every trait definition in the rule set (to pick up slot types
+ * authored in other traits) plus the live `currentGrants` being edited right now
+ * (so newly typed values show up immediately as options in the same editor session).
+ */
+function extractSlotTypes(
+  traitDefinitions: RuleDefinitionResource[],
+  currentGrants: GrantDraft[],
+): ComboOption[] {
+  const seen = new Set<string>();
+  // From persisted trait bodies
+  for (const def of traitDefinitions) {
+    if (def.body?.metamodelVersion !== 'trait/1' || !Array.isArray(def.body.grants)) continue;
+    for (const g of def.body.grants as GrantEntry[]) {
+      if (g.dataType === 'slot') {
+        // New format: slotTypes array
+        if (Array.isArray(g.slotTypes)) { for (const t of g.slotTypes) { if (t?.trim()) seen.add(t.trim()); } }
+        // Legacy format: single slotType string
+        else if (typeof (g as any).slotType === 'string' && (g as any).slotType.trim()) { seen.add((g as any).slotType.trim()); }
+      }
+    }
+  }
+  // From the grant rows being authored right now
+  for (const g of currentGrants) {
+    if (g.dataType === 'slot') { for (const t of g.slotGrantTypes) { if (t.trim()) seen.add(t.trim()); } }
+  }
+  return Array.from(seen).sort().map((t) => ({ value: t, label: t }));
+}
+
 // ── Grant row ─────────────────────────────────────────────────────────────────
 
 function GrantRow({
-  grant, traitDefinitions, fieldPathOptions, onChange, onRemove,
+  grant, traitDefinitions, fieldPathOptions, slotTypeOptions, onChange, onRemove,
 }: {
   grant: GrantDraft;
   traitDefinitions: RuleDefinitionResource[];
   fieldPathOptions: ComboOption[];
+  slotTypeOptions: ComboOption[];
   onChange: (patch: Partial<GrantDraft>) => void;
   onRemove: () => void;
 }) {
@@ -451,7 +540,20 @@ function GrantRow({
   function done() { setEditingField(null); }
 
   function tabFrom(fieldKey: string, direction: 'next' | 'prev' = 'next') {
-    const fields = getTabFields(grant.dataType);
+    // Slot and slot-affinity have dynamic field lists; compute them inline.
+    let fields: string[];
+    if (grant.dataType === 'slot') {
+      fields = [
+        'dataType',
+        ...grant.slotGrantTypes.map((_, i) => `slotGrantType_${i}`),
+        'slotCount', 'label',
+        ...grant.acceptedTraits.map((_, i) => `acceptedTrait_${i}`),
+      ];
+    } else if (grant.dataType === 'slot-affinity') {
+      fields = ['dataType', ...grant.slotAffinityTypes.map((_, i) => `slotAffinityType_${i}`)];
+    } else {
+      fields = getTabFields(grant.dataType);
+    }
     const idx = fields.indexOf(fieldKey);
     if (direction === 'next') {
       setEditingField(idx >= 0 && idx < fields.length - 1 ? fields[idx + 1] : null);
@@ -495,6 +597,125 @@ function GrantRow({
         <Token {...tok('modifierAmount')} value={grant.modifierAmount}
           placeholder="0" inputType="number"
           onChange={(v) => onChange({ modifierAmount: v })} />
+        <button type="button" className="guided-grant-remove" aria-label="Remove" onClick={onRemove}>×</button>
+      </div>
+    );
+  }
+
+  // ── Slot-affinity sentence: "[slot-affinity] → fits in: [head ×] [+]" ─────────
+  if (grant.dataType === 'slot-affinity') {
+    return (
+      <div className="guided-grant-sentence">
+        <ComboToken {...ct('dataType')} value={grant.dataType} placeholder="type"
+          options={DATA_TYPE_OPTIONS} onSelect={(v) => onChange({ dataType: v as GrantDataType })} />
+        → fits in
+        <button
+          type="button"
+          className={`slot-affinity-mode-toggle${grant.slotAffinityMode === 'all' ? ' is-all' : ''}`}
+          title={grant.slotAffinityMode === 'any'
+            ? 'Currently: matches any listed slot type (OR). Click to switch to ALL (AND).'
+            : 'Currently: requires all listed slot types (AND). Click to switch to ANY (OR).'}
+          onClick={() => onChange({ slotAffinityMode: grant.slotAffinityMode === 'any' ? 'all' : 'any' })}
+        >{grant.slotAffinityMode === 'any' ? 'any' : 'all'} of:</button>
+        {grant.slotAffinityTypes.map((slotType, i) => (
+          <span key={i} className="guided-grant-trait-ref">
+            <ComboToken
+              {...ct(`slotAffinityType_${i}`)}
+              value={slotType}
+              placeholder="— slot type —"
+              options={slotTypeOptions}
+              allowCreate
+              onSelect={(v) => {
+                const updated = [...grant.slotAffinityTypes];
+                updated[i] = v;
+                onChange({ slotAffinityTypes: updated });
+              }}
+            />
+            <button
+              type="button"
+              className="guided-grant-trait-ref-remove"
+              aria-label="Remove slot type"
+              onClick={() => onChange({ slotAffinityTypes: grant.slotAffinityTypes.filter((_, j) => j !== i) })}
+            >×</button>
+          </span>
+        ))}
+        <button
+          type="button"
+          className="secondary-action compact-action"
+          onClick={() => onChange({ slotAffinityTypes: [...grant.slotAffinityTypes, ''] })}
+        >+ slot type</button>
+        <button type="button" className="guided-grant-remove" aria-label="Remove" onClick={onRemove}>×</button>
+      </div>
+    );
+  }
+
+  // ── Slot sentence: "[slot] [type] → [count] [label] slot(s) accepting: [trait] [+]" ─
+  if (grant.dataType === 'slot') {
+    return (
+      <div className="guided-grant-sentence">
+        <ComboToken {...ct('dataType')} value={grant.dataType} placeholder="type"
+          options={DATA_TYPE_OPTIONS} onSelect={(v) => onChange({ dataType: v as GrantDataType })} />
+        {grant.slotGrantTypes.map((tag, i) => (
+          <span key={i} className="guided-grant-trait-ref">
+            <ComboToken
+              {...ct(`slotGrantType_${i}`)}
+              value={tag}
+              placeholder="— type —"
+              options={slotTypeOptions}
+              allowCreate
+              onSelect={(v) => {
+                const updated = [...grant.slotGrantTypes];
+                updated[i] = v;
+                onChange({ slotGrantTypes: updated });
+              }}
+            />
+            <button type="button" className="guided-grant-trait-ref-remove" aria-label="Remove type tag"
+              onClick={() => onChange({ slotGrantTypes: grant.slotGrantTypes.filter((_, j) => j !== i) })}>×</button>
+          </span>
+        ))}
+        <button type="button" className="secondary-action compact-action"
+          onClick={() => onChange({ slotGrantTypes: [...grant.slotGrantTypes, ''] })}>+ type</button>
+        →
+        <Token {...tok('slotCount')} value={grant.slotCount} placeholder="1"
+          inputType="number" onChange={(v) => onChange({ slotCount: v })} />
+        <Token {...tok('label')} value={grant.label} placeholder="slot label"
+          size="md" onChange={(v) => onChange({ label: v })} />
+        {' '}slot(s) accepting
+        <button
+          type="button"
+          className={`slot-affinity-mode-toggle${grant.acceptedTraitsMode === 'all' ? ' is-all' : ''}`}
+          title={grant.acceptedTraitsMode === 'any'
+            ? 'Currently: accepts items with any of the listed traits (OR). Click to switch to ONLY (AND).'
+            : 'Currently: requires items to have all listed traits (AND). Click to switch to ANY OF (OR).'}
+          onClick={() => onChange({ acceptedTraitsMode: grant.acceptedTraitsMode === 'any' ? 'all' : 'any' })}
+        >{grant.acceptedTraitsMode === 'any' ? 'any of:' : 'all of:'}</button>
+        {grant.acceptedTraits.map((ref, i) => (
+          <span key={i} className="guided-grant-trait-ref">
+            <ComboToken
+              {...ct(`acceptedTrait_${i}`)}
+              value={ref}
+              placeholder="— select trait —"
+              options={traitOptions}
+              hierarchical={hasHierarchy}
+              onSelect={(v) => {
+                const updated = [...grant.acceptedTraits];
+                updated[i] = v;
+                onChange({ acceptedTraits: updated });
+              }}
+            />
+            <button
+              type="button"
+              className="guided-grant-trait-ref-remove"
+              aria-label="Remove trait requirement"
+              onClick={() => onChange({ acceptedTraits: grant.acceptedTraits.filter((_, j) => j !== i) })}
+            >×</button>
+          </span>
+        ))}
+        <button
+          type="button"
+          className="secondary-action compact-action"
+          onClick={() => onChange({ acceptedTraits: [...grant.acceptedTraits, ''] })}
+        >+ trait</button>
         <button type="button" className="guided-grant-remove" aria-label="Remove" onClick={onRemove}>×</button>
       </div>
     );
@@ -599,6 +820,7 @@ export function GuidedTraitGrantsEditor({
   onChange: (grants: GrantDraft[]) => void;
 }) {
   const fieldPathOptions = useMemo(() => buildFieldPathOptions(fieldDefinitions), [fieldDefinitions]);
+  const slotTypeOptions = useMemo(() => extractSlotTypes(traitDefinitions, grants), [traitDefinitions, grants]);
 
   function update(id: string, patch: Partial<GrantDraft>) {
     onChange(grants.map((g) => g._id === id ? { ...g, ...patch } : g));
@@ -618,7 +840,7 @@ export function GuidedTraitGrantsEditor({
         <div className="guided-grants-list">
           {grants.map((grant) => (
             <GrantRow key={grant._id} grant={grant} traitDefinitions={traitDefinitions}
-              fieldPathOptions={fieldPathOptions}
+              fieldPathOptions={fieldPathOptions} slotTypeOptions={slotTypeOptions}
               onChange={(patch) => update(grant._id, patch)}
               onRemove={() => remove(grant._id)} />
           ))}
@@ -632,6 +854,8 @@ export function GuidedTraitGrantsEditor({
         <button type="button" className="secondary-action compact-action" onClick={() => add('enum')}>+ enum</button>
         <button type="button" className="secondary-action compact-action" onClick={() => add('trait')}>+ trait grant</button>
         <button type="button" className="secondary-action compact-action" onClick={() => add('modifier')}>+ modifier</button>
+        <button type="button" className="secondary-action compact-action" onClick={() => add('slot')}>+ slot</button>
+        <button type="button" className="secondary-action compact-action" onClick={() => add('slot-affinity')}>+ slot-affinity</button>
       </div>
     </div>
   );
