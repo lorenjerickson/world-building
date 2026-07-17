@@ -130,7 +130,7 @@ export interface CreateRuleDefinitionInput {
   provenance?: Record<string, unknown>;
 }
 
-export type UpdateRuleDefinitionInput = Partial<Omit<CreateRuleDefinitionInput, 'moduleId' | 'definitionType'>>;
+export type UpdateRuleDefinitionInput = Partial<Omit<CreateRuleDefinitionInput, 'definitionType'>>;
 
 export interface RuleDefinitionListOptions {
   type?: RuleDefinitionType;
@@ -139,4 +139,58 @@ export interface RuleDefinitionListOptions {
 
 export interface RuleCatalogActor extends RuleApiActor {
   workspaceExternalId: string;
+}
+
+// ── Export/import bundle ──────────────────────────────────────────────────────
+
+export interface RuleSetExportedModule {
+  namespace: string;
+  name: string;
+  description?: string;
+  sortOrder: number;
+  requiredEngineFeatureLevel: string;
+  dependencies: unknown[];
+  exports: unknown[];
+}
+
+export interface RuleSetExportedDefinition {
+  /** The definition's externalId at export time, used to remap cross-references on import. */
+  externalId?: string;
+  moduleNamespace: string;
+  definitionType: string;
+  name: string;
+  description?: string;
+  schemaVersion: number;
+  visibility: 'exported' | 'private';
+  body: Record<string, unknown>;
+  presentation?: Record<string, unknown>;
+  tags: string[];
+}
+
+export interface RuleSetExportBundle {
+  formatVersion: '1';
+  schemaId: 'rule-set-export';
+  exportedAt: string;
+  ruleSetName: string;
+  engineFeatureLevel: string;
+  modules: RuleSetExportedModule[];
+  definitions: RuleSetExportedDefinition[];
+}
+
+export interface RuleSetImportResult {
+  modulesCreated: number;
+  modulesExisting: number;
+  definitionsCreated: number;
+  definitionsFailed: Array<{ name: string; reason: string }>;
+}
+
+// ── Snapshot ──────────────────────────────────────────────────────────────────
+
+export interface RuleDefinitionSnapshotResource {
+  id: string;
+  definitionId: number;
+  name: string;
+  reason: 'autosave' | 'manual' | 'restore' | 'import';
+  actorId: string;
+  createdAt: string;
 }

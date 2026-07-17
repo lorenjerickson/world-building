@@ -346,6 +346,7 @@ export class PayloadRuleCatalogRepository implements RuleCatalogRepository {
     }
     if (input.description !== undefined) data.description = lexicalFromText(input.description);
     if (input.tags !== undefined) data.tags = tagsToCms(input.tags);
+    if (input.moduleId !== undefined) data.module = input.moduleId;
     const document = await this.mutate(
       `/api/rule-definitions/${definitionId}?depth=0&draft=true`,
       actor,

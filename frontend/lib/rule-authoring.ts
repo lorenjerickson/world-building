@@ -75,3 +75,89 @@ export async function previewRuleOperation(input: {
   });
   return readAuthoringResponse(response);
 }
+
+// ── Templates ─────────────────────────────────────────────────────────────────
+
+export type TemplateInstantiationResult = {
+  valid: boolean;
+  templateId: string;
+  parameterValues: Record<string, string | number | boolean>;
+  definitions: Array<{
+    definitionId: string;
+    definitionType: string;
+    name: string;
+    body: Record<string, unknown>;
+  }>;
+  diagnostics: AuthoringDiagnostic[];
+};
+
+export async function instantiateRuleTemplate(input: {
+  template: Record<string, unknown>;
+  values: Record<string, string | number | boolean>;
+}): Promise<TemplateInstantiationResult> {
+  const response = await fetch('/api/rule-authoring/templates/instantiate', {
+    body: JSON.stringify(input),
+    headers: { 'content-type': 'application/json' },
+    method: 'POST',
+  });
+  return readAuthoringResponse<TemplateInstantiationResult>(response);
+}
+
+// ── Assistant ─────────────────────────────────────────────────────────────────
+
+export type AssistantProposedDefinition = {
+  body: Record<string, unknown>;
+  valid: boolean;
+  diagnostics: AuthoringDiagnostic[];
+};
+
+export type AssistantResponse = {
+  questions: string[];
+  explanation: string;
+  assumptions: string[];
+  definitions: AssistantProposedDefinition[];
+  llmAvailable: boolean;
+};
+
+export type AssistantMessage = { role: 'user' | 'assistant'; content: string };
+
+export async function sendAssistantMessage(input: {
+  message: string;
+  history: AssistantMessage[];
+  context?: { definitions: Record<string, unknown>[] };
+}): Promise<AssistantResponse> {
+  const response = await fetch('/api/rule-authoring/assistant', {
+    body: JSON.stringify(input),
+    headers: { 'content-type': 'application/json' },
+    method: 'POST',
+  });
+  return readAuthoringResponse<AssistantResponse>(response);
+}
+
+export type FixtureRunResult = {
+  valid: boolean;
+  diagnostics: AuthoringDiagnostic[];
+  results: Array<{
+    name: string;
+    passed: boolean;
+    message?: string;
+    preview?: { outcome: string; trace: Array<{ stepId: string; kind: string; message: string; values?: Record<string, unknown> }> };
+  }>;
+};
+
+export async function runRuleFixtures(input: {
+  definitions: Record<string, unknown>[];
+  fixtures: Array<{
+    name: string;
+    operationId: string;
+    context: Record<string, unknown>;
+    expected: Record<string, unknown>;
+  }>;
+}): Promise<FixtureRunResult> {
+  const response = await fetch('/api/rule-authoring/fixtures/run', {
+    body: JSON.stringify(input),
+    headers: { 'content-type': 'application/json' },
+    method: 'POST',
+  });
+  return readAuthoringResponse<FixtureRunResult>(response);
+}

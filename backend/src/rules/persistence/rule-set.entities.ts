@@ -416,7 +416,40 @@ export class RuleAuthoringProposal {
   updatedAt: Date;
 }
 
+@Entity({ name: 'rule_definition_snapshots', synchronize: false })
+@Index(['ruleSetId', 'definitionId', 'createdAt'])
+export class RuleDefinitionSnapshot {
+  @PrimaryGeneratedColumn('uuid')
+  id: string;
+
+  @Column({ type: 'integer' })
+  ruleSetId: number;
+
+  @Column({ type: 'integer' })
+  @Index()
+  definitionId: number;
+
+  @Column()
+  definitionExternalId: string;
+
+  @Column()
+  name: string;
+
+  @Column({ type: 'jsonb' })
+  body: JsonObject;
+
+  @Column({ default: 'autosave' })
+  reason: 'autosave' | 'manual' | 'restore' | 'import';
+
+  @Column()
+  actorId: string;
+
+  @CreateDateColumn()
+  createdAt: Date;
+}
+
 export const ruleSetEntities = [
+  RuleDefinitionSnapshot,
   RuleSetComposition,
   RuleSetCompositionMember,
   RuleSetBinding,

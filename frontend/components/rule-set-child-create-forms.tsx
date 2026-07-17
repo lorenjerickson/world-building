@@ -11,7 +11,15 @@ import {
   guidedTraitDraftFromBody,
 } from './guided-trait-editor';
 import { AuthoringDiagnostic, validateRuleAuthoringDefinitions } from '@/lib/rule-authoring';
-import { buildResolutionBody, defaultResolutionDraft, GuidedResolutionEditor, ResolutionAuthoringDraft, resolutionDraftFromBody } from './guided-resolution-editor';
+import { buildResolutionBody, defaultResolutionDraft, GuidedResolutionEditor, type ResolutionAuthoringDraft, resolutionDraftFromBody } from './guided-resolution-editor';
+import {
+  buildTemplateBody,
+  defaultTemplateDraft,
+  GuidedTemplateEditor,
+  GuidedTemplateDraft,
+  TemplateInstantiationPanel,
+  templateDraftFromBody,
+} from './guided-template-editor';
 import {
   createRuleDefinition,
   createRuleModule,
@@ -23,6 +31,16 @@ import {
   updateRuleDefinition,
   updateRuleModule,
 } from '@/lib/rule-sets';
+import type { TemplateInstantiationResult } from '@/lib/rule-authoring';
+import { RuleDefinitionSnapshotPanel } from './rule-definition-snapshot-panel';
+import { getRuleDefinition, isStaleError } from '@/lib/rule-sets';
+import {
+  buildGrantsBody,
+  grantsDraftFromBody,
+  GuidedTraitGrantsEditor,
+  newGrant,
+  type GrantDraft,
+} from './guided-trait-grants-editor';
 
 type ChildFormProps<T> = {
   onCancel: () => void;
@@ -84,20 +102,24 @@ export function RuleModuleCreateForm({ onCancel, onCreated, ruleSetId }: ChildFo
 type DefinitionFormProps = ChildFormProps<RuleDefinitionResource> & {
   definitions: RuleDefinitionResource[];
   modules: RuleModuleResource[];
+  selectedModuleId?: number | null;
 };
 
-export function RuleDefinitionCreateForm({ definitions, modules, onCancel, onCreated, ruleSetId }: DefinitionFormProps) {
-  const [moduleId, setModuleId] = useState(String(modules[0]?.id ?? ''));
+export function RuleDefinitionCreateForm({ definitions, modules, onCancel, onCreated, ruleSetId, selectedModuleId }: DefinitionFormProps) {
+  const [moduleId, setModuleId] = useState(String(selectedModuleId ?? modules[0]?.id ?? ''));
   const [definitionType, setDefinitionType] = useState<RuleDefinitionType>('trait');
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [visibility, setVisibility] = useState<'exported' | 'private'>('exported');
   const [tags, setTags] = useState('');
   const [body, setBody] = useState('{}');
-  const [authoringExperience, setAuthoringExperience] = useState<'vision' | 'running' | 'advanced'>('vision');
+  const [bodyLabelSynced, setBodyLabelSynced] = useState(false);
+  const [authoringExperience, setAuthoringExperience] = useState<'grants' | 'vision' | 'running' | 'advanced'>('grants');
+  const [grantsDraft, setGrantsDraft] = useState<GrantDraft[]>(() => []);
   const [guidedDraft, setGuidedDraft] = useState<GuidedTraitDraft>(() => defaultGuidedTraitDraft('vision'));
   const [diagnostics, setDiagnostics] = useState<AuthoringDiagnostic[]>([]);
   const [resolutionDraft, setResolutionDraft] = useState<ResolutionAuthoringDraft>();
+  const [templateDraft, setTemplateDraft] = useState<GuidedTemplateDraft>();
   const [error, setError] = useState<string>();
   const [submitting, setSubmitting] = useState(false);
 
@@ -105,8 +127,12 @@ export function RuleDefinitionCreateForm({ definitions, modules, onCancel, onCre
     event.preventDefault();
     setError(undefined);
     let parsedBody: unknown;
-    const guided = definitionType === 'trait' && authoringExperience !== 'advanced';
-    if (guided || resolutionDraft) {
+    const guided = definitionType === 'trait' && (authoringExperience === 'vision' || authoringExperience === 'running');
+    if (authoringExperience === 'grants' && definitionType === 'trait') {
+      parsedBody = buildGrantsBody(grantsDraft);
+    } else if (templateDraft) {
+      parsedBody = buildTemplateBody(name, description, templateDraft);
+    } else if (guided || resolutionDraft) {
       parsedBody = guided ? buildGuidedTraitBody(name, description, guidedDraft) : buildResolutionBody(name, description, resolutionDraft!);
       try {
         const related = resolutionDraft ? definitions.map((item) => item.body).filter((item) => item.metamodelVersion === 'resolution/1') : [];
@@ -155,26 +181,38 @@ export function RuleDefinitionCreateForm({ definitions, modules, onCancel, onCre
   return (
     <form className="rule-set-child-form" onSubmit={submit}>
       <div className="rule-set-form-grid">
-        <label className="rule-set-field"><span>Name</span><input required maxLength={160} value={name} onChange={(event) => setName(event.target.value)} placeholder="Clawed" autoFocus /></label>
+        <label className="rule-set-field"><span>Name</span><input required maxLength={160} value={name} onChange={(event) => { const n = event.target.value; setName(n); if (definitionType === 'field' && bodyLabelSynced) setBody(JSON.stringify({ label: n }, null, 2)); }} placeholder="Clawed" autoFocus /></label>
         <label className="rule-set-field"><span>Module</span><select required value={moduleId} onChange={(event) => setModuleId(event.target.value)}>{modules.map((module) => <option key={module.id} value={module.id}>{module.name} ({module.namespace})</option>)}</select></label>
-        <label className="rule-set-field"><span>Definition type</span><select value={definitionType} onChange={(event) => { const type = event.target.value as RuleDefinitionType; setDefinitionType(type); setDiagnostics([]); setResolutionDraft(type === 'check' || type === 'operation' ? defaultResolutionDraft(type) : undefined); }}>{ruleDefinitionTypes.map((type) => <option key={type} value={type}>{type}</option>)}</select></label>
+        <label className="rule-set-field"><span>Definition type</span><select value={definitionType} onChange={(event) => { const type = event.target.value as RuleDefinitionType; setDefinitionType(type); setDiagnostics([]); const resolutionTypes: RuleDefinitionType[] = ['modifier', 'check', 'resource', 'effect', 'event', 'operation']; setResolutionDraft(resolutionTypes.includes(type) ? defaultResolutionDraft(type as ResolutionAuthoringDraft['kind']) : undefined); setTemplateDraft(type === 'template' ? defaultTemplateDraft() : undefined); if (type === 'field') { setBody(JSON.stringify({ label: name.trim() }, null, 2)); setBodyLabelSynced(true); } else { setBodyLabelSynced(false); } }}>{ruleDefinitionTypes.map((type) => <option key={type} value={type}>{type}</option>)}</select></label>
         <label className="rule-set-field"><span>Visibility</span><select value={visibility} onChange={(event) => setVisibility(event.target.value as 'exported' | 'private')}><option value="exported">Exported</option><option value="private">Private</option></select></label>
         {definitionType === 'trait' && <label className="rule-set-field rule-set-field-wide"><span>Authoring experience</span><select value={authoringExperience} onChange={(event) => {
-          const experience = event.target.value as 'vision' | 'running' | 'advanced';
+          const experience = event.target.value as 'grants' | 'vision' | 'running' | 'advanced';
           setAuthoringExperience(experience);
           setDiagnostics([]);
-          if (experience !== 'advanced') {
+          if (experience === 'grants') {
+            setGrantsDraft([]);
+          } else if (experience === 'vision' || experience === 'running') {
             setGuidedDraft(defaultGuidedTraitDraft(experience));
             if (!name.trim() || name === 'Vision' || name === 'Running') setName(experience === 'vision' ? 'Vision' : 'Running');
           }
-        }}><option value="vision">Guided visual-perception trait</option><option value="running">Guided running trait</option><option value="advanced">Advanced JSON draft</option></select><small>Guided templates produce typed canonical rule data and validate it before saving.</small></label>}
+        }}><option value="grants">Grants editor</option><option value="vision">Guided visual-perception trait</option><option value="running">Guided running trait</option><option value="advanced">Advanced JSON draft</option></select><small>The grants editor defines what this trait gives to any entity that holds it.</small></label>}
         <label className="rule-set-field rule-set-field-wide"><span>Description</span><textarea maxLength={20000} rows={3} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Explain what this rule means and when it applies." /></label>
         <label className="rule-set-field rule-set-field-wide"><span>Tags</span><input value={tags} onChange={(event) => setTags(event.target.value)} placeholder="creature, anatomy" /></label>
-        {definitionType === 'trait' && authoringExperience !== 'advanced'
+        {definitionType === 'trait' && authoringExperience === 'grants'
+          ? <GuidedTraitGrantsEditor
+              traitName={name}
+              grants={grantsDraft}
+              traitDefinitions={definitions.filter((d) => d.definitionType === 'trait')}
+              fieldDefinitions={definitions.filter((d) => d.definitionType === 'field')}
+              onChange={setGrantsDraft}
+            />
+          : definitionType === 'trait' && authoringExperience !== 'advanced'
           ? <GuidedTraitEditor description={description} diagnostics={diagnostics} draft={guidedDraft} name={name} onChange={setGuidedDraft} />
-          : resolutionDraft
-            ? <GuidedResolutionEditor description={description} diagnostics={diagnostics} draft={resolutionDraft} name={name} onChange={setResolutionDraft} relatedBodies={definitions.map((item) => item.body)} />
-            : <label className="rule-set-field rule-set-field-wide"><span>Rule data (JSON)</span><textarea className="rule-set-json-field" rows={7} value={body} onChange={(event) => setBody(event.target.value)} spellCheck={false} /><small>Advanced structured data interpreted by this definition type. An empty object is valid for an initial draft.</small></label>}
+          : templateDraft
+            ? <GuidedTemplateEditor description={description} diagnostics={diagnostics} draft={templateDraft} name={name} onChange={setTemplateDraft} />
+            : resolutionDraft
+              ? <GuidedResolutionEditor description={description} diagnostics={diagnostics} draft={resolutionDraft} name={name} onChange={setResolutionDraft} relatedBodies={definitions.map((item) => item.body)} />
+              : <label className="rule-set-field rule-set-field-wide"><span>Rule data (JSON)</span><textarea className="rule-set-json-field" rows={7} value={body} onChange={(event) => { setBody(event.target.value); setBodyLabelSynced(false); }} spellCheck={false} /><small>Advanced structured data interpreted by this definition type. An empty object is valid for an initial draft.</small></label>}
       </div>
       {error && <p className="rule-set-notice error" role="alert">{error}</p>}
       <div className="rule-set-form-actions"><button className="secondary-action" type="button" onClick={onCancel}>Cancel</button><button className="primary-action" type="submit" disabled={submitting || !moduleId}>{submitting ? 'Creating…' : 'Create definition'}</button></div>
@@ -257,12 +295,13 @@ export function RuleModuleEditForm({ artifact, onCancel, onDelete, onSaved, rule
 
 type DefinitionEditFormProps = EditFormProps<RuleDefinitionResource> & {
   definitions: RuleDefinitionResource[];
-  moduleName: string;
+  modules: RuleModuleResource[];
 };
 
-export function RuleDefinitionEditForm({ artifact, definitions, moduleName, onCancel, onDelete, onSaved, ruleSetId }: DefinitionEditFormProps) {
+export function RuleDefinitionEditForm({ artifact, definitions, modules, onCancel, onDelete, onSaved, ruleSetId }: DefinitionEditFormProps) {
   const [name, setName] = useState(artifact.name);
   const [description, setDescription] = useState(artifact.description ?? '');
+  const [moduleId, setModuleId] = useState(artifact.moduleId);
   const [visibility, setVisibility] = useState(artifact.visibility);
   const [schemaVersion, setSchemaVersion] = useState(String(artifact.schemaVersion));
   const [tags, setTags] = useState(artifact.tags.join(', '));
@@ -270,9 +309,42 @@ export function RuleDefinitionEditForm({ artifact, definitions, moduleName, onCa
   const [guidedDraft, setGuidedDraft] = useState<GuidedTraitDraft | undefined>(() => artifact.definitionType === 'trait' ? guidedTraitDraftFromBody(artifact.body) : undefined);
   const [diagnostics, setDiagnostics] = useState<AuthoringDiagnostic[]>([]);
   const [resolutionDraft, setResolutionDraft] = useState<ResolutionAuthoringDraft | undefined>(() => resolutionDraftFromBody(artifact.body));
+  const [templateDraft, setTemplateDraft] = useState<GuidedTemplateDraft | undefined>(() => artifact.definitionType === 'template' ? templateDraftFromBody(artifact.body) : undefined);
+  const [instantiationResult, setInstantiationResult] = useState<TemplateInstantiationResult>();
+  const [instantiationError, setInstantiationError] = useState<string>();
+  const [bulkCreating, setBulkCreating] = useState(false);
   const [presentation, setPresentation] = useState(JSON.stringify(artifact.presentation ?? {}, null, 2));
   const [error, setError] = useState<string>();
   const [submitting, setSubmitting] = useState(false);
+  const [grantsDraft, setGrantsDraft] = useState<GrantDraft[] | null>(() =>
+    artifact.definitionType === 'trait' ? grantsDraftFromBody(artifact.body) : null,
+  );
+  const [conflict, setConflict] = useState<{ serverUpdatedAt: string; serverName: string } | undefined>();
+  const [showHistory, setShowHistory] = useState(false);
+
+  async function bulkCreateFromTemplate(result: TemplateInstantiationResult) {
+    setBulkCreating(true);
+    setInstantiationError(undefined);
+    setInstantiationResult(result);
+    const failed: string[] = [];
+    for (const def of result.definitions) {
+      try {
+        await createRuleDefinition(ruleSetId, {
+          body: def.body,
+          definitionType: def.definitionType as RuleDefinitionType,
+          description: undefined,
+          moduleId: artifact.moduleId,
+          name: def.name,
+          tags: [],
+          visibility: 'exported',
+        });
+      } catch {
+        failed.push(def.name);
+      }
+    }
+    setBulkCreating(false);
+    if (failed.length) setInstantiationError(`Failed to create: ${failed.join(', ')}.`);
+  }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -280,7 +352,7 @@ export function RuleDefinitionEditForm({ artifact, definitions, moduleName, onCa
     let parsedBody: unknown;
     let parsedPresentation: unknown;
     try {
-      parsedBody = guidedDraft ? buildGuidedTraitBody(name, description, guidedDraft) : resolutionDraft ? buildResolutionBody(name, description, resolutionDraft) : JSON.parse(body);
+      parsedBody = grantsDraft ? buildGrantsBody(grantsDraft) : guidedDraft ? buildGuidedTraitBody(name, description, guidedDraft) : templateDraft ? buildTemplateBody(name, description, templateDraft) : resolutionDraft ? buildResolutionBody(name, description, resolutionDraft) : JSON.parse(body);
       parsedPresentation = JSON.parse(presentation);
     } catch {
       setError('Rule data and presentation must be valid JSON.');
@@ -307,11 +379,13 @@ export function RuleDefinitionEditForm({ artifact, definitions, moduleName, onCa
     }
 
     setSubmitting(true);
+    setConflict(undefined);
     try {
       const definition = await updateRuleDefinition(ruleSetId, artifact.id, {
         body: parsedBody as Record<string, unknown>,
         description: description.trim(),
-        expectedUpdatedAt: artifact.updatedAt,
+        expectedUpdatedAt: conflict?.serverUpdatedAt ?? artifact.updatedAt,
+        ...(moduleId !== artifact.moduleId ? { moduleId } : {}),
         name: name.trim(),
         presentation: parsedPresentation as Record<string, unknown>,
         schemaVersion: Number(schemaVersion),
@@ -320,7 +394,18 @@ export function RuleDefinitionEditForm({ artifact, definitions, moduleName, onCa
       });
       onSaved(definition);
     } catch (cause) {
-      setError(cause instanceof RuleSetApiError ? cause.message : 'The definition could not be saved.');
+      if (isStaleError(cause)) {
+        const serverUpdatedAt = cause.context.currentUpdatedAt;
+        let serverName = artifact.name;
+        try {
+          const server = await getRuleDefinition(ruleSetId, artifact.id);
+          serverName = server.name;
+        } catch { /* use fallback */ }
+        setConflict({ serverUpdatedAt, serverName });
+        setError('This definition was updated by someone else. Review the conflict below before saving.');
+      } else {
+        setError(cause instanceof RuleSetApiError ? cause.message : 'The definition could not be saved.');
+      }
     } finally {
       setSubmitting(false);
     }
@@ -331,24 +416,100 @@ export function RuleDefinitionEditForm({ artifact, definitions, moduleName, onCa
       <div className="rule-set-editor-heading"><div><span className="eyebrow">Edit or rename {artifact.definitionType}</span><h4>{artifact.name}</h4></div><span className="badge">{artifact.status}</span></div>
       <div className="rule-set-form-grid">
         <label className="rule-set-field"><span>Name</span><input required maxLength={160} value={name} onChange={(event) => setName(event.target.value)} autoFocus /></label>
-        <label className="rule-set-field"><span>Module</span><input value={moduleName} disabled title="Clone the definition to move it to another module." /></label>
+        <label className="rule-set-field"><span>Module</span><select value={moduleId} onChange={(e) => setModuleId(Number(e.target.value))}>{modules.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}</select></label>
         <label className="rule-set-field"><span>Definition type</span><input value={artifact.definitionType} disabled /></label>
         <label className="rule-set-field"><span>Visibility</span><select value={visibility} onChange={(event) => setVisibility(event.target.value as 'exported' | 'private')}><option value="exported">Exported</option><option value="private">Private</option></select></label>
         <label className="rule-set-field"><span>Schema version</span><input required type="number" min={1} value={schemaVersion} onChange={(event) => setSchemaVersion(event.target.value)} /></label>
         <label className="rule-set-field"><span>Tags</span><input value={tags} onChange={(event) => setTags(event.target.value)} placeholder="creature, anatomy" /></label>
         <label className="rule-set-field rule-set-field-wide"><span>Description</span><textarea maxLength={20000} rows={4} value={description} onChange={(event) => setDescription(event.target.value)} /></label>
-        {artifact.definitionType === 'trait' && !guidedDraft && <div className="guided-rule-conversion rule-set-field-wide"><div><strong>Use guided authoring</strong><p>Convert this draft to a supported creature-capability template. The existing rule data is retained until you save.</p></div><div><button className="secondary-action" type="button" onClick={() => { setGuidedDraft(defaultGuidedTraitDraft('vision')); setDiagnostics([]); }}>Visual perception</button><button className="secondary-action" type="button" onClick={() => { setGuidedDraft(defaultGuidedTraitDraft('running')); setDiagnostics([]); }}>Running movement</button></div></div>}
+        {artifact.definitionType === 'trait' && grantsDraft !== null
+          ? <GuidedTraitGrantsEditor
+              traitName={name}
+              grants={grantsDraft}
+              traitDefinitions={definitions.filter((d) => d.definitionType === 'trait' && d.id !== artifact.id)}
+              fieldDefinitions={definitions.filter((d) => d.definitionType === 'field')}
+              onChange={setGrantsDraft}
+            />
+          : artifact.definitionType === 'trait' && !guidedDraft && (
+            <div className="guided-rule-conversion rule-set-field-wide">
+              <div><strong>Use guided authoring</strong><p>Choose an editor to replace the raw JSON draft. Your current rule data is retained until you save.</p></div>
+              <div>
+                <button className="secondary-action" type="button" onClick={() => { setGrantsDraft([]); }}>Grants editor</button>
+                <button className="secondary-action" type="button" onClick={() => { setGuidedDraft(defaultGuidedTraitDraft('vision')); setDiagnostics([]); }}>Visual perception</button>
+                <button className="secondary-action" type="button" onClick={() => { setGuidedDraft(defaultGuidedTraitDraft('running')); setDiagnostics([]); }}>Running movement</button>
+              </div>
+            </div>
+          )}
         {guidedDraft
           ? <><GuidedTraitEditor description={description} diagnostics={diagnostics} draft={guidedDraft} name={name} onChange={setGuidedDraft} /><div className="guided-rule-exit rule-set-field-wide"><button type="button" onClick={() => { setGuidedDraft(undefined); setDiagnostics([]); }}>Return to the advanced draft without saving this guided version</button></div></>
-          : resolutionDraft
-            ? <><GuidedResolutionEditor description={description} diagnostics={diagnostics} draft={resolutionDraft} name={name} onChange={setResolutionDraft} relatedBodies={definitions.map((item) => item.body)} /><div className="guided-rule-exit rule-set-field-wide"><button type="button" onClick={() => { setResolutionDraft(undefined); setDiagnostics([]); }}>Return to the advanced draft without saving this guided version</button></div></>
-          : <label className="rule-set-field rule-set-field-wide"><span>Rule data (JSON)</span><textarea className="rule-set-json-field" rows={10} value={body} onChange={(event) => setBody(event.target.value)} spellCheck={false} /></label>}
+          : templateDraft
+            ? <>
+                <GuidedTemplateEditor description={description} diagnostics={diagnostics} draft={templateDraft} name={name} onChange={setTemplateDraft} />
+                <div className="rule-set-field rule-set-field-wide">
+                  <TemplateInstantiationPanel
+                    templateBody={buildTemplateBody(name, description, templateDraft)}
+                    draft={templateDraft}
+                    onDefinitionsReady={bulkCreateFromTemplate}
+                  />
+                  {bulkCreating && <p className="rule-set-notice">Creating definitions…</p>}
+                  {instantiationError && <p className="rule-set-notice error" role="alert">{instantiationError}</p>}
+                  {instantiationResult?.valid && !bulkCreating && !instantiationError && <p className="rule-set-notice">Created {instantiationResult.definitions.length} definition{instantiationResult.definitions.length !== 1 ? 's' : ''}.</p>}
+                </div>
+              </>
+            : resolutionDraft
+              ? <><GuidedResolutionEditor description={description} diagnostics={diagnostics} draft={resolutionDraft} name={name} onChange={setResolutionDraft} relatedBodies={definitions.map((item) => item.body)} /><div className="guided-rule-exit rule-set-field-wide"><button type="button" onClick={() => { setResolutionDraft(undefined); setDiagnostics([]); }}>Return to the advanced draft without saving this guided version</button></div></>
+              : grantsDraft === null
+                ? <label className="rule-set-field rule-set-field-wide"><span>Rule data (JSON)</span><textarea className="rule-set-json-field" rows={10} value={body} onChange={(event) => setBody(event.target.value)} spellCheck={false} /></label>
+                : null}
         {(guidedDraft || resolutionDraft)
           ? <details className="guided-rule-advanced rule-set-field-wide"><summary>Advanced presentation data</summary><label className="rule-set-field"><span>Presentation (JSON)</span><textarea className="rule-set-json-field" rows={7} value={presentation} onChange={(event) => setPresentation(event.target.value)} spellCheck={false} /></label></details>
           : <label className="rule-set-field rule-set-field-wide"><span>Presentation (JSON)</span><textarea className="rule-set-json-field" rows={7} value={presentation} onChange={(event) => setPresentation(event.target.value)} spellCheck={false} /></label>}
       </div>
       {error && <p className="rule-set-notice error" role="alert">{error}</p>}
-      <div className="rule-set-form-actions"><DeleteArtifactButton artifactName={artifact.name} artifactType="definition" onDelete={onDelete} /><div className="rule-set-editor-save-actions"><button className="secondary-action" type="button" onClick={onCancel}>Cancel</button><button className="primary-action" type="submit" disabled={submitting}>{submitting ? 'Saving…' : 'Save definition'}</button></div></div>
+      {conflict && (
+        <div className="rule-set-conflict-panel" role="alert">
+          <p className="rule-set-conflict-heading">Conflict: another save was made</p>
+          <p className="subtext">The server version is named <strong>{conflict.serverName}</strong>. Your unsaved changes are still in the form above.</p>
+          <div className="rule-set-conflict-actions">
+            <button
+              className="secondary-action"
+              type="button"
+              onClick={async () => {
+                try {
+                  const server = await getRuleDefinition(ruleSetId, artifact.id);
+                  onSaved(server);
+                } catch {
+                  setError('Could not reload the server version.');
+                }
+              }}
+            >
+              Discard my changes and reload server version
+            </button>
+            <button
+              className="primary-action"
+              type="submit"
+              disabled={submitting}
+            >
+              {submitting ? 'Saving…' : 'Force save my version'}
+            </button>
+          </div>
+        </div>
+      )}
+      <div className="rule-set-form-actions">
+        <DeleteArtifactButton artifactName={artifact.name} artifactType="definition" onDelete={onDelete} />
+        <div className="rule-set-editor-save-actions">
+          <button className="secondary-action" type="button" onClick={() => setShowHistory((v) => !v)}>{showHistory ? 'Hide history' : 'Edit history'}</button>
+          <button className="secondary-action" type="button" onClick={onCancel}>Cancel</button>
+          {!conflict && <button className="primary-action" type="submit" disabled={submitting}>{submitting ? 'Saving…' : 'Save definition'}</button>}
+        </div>
+      </div>
+      {showHistory && (
+        <RuleDefinitionSnapshotPanel
+          ruleSetId={ruleSetId}
+          definitionId={artifact.id}
+          onRestored={(definition) => onSaved(definition)}
+        />
+      )}
     </form>
   );
 }

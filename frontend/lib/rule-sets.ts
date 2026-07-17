@@ -118,11 +118,11 @@ export interface CreateRuleDefinitionInput {
   tags?: string[];
 }
 
-export type UpdateRuleDefinitionInput = Partial<Omit<CreateRuleDefinitionInput, 'moduleId' | 'definitionType'>> & {
+export type UpdateRuleDefinitionInput = Partial<Omit<CreateRuleDefinitionInput, 'definitionType'>> & {
   expectedUpdatedAt: string;
 };
 
-type RuleApiError = { code?: string; message?: string; retryable?: boolean };
+type RuleApiError = { code?: string; message?: string; retryable?: boolean; currentUpdatedAt?: string };
 
 export class RuleSetApiError extends Error {
   constructor(
@@ -130,6 +130,7 @@ export class RuleSetApiError extends Error {
     readonly code: string,
     readonly status: number,
     readonly retryable: boolean,
+    readonly context: Record<string, unknown> = {},
   ) {
     super(message);
   }
@@ -138,11 +139,13 @@ export class RuleSetApiError extends Error {
 async function readResponse<T>(response: Response): Promise<T> {
   const body = await response.json().catch(() => ({})) as T & RuleApiError;
   if (!response.ok) {
+    const { code, message, retryable, ...context } = body as RuleApiError;
     throw new RuleSetApiError(
-      body.message || 'The rule-set request failed.',
-      body.code || 'RULE_REQUEST_FAILED',
+      message || 'The rule-set request failed.',
+      code || 'RULE_REQUEST_FAILED',
       response.status,
-      body.retryable === true,
+      retryable === true,
+      context as Record<string, unknown>,
     );
   }
   return body;
@@ -170,6 +173,11 @@ export async function getRuleSet(id: number, signal?: AbortSignal): Promise<Rule
 export async function getRuleSetChildren<T>(id: number, child: 'modules' | 'definitions' | 'releases', signal?: AbortSignal): Promise<T[]> {
   const response = await fetch(`/api/rule-sets/${id}/${child}`, { cache: 'no-store', signal });
   return readResponse<T[]>(response);
+}
+
+export async function getRuleDefinition(ruleSetId: number, definitionId: number): Promise<RuleDefinitionResource> {
+  const response = await fetch(`/api/rule-sets/${ruleSetId}/definitions/${definitionId}`, { cache: 'no-store' });
+  return readResponse<RuleDefinitionResource>(response);
 }
 
 export async function createRuleModule(ruleSetId: number, input: CreateRuleModuleInput): Promise<RuleModuleResource> {
@@ -224,4 +232,84 @@ export async function deleteRuleSet(ruleSet: RuleSetResource): Promise<void> {
   const params = new URLSearchParams({ expectedUpdatedAt: ruleSet.updatedAt });
   const response = await fetch(`/api/rule-sets/${ruleSet.id}?${params}`, { method: 'DELETE' });
   await readResponse<{ deleted: true; id: number }>(response);
+}
+
+// ── Export / import ───────────────────────────────────────────────────────────
+
+export type RuleSetExportBundle = {
+  formatVersion: '1';
+  schemaId: 'rule-set-export';
+  exportedAt: string;
+  ruleSetName: string;
+  engineFeatureLevel: string;
+  modules: Array<{
+    namespace: string;
+    name: string;
+    description?: string;
+    sortOrder: number;
+    requiredEngineFeatureLevel: string;
+    dependencies: unknown[];
+    exports: unknown[];
+  }>;
+  definitions: Array<{
+    /** Original externalId — used by the import handler to remap cross-references. */
+    externalId?: string;
+    moduleNamespace: string;
+    definitionType: string;
+    name: string;
+    description?: string;
+    schemaVersion: number;
+    visibility: 'exported' | 'private';
+    body: Record<string, unknown>;
+    presentation?: Record<string, unknown>;
+    tags: string[];
+  }>;
+};
+
+export type RuleSetImportResult = {
+  modulesCreated: number;
+  modulesExisting: number;
+  definitionsCreated: number;
+  definitionsFailed: Array<{ name: string; reason: string }>;
+};
+
+export async function exportRuleSet(ruleSetId: number): Promise<RuleSetExportBundle> {
+  const response = await fetch(`/api/rule-sets/${ruleSetId}/export`);
+  return readResponse<RuleSetExportBundle>(response);
+}
+
+export async function importRuleSet(ruleSetId: number, bundle: RuleSetExportBundle): Promise<RuleSetImportResult> {
+  const response = await fetch(`/api/rule-sets/${ruleSetId}/import`, {
+    body: JSON.stringify(bundle),
+    headers: { 'content-type': 'application/json' },
+    method: 'POST',
+  });
+  return readResponse<RuleSetImportResult>(response);
+}
+
+// ── Snapshots ─────────────────────────────────────────────────────────────────
+
+export type RuleDefinitionSnapshotResource = {
+  id: string;
+  definitionId: number;
+  name: string;
+  reason: 'autosave' | 'manual' | 'restore' | 'import';
+  actorId: string;
+  createdAt: string;
+};
+
+export async function listDefinitionSnapshots(ruleSetId: number, definitionId: number): Promise<RuleDefinitionSnapshotResource[]> {
+  const response = await fetch(`/api/rule-sets/${ruleSetId}/definitions/${definitionId}/snapshots`);
+  return readResponse<RuleDefinitionSnapshotResource[]>(response);
+}
+
+export async function restoreDefinitionSnapshot(ruleSetId: number, definitionId: number, snapshotId: string): Promise<RuleDefinitionResource> {
+  const response = await fetch(`/api/rule-sets/${ruleSetId}/definitions/${definitionId}/snapshots/${snapshotId}/restore`, { method: 'POST' });
+  return readResponse<RuleDefinitionResource>(response);
+}
+
+// ── Stale-write helpers ───────────────────────────────────────────────────────
+
+export function isStaleError(error: unknown): error is RuleSetApiError & { context: { currentUpdatedAt: string } } {
+  return error instanceof RuleSetApiError && error.code === 'RULE_DRAFT_STALE';
 }

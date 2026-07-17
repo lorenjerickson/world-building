@@ -10,10 +10,13 @@ import {
   RuleModuleCreateForm,
   RuleModuleEditForm,
 } from './rule-set-child-create-forms';
+import { RuleAssistantPanel } from './rule-assistant-panel';
+import { RuleSetImportModal } from './rule-set-import-modal';
 import {
   deleteRuleSet,
   deleteRuleDefinition,
   deleteRuleModule,
+  exportRuleSet,
   getRuleSet,
   getRuleSetChildren,
   RuleDefinitionResource,
@@ -46,6 +49,10 @@ export function RuleSetDetailRoute({ ruleSetId }: { ruleSetId: string }) {
   const [definitionType, setDefinitionType] = useState('all');
   const [definitionVisibility, setDefinitionVisibility] = useState('all');
   const [definitionStatus, setDefinitionStatus] = useState('all');
+  const [selectedModuleId, setSelectedModuleId] = useState<number | null>(null);
+  const [showAssistant, setShowAssistant] = useState(false);
+  const [showImport, setShowImport] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
     if (invalidId) return;
@@ -79,13 +86,17 @@ export function RuleSetDetailRoute({ ruleSetId }: { ruleSetId: string }) {
     const search = definitionSearch.trim().toLowerCase();
     return definitions.filter((definition) => {
       const matchesSearch = !search || [definition.name, definition.description ?? '', definition.definitionType, ...definition.tags].some((value) => value.toLowerCase().includes(search));
+      // selectedModuleId (left-panel selection) takes precedence over the module dropdown
+      const matchesModule = selectedModuleId != null
+        ? definition.moduleId === selectedModuleId
+        : definitionModule === 'all' || definition.moduleId === Number(definitionModule);
       return matchesSearch
-        && (definitionModule === 'all' || definition.moduleId === Number(definitionModule))
+        && matchesModule
         && (definitionType === 'all' || definition.definitionType === definitionType)
         && (definitionVisibility === 'all' || definition.visibility === definitionVisibility)
         && (definitionStatus === 'all' || definition.status === definitionStatus);
     });
-  }, [definitionModule, definitionSearch, definitionStatus, definitionType, definitionVisibility, definitions]);
+  }, [definitionModule, definitionSearch, definitionStatus, definitionType, definitionVisibility, definitions, selectedModuleId]);
 
   if (invalidId) return <main className="dashboard-container"><header className="dashboard-header"><div className="header-left"><span className="eyebrow">Rule set</span><h2>Unable to open rule set</h2></div><Link href="/rule-sets" className="secondary-action">Back to rule sets</Link></header><p className="rule-set-notice error">This rule-set address is invalid.</p></main>;
   if (error) return <main className="dashboard-container"><header className="dashboard-header"><div className="header-left"><span className="eyebrow">Rule set</span><h2>Unable to open rule set</h2></div><Link href="/rule-sets" className="secondary-action">Back to rule sets</Link></header><p className="rule-set-notice error">{error}</p></main>;
@@ -95,9 +106,15 @@ export function RuleSetDetailRoute({ ruleSetId }: { ruleSetId: string }) {
     <main className="dashboard-container rule-set-detail-container">
       <header className="dashboard-header rule-set-detail-header" style={{ borderBottomColor: ruleSet.dashboard.accentColor || '#e5b64c' }}>
         <div className="header-left"><span className="eyebrow">{ruleSet.status} · {ruleSet.lifecycle}</span><h2>{ruleSet.name}</h2><p>{ruleSet.summary}</p></div>
-        <div className="section-actions"><Link href="/rule-sets" className="secondary-action">Back to rule sets</Link><DeleteArtifactButton artifactName={ruleSet.name} artifactType="rule set" disabled={releases.length > 0} onDelete={async () => { await deleteRuleSet(ruleSet); router.replace('/rule-sets'); router.refresh(); }} /></div>
+        <div className="section-actions">
+          <Link href="/rule-sets" className="secondary-action">Back to rule sets</Link>
+          <button type="button" className="secondary-action" disabled={exporting} onClick={async () => { setExporting(true); try { const bundle = await exportRuleSet(numericId); const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `${ruleSet.slug || ruleSet.name.toLowerCase().replace(/\s+/g, '-')}-export.json`; a.click(); URL.revokeObjectURL(url); } catch (cause) { /* silently ignore */ } finally { setExporting(false); } }}>{exporting ? 'Exporting…' : 'Export'}</button>
+          <button type="button" className="secondary-action" onClick={() => setShowImport((v) => !v)}>{showImport ? 'Cancel import' : 'Import'}</button>
+          <DeleteArtifactButton artifactName={ruleSet.name} artifactType="rule set" disabled={releases.length > 0} onDelete={async () => { await deleteRuleSet(ruleSet); router.replace('/rule-sets'); router.refresh(); }} />
+        </div>
       </header>
       {releases.length > 0 && <p className="rule-set-notice">Published rule sets are immutable and must be retired instead of deleted.</p>}
+      {showImport && <RuleSetImportModal ruleSetId={numericId} onClose={() => setShowImport(false)} onImported={(result) => { if (result.definitionsCreated > 0) { getRuleSetChildren<RuleDefinitionResource>(numericId, 'definitions').then(setDefinitions).catch(() => {}); getRuleSetChildren<RuleModuleResource>(numericId, 'modules').then(setModules).catch(() => {}); } }} />}
       <section className="rule-set-detail-summary">
         <article className="card-surface"><span className="eyebrow">Modules</span><strong>{modules.length}</strong><p>Namespaces organizing this rule set.</p></article>
         <article className="card-surface"><span className="eyebrow">Definitions</span><strong>{definitions.length}</strong><p>Traits, operations, effects, and other authored rules.</p></article>
@@ -109,13 +126,31 @@ export function RuleSetDetailRoute({ ruleSetId }: { ruleSetId: string }) {
           {authoring === 'module' && <RuleModuleCreateForm ruleSetId={numericId} onCancel={() => setAuthoring(undefined)} onCreated={(module) => { setModules((current) => [...current, module].sort((left, right) => left.sortOrder - right.sortOrder || left.name.localeCompare(right.name))); setAuthoring(undefined); }} />}
           {editing?.kind === 'module' && <RuleModuleEditForm key={editing.artifact.id} artifact={editing.artifact} ruleSetId={numericId} onCancel={() => setEditing(undefined)} onDelete={async () => { await deleteRuleModule(numericId, editing.artifact); setModules((current) => current.filter((module) => module.id !== editing.artifact.id)); setEditing(undefined); }} onSaved={(saved) => { setModules((current) => current.map((module) => module.id === saved.id ? saved : module).sort((left, right) => left.sortOrder - right.sortOrder || left.name.localeCompare(right.name))); setEditing(undefined); }} />}
           {!!modules.length && <div className="rule-set-list-tools"><label className="rule-set-filter-search"><span>Search modules</span><input type="search" value={moduleSearch} onChange={(event) => setModuleSearch(event.target.value)} placeholder="Name, namespace, or description" /></label><label><span>Status</span><select value={moduleStatus} onChange={(event) => setModuleStatus(event.target.value)}><option value="all">All statuses</option><option value="draft">Draft</option><option value="published">Published</option></select></label></div>}
-          <div className="list-stack">{filteredModules.map((module) => <div className="list-item" key={module.id}><div className="rule-set-artifact-row"><button className="rule-set-artifact-link" type="button" onClick={() => { setAuthoring(undefined); setEditing({ kind: 'module', artifact: module }); }}>{module.name}</button><span className="subtext">{module.namespace} · {module.status}</span></div></div>)}{!modules.length && <p className="subtext">No modules have been authored yet. Create one before defining rules.</p>}{!!modules.length && !filteredModules.length && <p className="subtext rule-set-no-results">No modules match the current search and filters.</p>}</div>
+          <div className="list-stack">{filteredModules.map((module) => {
+            const isSelected = selectedModuleId === module.id;
+            const isEditing = editing?.kind === 'module' && editing.artifact.id === module.id;
+            return (
+              <div
+                className={`list-item${isEditing ? ' is-module-editing' : isSelected ? ' is-module-selected' : ''}`}
+                key={module.id}
+                style={{ cursor: 'pointer' }}
+                onClick={() => setSelectedModuleId((id) => id === module.id ? null : module.id)}
+              >
+                <div className="rule-set-artifact-row">
+                  <button className="rule-set-artifact-link" type="button" onClick={(e) => { e.stopPropagation(); setSelectedModuleId(module.id); setAuthoring(undefined); setEditing({ kind: 'module', artifact: module }); }}>{module.name}</button>
+                  <span className="subtext">{module.namespace} · {module.status}</span>
+                </div>
+              </div>
+            );
+          })}{!modules.length && <p className="subtext">No modules have been authored yet. Create one before defining rules.</p>}{!!modules.length && !filteredModules.length && <p className="subtext rule-set-no-results">No modules match the current search and filters.</p>}</div>
         </section>
         <section className="card-surface rule-set-child-section">
-          <div className="section-title-bar"><div className="rule-set-panel-title"><h3>Definitions</h3><span>{filteredDefinitions.length} of {definitions.length}</span></div><button className="secondary-action compact-action" type="button" disabled={!modules.length} title={!modules.length ? 'Create a module first' : undefined} onClick={() => { setEditing(undefined); setAuthoring(authoring === 'definition' ? undefined : 'definition'); }}>{authoring === 'definition' ? 'Close' : 'New definition'}</button></div>
-          {authoring === 'definition' && <RuleDefinitionCreateForm definitions={definitions} modules={modules} ruleSetId={numericId} onCancel={() => setAuthoring(undefined)} onCreated={(definition) => { setDefinitions((current) => [...current, definition].sort((left, right) => left.name.localeCompare(right.name))); setAuthoring(undefined); }} />}
-          {editing?.kind === 'definition' && <RuleDefinitionEditForm key={editing.artifact.id} artifact={editing.artifact} definitions={definitions} moduleName={modules.find((module) => module.id === editing.artifact.moduleId)?.name ?? 'Unknown module'} ruleSetId={numericId} onCancel={() => setEditing(undefined)} onDelete={async () => { await deleteRuleDefinition(numericId, editing.artifact); setDefinitions((current) => current.filter((definition) => definition.id !== editing.artifact.id)); setEditing(undefined); }} onSaved={(saved) => { setDefinitions((current) => current.map((definition) => definition.id === saved.id ? saved : definition).sort((left, right) => left.name.localeCompare(right.name))); setEditing(undefined); }} />}
-          {!!definitions.length && <div className="rule-set-list-tools rule-set-definition-filters"><label className="rule-set-filter-search"><span>Search definitions</span><input type="search" value={definitionSearch} onChange={(event) => setDefinitionSearch(event.target.value)} placeholder="Name, description, type, or tag" /></label><label><span>Module</span><select value={definitionModule} onChange={(event) => setDefinitionModule(event.target.value)}><option value="all">All modules</option>{modules.map((module) => <option key={module.id} value={module.id}>{module.name}</option>)}</select></label><label><span>Type</span><select value={definitionType} onChange={(event) => setDefinitionType(event.target.value)}><option value="all">All types</option>{ruleDefinitionTypes.map((type) => <option key={type} value={type}>{type}</option>)}</select></label><label><span>Visibility</span><select value={definitionVisibility} onChange={(event) => setDefinitionVisibility(event.target.value)}><option value="all">All visibility</option><option value="exported">Exported</option><option value="private">Private</option></select></label><label><span>Status</span><select value={definitionStatus} onChange={(event) => setDefinitionStatus(event.target.value)}><option value="all">All statuses</option><option value="draft">Draft</option><option value="published">Published</option></select></label></div>}
+          <div className="section-title-bar"><div className="rule-set-panel-title"><h3>Definitions</h3><span>{filteredDefinitions.length} of {definitions.length}</span></div><div className="section-actions-group"><button className="secondary-action compact-action" type="button" disabled={!modules.length} title={!modules.length ? 'Create a module first' : undefined} onClick={() => { setEditing(undefined); setShowAssistant(false); setAuthoring(authoring === 'definition' ? undefined : 'definition'); }}>{authoring === 'definition' ? 'Close' : 'New definition'}</button><button className="secondary-action compact-action" type="button" disabled={!modules.length} title={!modules.length ? 'Create a module first' : undefined} onClick={() => { setEditing(undefined); setAuthoring(undefined); setShowAssistant((v) => !v); }}>{showAssistant ? 'Close assistant' : 'AI assistant'}</button></div></div>
+          {authoring === 'definition' && <RuleDefinitionCreateForm definitions={definitions} modules={modules} ruleSetId={numericId} selectedModuleId={selectedModuleId} onCancel={() => setAuthoring(undefined)} onCreated={(definition) => { setDefinitions((current) => [...current, definition].sort((left, right) => left.name.localeCompare(right.name))); setAuthoring(undefined); }} />}
+          {showAssistant && modules.length > 0 && <RuleAssistantPanel ruleSetId={numericId} moduleId={modules[0].id} contextDefinitions={definitions.map((d) => d.body)} onDefinitionCreated={(definition) => setDefinitions((current) => [...current, definition].sort((left, right) => left.name.localeCompare(right.name)))} />}
+          {editing?.kind === 'definition' && <RuleDefinitionEditForm key={editing.artifact.id} artifact={editing.artifact} definitions={definitions} modules={modules} ruleSetId={numericId} onCancel={() => setEditing(undefined)} onDelete={async () => { await deleteRuleDefinition(numericId, editing.artifact); setDefinitions((current) => current.filter((definition) => definition.id !== editing.artifact.id)); setEditing(undefined); }} onSaved={(saved) => { setDefinitions((current) => current.map((definition) => definition.id === saved.id ? saved : definition).sort((left, right) => left.name.localeCompare(right.name))); setEditing(undefined); }} />}
+          {selectedModuleId != null && (() => { const m = modules.find((mod) => mod.id === selectedModuleId); return m ? <div className="rule-set-module-scope"><span>Showing <strong>{m.name}</strong></span><button type="button" title="Show all modules" onClick={() => setSelectedModuleId(null)}>×</button></div> : null; })()}
+          {!!definitions.length && <div className={`rule-set-list-tools${selectedModuleId != null ? ' rule-set-definition-filters-scoped' : ' rule-set-definition-filters'}`}><label className="rule-set-filter-search"><span>Search definitions</span><input type="search" value={definitionSearch} onChange={(event) => setDefinitionSearch(event.target.value)} placeholder="Name, description, type, or tag" /></label>{selectedModuleId == null && <label><span>Module</span><select value={definitionModule} onChange={(event) => setDefinitionModule(event.target.value)}><option value="all">All modules</option>{modules.map((module) => <option key={module.id} value={module.id}>{module.name}</option>)}</select></label>}<label><span>Type</span><select value={definitionType} onChange={(event) => setDefinitionType(event.target.value)}><option value="all">All types</option>{ruleDefinitionTypes.map((type) => <option key={type} value={type}>{type}</option>)}</select></label><label><span>Visibility</span><select value={definitionVisibility} onChange={(event) => setDefinitionVisibility(event.target.value)}><option value="all">All visibility</option><option value="exported">Exported</option><option value="private">Private</option></select></label><label><span>Status</span><select value={definitionStatus} onChange={(event) => setDefinitionStatus(event.target.value)}><option value="all">All statuses</option><option value="draft">Draft</option><option value="published">Published</option></select></label></div>}
           <div className="list-stack">{filteredDefinitions.map((definition) => <div className="list-item" key={definition.id}><div className="rule-set-artifact-row"><button className="rule-set-artifact-link" type="button" onClick={() => { setAuthoring(undefined); setEditing({ kind: 'definition', artifact: definition }); }}>{definition.name}</button><span className="subtext">{definition.definitionType} · {definition.status}</span></div></div>)}{!definitions.length && <p className="subtext">{modules.length ? 'No rules have been defined yet.' : 'Definitions become available after the first module is created.'}</p>}{!!definitions.length && !filteredDefinitions.length && <p className="subtext rule-set-no-results">No definitions match the current search and filters.</p>}</div>
         </section>
       </div>

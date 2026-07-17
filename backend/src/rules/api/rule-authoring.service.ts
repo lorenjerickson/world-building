@@ -8,9 +8,15 @@ import { compileResolutionDefinitions } from '../resolution/resolution.compiler'
 import { previewResolutionOperation } from '../resolution/resolution.evaluator';
 import { resolutionDefinitionDescriptors, resolutionMetamodelDescriptor } from '../resolution/resolution.descriptors';
 import type { ResolutionContext, ResolutionDefinition, ResolutionFixture } from '../resolution/resolution.types';
+import { instantiateTemplate, validateTemplateDefinition } from '../templates/template.compiler';
+import type { TemplateDefinition, TemplateParameterValues } from '../templates/template.types';
+import type { AssistantMessage } from '../assistant/rule-assistant.service';
+import { RuleAssistantService } from '../assistant/rule-assistant.service';
 
 @Injectable()
 export class RuleAuthoringService {
+  constructor(private readonly assistant: RuleAssistantService) {}
+
   getMetamodel() {
     return { ...creatureCapabilityMetamodelDescriptor, extensions: [resolutionMetamodelDescriptor] };
   }
@@ -44,6 +50,22 @@ export class RuleAuthoringService {
     const compilation = compileResolutionDefinitions(definitions);
     if (!compilation.valid || !compilation.artifact) return { valid: false, diagnostics: compilation.diagnostics };
     return { valid: true, diagnostics: compilation.diagnostics, preview: previewResolutionOperation(compilation.artifact, operationId, context) };
+  }
+
+  instantiateTemplate(templateBody: unknown, values: TemplateParameterValues) {
+    const validationDiagnostics = validateTemplateDefinition(templateBody);
+    if (validationDiagnostics.some((d) => d.severity === 'error')) {
+      return { valid: false, definitions: [], diagnostics: validationDiagnostics };
+    }
+    return instantiateTemplate(templateBody as TemplateDefinition, values);
+  }
+
+  async sendAssistantMessage(history: AssistantMessage[], userMessage: string, contextDefinitions: unknown[]) {
+    return this.assistant.sendMessage(history, userMessage, contextDefinitions);
+  }
+
+  getAiToolSchemas() {
+    return this.assistant.getAiToolSchemas();
   }
 
   runFixtures(definitions: ResolutionDefinition[], fixtures: ResolutionFixture[]) {

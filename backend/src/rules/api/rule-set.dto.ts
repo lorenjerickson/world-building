@@ -299,6 +299,11 @@ export class UpdateRuleDefinitionDto {
   expectedUpdatedAt: string;
 
   @IsOptional()
+  @IsInt()
+  @Min(1)
+  moduleId?: number;
+
+  @IsOptional()
   @IsString()
   @MinLength(1)
   @MaxLength(160)

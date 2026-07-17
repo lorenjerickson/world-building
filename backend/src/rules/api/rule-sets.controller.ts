@@ -118,6 +118,15 @@ export class RuleSetsController {
     return this.catalog.createDefinition(actor, ruleSetId, dto);
   }
 
+  @Get(':ruleSetId/definitions/:definitionId')
+  getDefinition(
+    @CurrentRuleActor() actor: RuleApiActor,
+    @Param('ruleSetId', RuleApiIdPipe) ruleSetId: number,
+    @Param('definitionId', RuleApiIdPipe) definitionId: number,
+  ) {
+    return this.catalog.getDefinitionById(actor, ruleSetId, definitionId);
+  }
+
   @Patch(':ruleSetId/definitions/:definitionId')
   updateDefinition(
     @CurrentRuleActor() actor: RuleApiActor,
@@ -136,6 +145,41 @@ export class RuleSetsController {
     @Query('expectedUpdatedAt') expectedUpdatedAt: string,
   ) {
     return this.catalog.deleteDefinition(actor, ruleSetId, definitionId, expectedUpdatedAt);
+  }
+
+  @Get(':ruleSetId/export')
+  exportRuleSet(@CurrentRuleActor() actor: RuleApiActor, @Param('ruleSetId', RuleApiIdPipe) ruleSetId: number) {
+    return this.catalog.exportRuleSet(actor, ruleSetId);
+  }
+
+  @Post(':ruleSetId/import')
+  @HttpCode(HttpStatus.CREATED)
+  importRuleSet(
+    @CurrentRuleActor() actor: RuleApiActor,
+    @Param('ruleSetId', RuleApiIdPipe) ruleSetId: number,
+    @Body() body: unknown,
+  ) {
+    return this.catalog.importRuleSet(actor, ruleSetId, body as any);
+  }
+
+  @Get(':ruleSetId/definitions/:definitionId/snapshots')
+  listSnapshots(
+    @CurrentRuleActor() actor: RuleApiActor,
+    @Param('ruleSetId', RuleApiIdPipe) ruleSetId: number,
+    @Param('definitionId', RuleApiIdPipe) definitionId: number,
+  ) {
+    return this.catalog.listDefinitionSnapshots(actor, ruleSetId, definitionId);
+  }
+
+  @Post(':ruleSetId/definitions/:definitionId/snapshots/:snapshotId/restore')
+  @HttpCode(HttpStatus.OK)
+  restoreSnapshot(
+    @CurrentRuleActor() actor: RuleApiActor,
+    @Param('ruleSetId', RuleApiIdPipe) ruleSetId: number,
+    @Param('definitionId', RuleApiIdPipe) definitionId: number,
+    @Param('snapshotId') snapshotId: string,
+  ) {
+    return this.catalog.restoreDefinitionSnapshot(actor, ruleSetId, definitionId, snapshotId);
   }
 
   @Post(':ruleSetId/definitions/:definitionId/clone')

@@ -50,4 +50,30 @@ export class RuleAuthoringController {
   runFixtures(@Body() body: { definitions?: any[]; fixtures?: any[] }) {
     return this.authoring.runFixtures(body?.definitions ?? [], body?.fixtures ?? []);
   }
+
+  @Post('templates/instantiate')
+  instantiateTemplate(@Body() body: { template?: unknown; values?: Record<string, unknown> }) {
+    const values = Object.fromEntries(
+      Object.entries(body?.values ?? {}).map(([k, v]) => [
+        k,
+        typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean' ? v : String(v ?? ''),
+      ]),
+    );
+    return this.authoring.instantiateTemplate(body?.template, values);
+  }
+
+  @Post('assistant')
+  sendAssistantMessage(@Body() body: { message?: string; history?: any[]; context?: { definitions?: any[] } }) {
+    return this.authoring.sendAssistantMessage(
+      Array.isArray(body?.history) ? body.history : [],
+      typeof body?.message === 'string' ? body.message : '',
+      body?.context?.definitions ?? [],
+    );
+  }
+
+  @Get('assistant/tools')
+  @Header('Cache-Control', 'private, max-age=3600')
+  getAiToolSchemas() {
+    return { tools: this.authoring.getAiToolSchemas() };
+  }
 }

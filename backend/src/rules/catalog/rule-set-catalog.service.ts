@@ -15,14 +15,21 @@ import { RuleCatalogRepository } from './rule-catalog.repository';
 import {
   Page,
   RuleDefinitionResource,
+  RuleDefinitionSnapshotResource,
   RuleModuleResource,
   RuleReleaseResource,
+  RuleSetExportBundle,
+  RuleSetImportResult,
   RuleSetResource,
 } from './rule-catalog.types';
+import { RuleDefinitionSnapshotService } from './rule-definition-snapshot.service';
 
 @Injectable()
 export class RuleSetCatalogService {
-  constructor(private readonly repository: RuleCatalogRepository) {}
+  constructor(
+    private readonly repository: RuleCatalogRepository,
+    private readonly snapshots: RuleDefinitionSnapshotService,
+  ) {}
 
   async list(actor: RuleApiActor, query: ListRuleSetsQueryDto): Promise<Page<RuleSetResource>> {
     const resolvedActor = await this.repository.resolveActor(actor);
@@ -201,11 +208,20 @@ export class RuleSetCatalogService {
     });
   }
 
+  async getDefinitionById(actor: RuleApiActor, ruleSetId: number, definitionId: number): Promise<RuleDefinitionResource> {
+    const resolvedActor = await this.repository.resolveActor(actor);
+    await this.repository.getRuleSet(resolvedActor, ruleSetId);
+    const definition = await this.repository.getDefinition(resolvedActor, definitionId);
+    this.requireRuleSetRelation(definition.ruleSetId, ruleSetId, 'RULE_DEFINITION_NOT_FOUND');
+    return definition;
+  }
+
   async updateDefinition(
     actor: RuleApiActor,
     ruleSetId: number,
     definitionId: number,
     dto: UpdateRuleDefinitionDto,
+    snapshotReason: 'autosave' | 'manual' | 'restore' | 'import' = 'autosave',
   ): Promise<RuleDefinitionResource> {
     const { expectedUpdatedAt, ...changes } = dto;
     this.requireChanges(changes);
@@ -214,6 +230,16 @@ export class RuleSetCatalogService {
     const definition = await this.repository.getDefinition(resolvedActor, definitionId);
     this.requireRuleSetRelation(definition.ruleSetId, ruleSetId, 'RULE_DEFINITION_NOT_FOUND');
     this.requireRevision(definition.updatedAt, expectedUpdatedAt);
+    // Capture snapshot of current state before overwriting
+    await this.snapshots.capture({
+      actorId: actor.auth0Subject,
+      body: definition.body,
+      definitionExternalId: definition.externalId,
+      definitionId,
+      name: definition.name,
+      reason: snapshotReason,
+      ruleSetId,
+    });
     return this.repository.updateDefinition(resolvedActor, definitionId, {
       ...changes,
       name: changes.name?.trim(),
@@ -277,6 +303,181 @@ export class RuleSetCatalogService {
     });
   }
 
+  async exportRuleSet(actor: RuleApiActor, ruleSetId: number): Promise<RuleSetExportBundle> {
+    const resolvedActor = await this.repository.resolveActor(actor);
+    const ruleSet = await this.repository.getRuleSet(resolvedActor, ruleSetId);
+    const modules = await this.repository.listModules(resolvedActor, ruleSetId);
+    const definitions = await this.repository.listDefinitions(resolvedActor, ruleSetId, {});
+    const moduleById = new Map(modules.map((m) => [m.id, m]));
+    return {
+      formatVersion: '1',
+      schemaId: 'rule-set-export',
+      exportedAt: new Date().toISOString(),
+      ruleSetName: ruleSet.name,
+      engineFeatureLevel: ruleSet.engineFeatureLevel,
+      modules: modules.map((m) => ({
+        namespace: m.namespace,
+        name: m.name,
+        description: m.description,
+        sortOrder: m.sortOrder,
+        requiredEngineFeatureLevel: m.requiredEngineFeatureLevel,
+        dependencies: m.dependencies,
+        exports: m.exports,
+      })),
+      definitions: definitions.map((d) => ({
+        externalId: d.externalId,
+        moduleNamespace: moduleById.get(d.moduleId)?.namespace ?? 'unknown',
+        definitionType: d.definitionType,
+        name: d.name,
+        description: d.description,
+        schemaVersion: d.schemaVersion,
+        visibility: d.visibility,
+        body: d.body,
+        presentation: d.presentation,
+        tags: d.tags,
+      })),
+    };
+  }
+
+  async importRuleSet(
+    actor: RuleApiActor,
+    ruleSetId: number,
+    bundle: RuleSetExportBundle,
+  ): Promise<RuleSetImportResult> {
+    this.validateImportBundle(bundle);
+    const resolvedActor = await this.repository.resolveActor(actor);
+    await this.repository.getRuleSet(resolvedActor, ruleSetId);
+    const existingModules = await this.repository.listModules(resolvedActor, ruleSetId);
+    const moduleByNamespace = new Map(existingModules.map((m) => [m.namespace, m]));
+
+    let modulesCreated = 0;
+    let modulesExisting = 0;
+    for (const mod of bundle.modules) {
+      if (moduleByNamespace.has(mod.namespace)) {
+        modulesExisting++;
+      } else {
+        const created = await this.repository.createModule(resolvedActor, ruleSetId, {
+          namespace: mod.namespace,
+          name: mod.name,
+          description: mod.description,
+          sortOrder: mod.sortOrder,
+          requiredEngineFeatureLevel: mod.requiredEngineFeatureLevel || bundle.engineFeatureLevel,
+          dependencies: mod.dependencies,
+          exports: mod.exports,
+        });
+        moduleByNamespace.set(created.namespace, created);
+        modulesCreated++;
+      }
+    }
+
+    let definitionsCreated = 0;
+    const definitionsFailed: Array<{ name: string; reason: string }> = [];
+
+    // Phase 1: create all definitions and build an old→new externalId remapping table.
+    // Each definition gets a fresh externalId (randomUUID) on creation; if the bundle
+    // carries the original externalId we record the mapping so cross-references in
+    // definition bodies (e.g. trait grant `ref` fields) can be rewritten in phase 2.
+    const externalIdRemap = new Map<string, string>(); // oldExternalId → newExternalId
+    const createdIds: Array<{ id: number; originalBody: Record<string, unknown> }> = [];
+
+    for (const def of bundle.definitions) {
+      const module = moduleByNamespace.get(def.moduleNamespace);
+      if (!module) {
+        definitionsFailed.push({ name: def.name, reason: `Module namespace '${def.moduleNamespace}' not found.` });
+        continue;
+      }
+      try {
+        const created = await this.repository.createDefinition(resolvedActor, ruleSetId, {
+          body: def.body,
+          definitionType: def.definitionType as any,
+          description: def.description,
+          moduleId: module.id,
+          name: def.name,
+          presentation: def.presentation,
+          provenance: { importedAt: new Date().toISOString(), sourceRuleSetName: bundle.ruleSetName },
+          schemaVersion: def.schemaVersion ?? 1,
+          tags: def.tags ?? [],
+          visibility: def.visibility ?? 'exported',
+        });
+        definitionsCreated++;
+        if (def.externalId && def.externalId !== created.externalId) {
+          externalIdRemap.set(def.externalId, created.externalId);
+        }
+        createdIds.push({ id: created.id, originalBody: def.body });
+      } catch (cause) {
+        definitionsFailed.push({ name: def.name, reason: cause instanceof Error ? cause.message : 'Create failed.' });
+      }
+    }
+
+    // Phase 2: rewrite cross-references in definition bodies.
+    // Any body that referenced another definition by its old externalId (e.g. a trait
+    // grant's `ref` field) will now contain a stale UUID. We do a JSON string-replace
+    // for every old→new pair and update the body when something changed.
+    if (externalIdRemap.size > 0) {
+      for (const { id, originalBody } of createdIds) {
+        let bodyJson = JSON.stringify(originalBody);
+        let changed = false;
+        for (const [oldId, newId] of externalIdRemap) {
+          if (bodyJson.includes(oldId)) {
+            bodyJson = bodyJson.split(oldId).join(newId);
+            changed = true;
+          }
+        }
+        if (changed) {
+          await this.repository.updateDefinition(resolvedActor, id, { body: JSON.parse(bodyJson) });
+        }
+      }
+    }
+
+    return { modulesCreated, modulesExisting, definitionsCreated, definitionsFailed };
+  }
+
+  async listDefinitionSnapshots(
+    actor: RuleApiActor,
+    ruleSetId: number,
+    definitionId: number,
+  ): Promise<RuleDefinitionSnapshotResource[]> {
+    const resolvedActor = await this.repository.resolveActor(actor);
+    await this.repository.getRuleSet(resolvedActor, ruleSetId);
+    const definition = await this.repository.getDefinition(resolvedActor, definitionId);
+    this.requireRuleSetRelation(definition.ruleSetId, ruleSetId, 'RULE_DEFINITION_NOT_FOUND');
+    return this.snapshots.list(ruleSetId, definitionId);
+  }
+
+  async restoreDefinitionSnapshot(
+    actor: RuleApiActor,
+    ruleSetId: number,
+    definitionId: number,
+    snapshotId: string,
+  ): Promise<RuleDefinitionResource> {
+    const resolvedActor = await this.repository.resolveActor(actor);
+    await this.repository.getRuleSet(resolvedActor, ruleSetId);
+    const definition = await this.repository.getDefinition(resolvedActor, definitionId);
+    this.requireRuleSetRelation(definition.ruleSetId, ruleSetId, 'RULE_DEFINITION_NOT_FOUND');
+    const snapshot = await this.snapshots.getWithBody(snapshotId);
+    if (!snapshot || snapshot.resource.definitionId !== definitionId) {
+      throw new NotFoundException({
+        code: 'RULE_SNAPSHOT_NOT_FOUND',
+        message: 'The requested snapshot was not found for this definition.',
+        retryable: false,
+      });
+    }
+    // Capture the current state before restoring (so user can undo the restore itself)
+    await this.snapshots.capture({
+      actorId: actor.auth0Subject,
+      body: definition.body,
+      definitionExternalId: definition.externalId,
+      definitionId,
+      name: definition.name,
+      reason: 'restore',
+      ruleSetId,
+    });
+    return this.repository.updateDefinition(resolvedActor, definitionId, {
+      body: snapshot.body,
+      name: snapshot.name,
+    });
+  }
+
   async listReleases(actor: RuleApiActor, ruleSetId: number): Promise<RuleReleaseResource[]> {
     const resolvedActor = await this.repository.resolveActor(actor);
     await this.repository.getRuleSet(resolvedActor, ruleSetId);
@@ -289,6 +490,24 @@ export class RuleSetCatalogService {
     const release = await this.repository.getRelease(resolvedActor, releaseId);
     this.requireRuleSetRelation(release.ruleSetId, ruleSetId, 'RULE_RELEASE_NOT_FOUND');
     return release;
+  }
+
+  private validateImportBundle(bundle: unknown): asserts bundle is RuleSetExportBundle {
+    if (!bundle || typeof bundle !== 'object' || (bundle as any).schemaId !== 'rule-set-export' || (bundle as any).formatVersion !== '1') {
+      throw new BadRequestException({
+        code: 'RULE_IMPORT_INVALID',
+        message: 'The uploaded file is not a valid rule-set export bundle (expected schemaId=rule-set-export, formatVersion=1).',
+        retryable: false,
+      });
+    }
+    const b = bundle as any;
+    if (!Array.isArray(b.modules) || !Array.isArray(b.definitions)) {
+      throw new BadRequestException({
+        code: 'RULE_IMPORT_INVALID',
+        message: 'The export bundle must contain modules and definitions arrays.',
+        retryable: false,
+      });
+    }
   }
 
   private boundedInteger(value: string | undefined, fallback: number, min: number, max: number): number {
