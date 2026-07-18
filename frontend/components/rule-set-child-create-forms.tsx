@@ -1,8 +1,9 @@
 'use client';
 
 import type { FormEvent } from 'react';
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import { DeleteArtifactButton } from './delete-artifact-button';
+import { TagEditor } from './tag-editor';
 import {
   buildGuidedTraitBody,
   defaultGuidedTraitDraft,
@@ -37,71 +38,12 @@ import { getRuleDefinition, isStaleError } from '@/lib/rule-sets';
 import {
   buildGrantsBody,
   grantsDraftFromBody,
+  prerequisitesDraftFromBody,
   GuidedTraitGrantsEditor,
   newGrant,
   type GrantDraft,
+  type PrerequisiteSpec,
 } from './guided-trait-grants-editor';
-
-// ── Tag editor ────────────────────────────────────────────────────────────────
-
-function TagEditor({ tags, onChange, knownTags }: {
-  tags: string[];
-  onChange: (tags: string[]) => void;
-  knownTags: string[];
-}) {
-  const [input, setInput] = useState('');
-  const [open, setOpen] = useState(false);
-  const wrapRef = useRef<HTMLDivElement>(null);
-
-  const trimmed = input.trim();
-  const suggestions = trimmed
-    ? knownTags.filter((t) => t.toLowerCase().includes(trimmed.toLowerCase()) && !tags.includes(t))
-    : [];
-
-  function commit(value: string) {
-    const tag = value.trim();
-    if (tag && !tags.includes(tag)) onChange([...tags, tag]);
-    setInput('');
-    setOpen(false);
-  }
-
-  function remove(tag: string) { onChange(tags.filter((t) => t !== tag)); }
-
-  return (
-    <div className="tag-editor" ref={wrapRef}>
-      <div className="tag-editor-field" onClick={() => wrapRef.current?.querySelector('input')?.focus()}>
-        {tags.map((tag) => (
-          <span key={tag} className="tag-badge">
-            {tag}
-            <button type="button" className="tag-badge-remove" aria-label={`Remove ${tag}`} onClick={(e) => { e.stopPropagation(); remove(tag); }}>×</button>
-          </span>
-        ))}
-        <input
-          type="text"
-          className="tag-editor-input"
-          value={input}
-          placeholder={tags.length === 0 ? 'Add tags…' : ''}
-          onChange={(e) => { setInput(e.target.value); setOpen(true); }}
-          onFocus={() => setOpen(true)}
-          onBlur={() => setTimeout(() => setOpen(false), 150)}
-          onKeyDown={(e) => {
-            if ((e.key === ' ' || e.key === 'Tab') && trimmed) { e.preventDefault(); commit(trimmed); }
-            if (e.key === 'Enter') { e.preventDefault(); if (trimmed) commit(trimmed); }
-            if (e.key === 'Backspace' && !input && tags.length > 0) remove(tags[tags.length - 1]);
-            if (e.key === 'Escape') { setInput(''); setOpen(false); }
-          }}
-        />
-      </div>
-      {open && suggestions.length > 0 && (
-        <div className="tag-suggestions">
-          {suggestions.map((s) => (
-            <button key={s} type="button" className="tag-suggestion" onMouseDown={() => commit(s)}>{s}</button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
 
 // ── Forms ──────────────────────────────────────────────────────────────────────
 
@@ -179,6 +121,7 @@ export function RuleDefinitionCreateForm({ definitions, modules, onCancel, onCre
   const [bodyLabelSynced, setBodyLabelSynced] = useState(false);
   const [authoringExperience, setAuthoringExperience] = useState<'grants' | 'vision' | 'running' | 'advanced'>('grants');
   const [grantsDraft, setGrantsDraft] = useState<GrantDraft[]>(() => []);
+  const [prerequisitesDraft, setPrerequisitesDraft] = useState<PrerequisiteSpec>(() => ({ mode: 'any', ids: [] }));
   const [guidedDraft, setGuidedDraft] = useState<GuidedTraitDraft>(() => defaultGuidedTraitDraft('vision'));
   const [diagnostics, setDiagnostics] = useState<AuthoringDiagnostic[]>([]);
   const [resolutionDraft, setResolutionDraft] = useState<ResolutionAuthoringDraft>();
@@ -192,7 +135,7 @@ export function RuleDefinitionCreateForm({ definitions, modules, onCancel, onCre
     let parsedBody: unknown;
     const guided = definitionType === 'trait' && (authoringExperience === 'vision' || authoringExperience === 'running');
     if (authoringExperience === 'grants' && definitionType === 'trait') {
-      parsedBody = buildGrantsBody(grantsDraft);
+      parsedBody = buildGrantsBody(grantsDraft, prerequisitesDraft, definitions.filter((d) => d.definitionType === 'trait'));
     } else if (templateDraft) {
       parsedBody = buildTemplateBody(name, description, templateDraft);
     } else if (guided || resolutionDraft) {
@@ -265,9 +208,10 @@ export function RuleDefinitionCreateForm({ definitions, modules, onCancel, onCre
           ? <GuidedTraitGrantsEditor
               traitName={name}
               grants={grantsDraft}
+              prerequisites={prerequisitesDraft}
               traitDefinitions={definitions.filter((d) => d.definitionType === 'trait')}
-              fieldDefinitions={definitions.filter((d) => d.definitionType === 'field')}
               onChange={setGrantsDraft}
+              onPrerequisitesChange={setPrerequisitesDraft}
             />
           : definitionType === 'trait' && authoringExperience !== 'advanced'
           ? <GuidedTraitEditor description={description} diagnostics={diagnostics} draft={guidedDraft} name={name} onChange={setGuidedDraft} />
@@ -382,6 +326,9 @@ export function RuleDefinitionEditForm({ artifact, definitions, modules, onCance
   const [grantsDraft, setGrantsDraft] = useState<GrantDraft[] | null>(() =>
     artifact.definitionType === 'trait' ? grantsDraftFromBody(artifact.body) : null,
   );
+  const [prerequisitesDraft, setPrerequisitesDraft] = useState<PrerequisiteSpec>(() =>
+    artifact.definitionType === 'trait' ? prerequisitesDraftFromBody(artifact.body) : { mode: 'any', ids: [] },
+  );
   const [conflict, setConflict] = useState<{ serverUpdatedAt: string; serverName: string } | undefined>();
   const [showHistory, setShowHistory] = useState(false);
 
@@ -415,7 +362,7 @@ export function RuleDefinitionEditForm({ artifact, definitions, modules, onCance
     let parsedBody: unknown;
     let parsedPresentation: unknown;
     try {
-      parsedBody = grantsDraft ? buildGrantsBody(grantsDraft) : guidedDraft ? buildGuidedTraitBody(name, description, guidedDraft) : templateDraft ? buildTemplateBody(name, description, templateDraft) : resolutionDraft ? buildResolutionBody(name, description, resolutionDraft) : JSON.parse(body);
+      parsedBody = grantsDraft ? buildGrantsBody(grantsDraft, prerequisitesDraft, definitions.filter((d) => d.definitionType === 'trait' && d.id !== artifact.id)) : guidedDraft ? buildGuidedTraitBody(name, description, guidedDraft) : templateDraft ? buildTemplateBody(name, description, templateDraft) : resolutionDraft ? buildResolutionBody(name, description, resolutionDraft) : JSON.parse(body);
       parsedPresentation = JSON.parse(presentation);
     } catch {
       setError('Rule data and presentation must be valid JSON.');
@@ -496,9 +443,10 @@ export function RuleDefinitionEditForm({ artifact, definitions, modules, onCance
           ? <GuidedTraitGrantsEditor
               traitName={name}
               grants={grantsDraft}
+              prerequisites={prerequisitesDraft}
               traitDefinitions={definitions.filter((d) => d.definitionType === 'trait' && d.id !== artifact.id)}
-              fieldDefinitions={definitions.filter((d) => d.definitionType === 'field')}
               onChange={setGrantsDraft}
+              onPrerequisitesChange={setPrerequisitesDraft}
             />
           : artifact.definitionType === 'trait' && !guidedDraft && (
             <div className="guided-rule-conversion rule-set-field-wide">

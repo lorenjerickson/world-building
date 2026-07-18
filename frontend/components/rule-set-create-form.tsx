@@ -3,6 +3,7 @@
 import type { FormEvent } from 'react';
 import { useState } from 'react';
 import { createRuleSet, RuleSetApiError, RuleSetResource } from '@/lib/rule-sets';
+import { TagEditor } from './tag-editor';
 
 interface RuleSetCreateFormProps {
   onCancel: () => void;
@@ -24,7 +25,7 @@ export function RuleSetCreateForm({ onCancel, onCreated }: RuleSetCreateFormProp
   const [summary, setSummary] = useState('');
   const [description, setDescription] = useState('');
   const [engineFeatureLevel, setEngineFeatureLevel] = useState('1');
-  const [tags, setTags] = useState('');
+  const [tags, setTags] = useState<string[]>([]);
   const [accentColor, setAccentColor] = useState('#e5b64c');
   const [error, setError] = useState<string>();
   const [submitting, setSubmitting] = useState(false);
@@ -41,7 +42,7 @@ export function RuleSetCreateForm({ onCancel, onCreated }: RuleSetCreateFormProp
         name: name.trim(),
         slug,
         summary: summary.trim(),
-        tags: tags.split(',').map((tag) => tag.trim()).filter(Boolean),
+        tags,
       });
       onCreated(created);
     } catch (cause) {
@@ -67,7 +68,7 @@ export function RuleSetCreateForm({ onCancel, onCreated }: RuleSetCreateFormProp
         <label className="rule-set-field rule-set-field-wide"><span>Summary</span><textarea required maxLength={1000} rows={2} value={summary} onChange={(event) => setSummary(event.target.value)} placeholder="A concise description shown to collaborators and on the dashboard." /></label>
         <label className="rule-set-field rule-set-field-wide"><span>Authoring intent</span><textarea maxLength={20000} rows={4} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Describe the play experience, themes, and boundaries this rule set should support." /></label>
         <label className="rule-set-field"><span>Engine feature level</span><input required maxLength={64} value={engineFeatureLevel} onChange={(event) => setEngineFeatureLevel(event.target.value)} /></label>
-        <label className="rule-set-field"><span>Tags</span><input value={tags} onChange={(event) => setTags(event.target.value)} placeholder="narrative, exploration" /></label>
+        <div className="rule-set-field"><span>Tags</span><TagEditor tags={tags} onChange={setTags} /></div>
         <label className="rule-set-color-field"><span>Accent</span><input type="color" value={accentColor} onChange={(event) => setAccentColor(event.target.value)} /></label>
       </div>
       {error && <p className="rule-set-notice error" role="alert">{error}</p>}
