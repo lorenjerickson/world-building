@@ -846,6 +846,43 @@ body {
 .resolution-preview li small { color: var(--muted); display: block; margin-top: 5px; overflow-wrap: anywhere; }
 .resolution-preview-button { margin-top: 14px; }
 
+/* AI rule assistant panel */
+.rule-assistant-panel { display: flex; flex-direction: column; gap: 0; }
+.rule-assistant-turn-list { display: flex; flex-direction: column; gap: 10px; max-height: 440px; overflow-y: auto; padding: 4px 0 10px; }
+.rule-assistant-turn { align-items: flex-start; display: flex; flex-direction: column; gap: 4px; }
+.rule-assistant-turn.user { align-items: flex-end; }
+.rule-assistant-bubble { border-radius: 12px; font-size: .88rem; line-height: 1.5; max-width: 88%; padding: 9px 13px; }
+.rule-assistant-turn.user .rule-assistant-bubble { background: rgba(229, 182, 76, .14); border: 1px solid rgba(229, 182, 76, .28); color: var(--text); }
+.rule-assistant-turn.assistant .rule-assistant-bubble { background: rgba(255, 255, 255, .04); border: 1px solid rgba(255, 255, 255, .09); color: var(--text); }
+.rule-assistant-thinking .rule-assistant-bubble { color: var(--muted); font-style: italic; }
+.rule-assistant-extras { display: flex; flex-direction: column; gap: 8px; max-width: 96%; width: 100%; }
+.rule-assistant-questions { background: rgba(98, 48, 148, .1); border: 1px solid rgba(98, 48, 148, .24); border-radius: 11px; font-size: .82rem; padding: 10px 13px; }
+.rule-assistant-questions strong { color: #c084fc; }
+.rule-assistant-questions ul { margin: 5px 0 0; padding-left: 17px; }
+.rule-assistant-questions li { color: var(--text); margin-top: 3px; }
+.rule-assistant-assumptions { font-size: .8rem; }
+.rule-assistant-assumptions summary { color: var(--muted); cursor: pointer; font-weight: 700; }
+.rule-assistant-assumptions ul { color: var(--muted); margin: 6px 0 0; padding-left: 17px; }
+.rule-assistant-proposals { display: flex; flex-direction: column; gap: 8px; }
+.rule-assistant-proposals > strong { color: var(--accent); display: block; font-size: .82rem; margin-bottom: 2px; }
+.rule-assistant-proposal-card { background: rgba(5, 3, 6, .28); border: 1px solid rgba(229, 182, 76, .16); border-radius: 13px; padding: 14px; }
+.rule-assistant-proposal-card.accepted { border-color: rgba(79, 168, 92, .28); }
+.rule-assistant-proposal-card.discarded { opacity: .55; }
+.rule-assistant-proposal-header { align-items: center; display: flex; gap: 10px; justify-content: space-between; margin-bottom: 6px; }
+.rule-assistant-proposal-header > div:first-child { align-items: center; display: flex; flex-wrap: wrap; gap: 7px; }
+.rule-assistant-proposal-actions { align-items: center; display: flex; flex-shrink: 0; gap: 6px; }
+.rule-assistant-proposal-status { font-size: .78rem; font-weight: 700; }
+.rule-assistant-proposal-status.accepted { color: var(--success); }
+.rule-assistant-proposal-status.discarded { color: var(--muted); }
+.rule-assistant-proposal-toggle { background: none; border: 0; border-bottom: 1px dashed rgba(255,255,255,.25); color: var(--muted); cursor: pointer; font: inherit; font-size: .78rem; margin-top: 4px; padding: 0 1px; }
+.rule-assistant-proposal-toggle:hover { color: var(--text); }
+.rule-assistant-proposal-json { background: rgba(2, 2, 3, .52); border-radius: 10px; color: #cabfd3; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: .72rem; line-height: 1.55; margin-top: 8px; max-height: 240px; overflow: auto; padding: 12px; white-space: pre-wrap; }
+.rule-assistant-input-row { align-items: flex-end; display: flex; gap: 8px; margin-top: 12px; }
+.rule-assistant-input { background: rgba(255, 255, 255, .05); border: 1px solid rgba(255, 255, 255, .13); border-radius: 11px; color: var(--text); flex: 1; font: inherit; font-size: .88rem; line-height: 1.5; padding: 10px 13px; resize: vertical; }
+.rule-assistant-input:focus { border-color: var(--accent); outline: none; }
+.rule-assistant-input:disabled { opacity: .6; }
+.rule-assistant-empty { color: var(--muted); font-size: .85rem; font-style: italic; line-height: 1.5; padding: 4px 2px; }
+
 .prompt-form label { display: flex; flex-direction: column; gap: 8px; margin-bottom: 20px; color: var(--text); }
 .prompt-form input { width: 100%; border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,.04); color: #fff; padding: 14px 16px; font: inherit; }
 .prompt-form input:focus { outline: none; border-color: var(--accent); }

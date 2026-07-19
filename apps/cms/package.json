@@ -1,5 +1,5 @@
 {
-  "name": "world-building-cms",
+  "name": "@world-building/cms",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -20,7 +20,7 @@
     "verify:generated": "node scripts/verify-generated.mjs",
     "verify:migrations": "node scripts/verify-migrations.mjs",
     "verify:policy": "node scripts/verify-policy.mjs",
-    "cms:verify-schema": "npm run verify:policy && npm run verify:generated && npm run verify:migrations && npm run migrate:status && npm run build"
+    "cms:verify-schema": "pnpm verify:policy && pnpm verify:generated && pnpm verify:migrations && pnpm migrate:status && pnpm build"
   },
   "dependencies": {
     "@payloadcms/db-postgres": "3.86.0",

@@ -17,13 +17,13 @@ services:
 
   backend:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: apps/backend/Dockerfile
     ports:
       - "8000:8000"
     volumes:
-      - ./backend:/app
-      - uploads_data:/app/data/uploads
+      - ./apps/backend:/app/apps/backend
+      - uploads_data:/app/apps/backend/data/uploads
       - ./models:/models:ro
     environment:
       - DATABASE_URL=postgresql://worldbuilder:password123@db:5432/worlddb
@@ -48,19 +48,18 @@ services:
 
   frontend:
     build:
-      context: ./frontend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: apps/frontend/Dockerfile
       target: dev
     ports:
       - "3000:3000"
     volumes:
       # Mount source from the host so edits are visible without rebuilding.
-      - ./frontend:/app
-      # Keep Linux dependencies and Next's generated cache inside Docker. This
-      # prevents host node_modules (especially macOS native packages) from
-      # replacing the modules installed in the image.
+      - ./apps/frontend:/app/apps/frontend
+      # Keep Linux node_modules and Next's cache inside Docker so macOS
+      # native packages don't replace the Linux-built ones.
       - frontend_node_modules:/app/node_modules
-      - frontend_next:/app/.next
+      - frontend_next:/app/apps/frontend/.next
     environment:
       - NEXT_PUBLIC_API_URL=http://localhost:8000
       - BACKEND_URL=http://backend:8000
@@ -126,8 +125,8 @@ services:
 
   cms:
     build:
-      context: ./cms
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: apps/cms/Dockerfile
     environment:
       CMS_DATABASE_URL: postgresql://worldcms:${CMS_POSTGRES_PASSWORD:?Set CMS_POSTGRES_PASSWORD in .env}@cms-db:5432/worldcms
       PAYLOAD_SECRET: ${CMS_PAYLOAD_SECRET:?Set CMS_PAYLOAD_SECRET in .env}

@@ -58,29 +58,29 @@ function ProposalCard({
   const type = definitionTypeFromBody(body);
 
   return (
-    <div className={`assistant-proposal-card ${proposal.state}`}>
-      <div className="assistant-proposal-header">
+    <div className={`rule-assistant-proposal-card ${proposal.state}`}>
+      <div className="rule-assistant-proposal-header">
         <div>
           <strong>{name}</strong>
           <span className="badge">{type}</span>
           {!proposal.definition.valid && <span className="badge error">invalid</span>}
         </div>
-        <div className="assistant-proposal-actions">
+        <div className="rule-assistant-proposal-actions">
           {proposal.state === 'pending' && (
             <>
               <button type="button" className="secondary-action compact-action" onClick={onAccept} disabled={!proposal.definition.valid}>Accept</button>
               <button type="button" className="secondary-action compact-action" onClick={onDiscard}>Discard</button>
             </>
           )}
-          {proposal.state === 'accepted' && <span className="assistant-proposal-status accepted">Accepted</span>}
-          {proposal.state === 'discarded' && <span className="assistant-proposal-status discarded">Discarded</span>}
+          {proposal.state === 'accepted' && <span className="rule-assistant-proposal-status accepted">Accepted</span>}
+          {proposal.state === 'discarded' && <span className="rule-assistant-proposal-status discarded">Discarded</span>}
         </div>
       </div>
       {proposal.definition.diagnostics.length > 0 && (
         <ul className="guided-rule-diagnostics">{proposal.definition.diagnostics.map((d) => <li key={`${d.code}-${d.path}`}><span>{d.path}</span>{d.message}</li>)}</ul>
       )}
-      <button type="button" className="assistant-proposal-toggle" onClick={() => setExpanded((v) => !v)}>{expanded ? 'Hide JSON' : 'Show JSON'}</button>
-      {expanded && <pre className="assistant-proposal-json">{JSON.stringify(body, null, 2)}</pre>}
+      <button type="button" className="rule-assistant-proposal-toggle" onClick={() => setExpanded((v) => !v)}>{expanded ? 'Hide JSON' : 'Show JSON'}</button>
+      {expanded && <pre className="rule-assistant-proposal-json">{JSON.stringify(body, null, 2)}</pre>}
     </div>
   );
 }
@@ -97,23 +97,23 @@ function TurnView({
   onDiscard: (proposalId: string) => void;
 }) {
   return (
-    <div className={`assistant-turn ${turn.role}`}>
-      <div className="assistant-turn-bubble">
+    <div className={`rule-assistant-turn ${turn.role}`}>
+      <div className="rule-assistant-bubble">
         <p>{turn.content}</p>
       </div>
       {turn.role === 'assistant' && turn.response && (
-        <div className="assistant-turn-extras">
+        <div className="rule-assistant-extras">
           {turn.response.questions.length > 0 && (
-            <div className="assistant-questions">
+            <div className="rule-assistant-questions">
               <strong>Clarifying questions:</strong>
               <ul>{turn.response.questions.map((q, i) => <li key={i}>{q}</li>)}</ul>
             </div>
           )}
           {turn.response.assumptions.length > 0 && (
-            <details className="assistant-assumptions"><summary>Assumptions made</summary><ul>{turn.response.assumptions.map((a, i) => <li key={i}>{a}</li>)}</ul></details>
+            <details className="rule-assistant-assumptions"><summary>Assumptions made</summary><ul>{turn.response.assumptions.map((a, i) => <li key={i}>{a}</li>)}</ul></details>
           )}
           {turn.proposals && turn.proposals.length > 0 && (
-            <div className="assistant-proposals">
+            <div className="rule-assistant-proposals">
               <strong>Proposed definitions</strong>
               {turn.proposals.map((proposal) => (
                 <ProposalCard
@@ -248,28 +248,28 @@ export function RuleAssistantPanel({
 
   if (unavailable) {
     return (
-      <div className="rule-assistant-panel">
+      <div className="rule-assistant-panel rule-set-child-form">
         <p className="rule-set-notice">The AI assistant requires a configured language model. Set <code>OPENAI_API_KEY</code> or configure a local LLM in the backend to enable it.</p>
       </div>
     );
   }
 
   return (
-    <div className="rule-assistant-panel">
-      <div className="assistant-turn-list">
+    <div className="rule-assistant-panel rule-set-child-form">
+      <div className="rule-assistant-turn-list">
         {turns.length === 0 && (
-          <p className="assistant-empty-state">Describe a creature ability, resolution mechanic, or trait you'd like to add. The assistant will propose typed rule definitions you can review and accept one by one.</p>
+          <p className="rule-assistant-empty">Describe a creature ability, resolution mechanic, or trait you'd like to add. The assistant will propose typed rule definitions you can review and accept one by one.</p>
         )}
         {turns.map((turn) => (
           <TurnView key={turn.id} turn={turn} onAccept={acceptProposal} onDiscard={discardProposal} />
         ))}
-        {sending && <div className="assistant-turn assistant-turn-thinking"><div className="assistant-turn-bubble"><p>Thinking…</p></div></div>}
+        {sending && <div className="rule-assistant-turn assistant rule-assistant-thinking"><div className="rule-assistant-bubble"><p>Thinking…</p></div></div>}
       </div>
       {error && <p className="rule-set-notice error" role="alert">{error}</p>}
-      <div className="assistant-input-row">
+      <div className="rule-assistant-input-row">
         <textarea
           ref={inputRef}
-          className="assistant-input"
+          className="rule-assistant-input"
           rows={3}
           placeholder="Ask the assistant to draft a rule definition…"
           value={message}
@@ -277,7 +277,7 @@ export function RuleAssistantPanel({
           onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) send(); }}
           disabled={sending}
         />
-        <button type="button" className="primary-action" onClick={send} disabled={sending || !message.trim()}>Send</button>
+        <button type="button" className="primary-action compact-action" onClick={send} disabled={sending || !message.trim()}>Send</button>
       </div>
       <p className="subtext">⌘↵ to send · Proposals are validated before you accept them.</p>
     </div>

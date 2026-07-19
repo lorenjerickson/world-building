@@ -4,17 +4,19 @@ on:
   pull_request:
     paths:
       - "AGENTS.md"
-      - "backend/src/cms/**"
-      - "cms/**"
+      - "apps/backend/src/cms/**"
+      - "apps/cms/**"
       - "docker-compose.yml"
+      - "pnpm-lock.yaml"
       - ".github/workflows/cms.yml"
   push:
     branches: [main]
     paths:
       - "AGENTS.md"
-      - "backend/src/cms/**"
-      - "cms/**"
+      - "apps/backend/src/cms/**"
+      - "apps/cms/**"
       - "docker-compose.yml"
+      - "pnpm-lock.yaml"
       - ".github/workflows/cms.yml"
 
 jobs:
@@ -31,19 +33,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.13.1
+
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: npm
-          cache-dependency-path: cms/package-lock.json
+          cache: pnpm
 
-      - name: Install CMS dependencies
-        working-directory: cms
-        run: npm ci --legacy-peer-deps
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
 
       - name: Verify schema and Docker policy
-        working-directory: cms
-        run: npm run verify:policy && npm run verify:generated && npm run verify:migrations
+        working-directory: apps/cms
+        run: pnpm verify:policy && pnpm verify:generated && pnpm verify:migrations
 
       - name: Build clean private CMS stack
         run: docker compose up --build --detach cms
@@ -58,10 +62,10 @@ jobs:
           exit 1
 
       - name: Verify clean migration status
-        run: docker compose exec -T cms npm run migrate:status
+        run: docker compose exec -T cms pnpm migrate:status
 
       - name: Run CMS acceptance suite
-        run: docker compose exec -T -e CMS_BASE_URL=http://127.0.0.1:3000 cms npm run test:acceptance
+        run: docker compose exec -T -e CMS_BASE_URL=http://127.0.0.1:3000 cms pnpm test:acceptance
 
       - name: Capture CMS logs
         if: always()

@@ -108,14 +108,20 @@ type DefinitionFormProps = ChildFormProps<RuleDefinitionResource> & {
   definitions: RuleDefinitionResource[];
   modules: RuleModuleResource[];
   selectedModuleId?: number | null;
+  externalVisibility?: 'exported' | 'private';
+  onVisibilityChange?: (v: 'exported' | 'private') => void;
 };
 
-export function RuleDefinitionCreateForm({ definitions, modules, onCancel, onCreated, ruleSetId, selectedModuleId }: DefinitionFormProps) {
+export function RuleDefinitionCreateForm({ definitions, modules, onCancel, onCreated, ruleSetId, selectedModuleId, externalVisibility, onVisibilityChange }: DefinitionFormProps) {
   const [moduleId, setModuleId] = useState(String(selectedModuleId ?? modules[0]?.id ?? ''));
   const [definitionType, setDefinitionType] = useState<RuleDefinitionType>('trait');
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [visibility, setVisibility] = useState<'exported' | 'private'>('exported');
+  const [localVisibility, setLocalVisibility] = useState<'exported' | 'private'>('exported');
+  const visibility = externalVisibility ?? localVisibility;
+  function setVisibility(v: 'exported' | 'private') {
+    if (onVisibilityChange) onVisibilityChange(v); else setLocalVisibility(v);
+  }
   const [tags, setTags] = useState<string[]>([]);
   const [body, setBody] = useState('{}');
   const [bodyLabelSynced, setBodyLabelSynced] = useState(false);
@@ -190,8 +196,8 @@ export function RuleDefinitionCreateForm({ definitions, modules, onCancel, onCre
         <label className="rule-set-field"><span>Name</span><input required maxLength={160} value={name} onChange={(event) => { const n = event.target.value; setName(n); if (definitionType === 'field' && bodyLabelSynced) setBody(JSON.stringify({ label: n }, null, 2)); }} placeholder="Clawed" autoFocus /></label>
         <label className="rule-set-field"><span>Module</span><select required value={moduleId} onChange={(event) => setModuleId(event.target.value)}>{modules.map((module) => <option key={module.id} value={module.id}>{module.name} ({module.namespace})</option>)}</select></label>
         <label className="rule-set-field"><span>Definition type</span><select value={definitionType} onChange={(event) => { const type = event.target.value as RuleDefinitionType; setDefinitionType(type); setDiagnostics([]); const resolutionTypes: RuleDefinitionType[] = ['modifier', 'check', 'resource', 'effect', 'event', 'operation']; setResolutionDraft(resolutionTypes.includes(type) ? defaultResolutionDraft(type as ResolutionAuthoringDraft['kind']) : undefined); setTemplateDraft(type === 'template' ? defaultTemplateDraft() : undefined); if (type === 'field') { setBody(JSON.stringify({ label: name.trim() }, null, 2)); setBodyLabelSynced(true); } else { setBodyLabelSynced(false); } }}>{ruleDefinitionTypes.map((type) => <option key={type} value={type}>{type}</option>)}</select></label>
-        <label className="guided-rule-checkbox rule-set-field"><input type="checkbox" checked={visibility === 'exported'} onChange={(e) => setVisibility(e.target.checked ? 'exported' : 'private')} /><span>Visible</span></label>
-        {definitionType === 'trait' && <label className="rule-set-field rule-set-field-wide"><span>Authoring experience</span><select value={authoringExperience} onChange={(event) => {
+        {!onVisibilityChange && <label className="guided-rule-checkbox rule-set-field"><input type="checkbox" checked={visibility === 'exported'} onChange={(e) => setVisibility(e.target.checked ? 'exported' : 'private')} /><span>Visible</span></label>}
+        {definitionType === 'trait' && <label className="rule-set-field"><span>Authoring experience</span><select value={authoringExperience} onChange={(event) => {
           const experience = event.target.value as 'grants' | 'vision' | 'running' | 'advanced';
           setAuthoringExperience(experience);
           setDiagnostics([]);
@@ -201,7 +207,7 @@ export function RuleDefinitionCreateForm({ definitions, modules, onCancel, onCre
             setGuidedDraft(defaultGuidedTraitDraft(experience));
             if (!name.trim() || name === 'Vision' || name === 'Running') setName(experience === 'vision' ? 'Vision' : 'Running');
           }
-        }}><option value="grants">Grants editor</option><option value="vision">Guided visual-perception trait</option><option value="running">Guided running trait</option><option value="advanced">Advanced JSON draft</option></select><small>The grants editor defines what this trait gives to any entity that holds it.</small></label>}
+        }}><option value="grants">Grants editor</option><option value="vision">Guided visual-perception trait</option><option value="running">Guided running trait</option><option value="advanced">Advanced JSON draft</option></select></label>}
         <label className="rule-set-field rule-set-field-wide"><span>Description</span><textarea maxLength={20000} rows={3} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Explain what this rule means and when it applies." /></label>
         <div className="rule-set-field rule-set-field-wide"><span>Tags</span><TagEditor tags={tags} onChange={setTags} knownTags={[...new Set(definitions.flatMap((d) => d.tags))].sort()} /></div>
         {definitionType === 'trait' && authoringExperience === 'grants'
@@ -303,13 +309,19 @@ export function RuleModuleEditForm({ artifact, onCancel, onDelete, onSaved, rule
 type DefinitionEditFormProps = EditFormProps<RuleDefinitionResource> & {
   definitions: RuleDefinitionResource[];
   modules: RuleModuleResource[];
+  externalVisibility?: 'exported' | 'private';
+  onVisibilityChange?: (v: 'exported' | 'private') => void;
 };
 
-export function RuleDefinitionEditForm({ artifact, definitions, modules, onCancel, onDelete, onSaved, ruleSetId }: DefinitionEditFormProps) {
+export function RuleDefinitionEditForm({ artifact, definitions, modules, onCancel, onDelete, onSaved, ruleSetId, externalVisibility, onVisibilityChange }: DefinitionEditFormProps) {
   const [name, setName] = useState(artifact.name);
   const [description, setDescription] = useState(artifact.description ?? '');
   const [moduleId, setModuleId] = useState(artifact.moduleId);
-  const [visibility, setVisibility] = useState(artifact.visibility);
+  const [localVisibility, setLocalVisibility] = useState(artifact.visibility);
+  const visibility = externalVisibility ?? localVisibility;
+  function setVisibility(v: 'exported' | 'private') {
+    if (onVisibilityChange) onVisibilityChange(v); else setLocalVisibility(v);
+  }
   const [schemaVersion] = useState(String(artifact.schemaVersion));
   const [tags, setTags] = useState<string[]>(artifact.tags);
   const [body, setBody] = useState(JSON.stringify(artifact.body, null, 2));
@@ -430,7 +442,7 @@ export function RuleDefinitionEditForm({ artifact, definitions, modules, onCance
           <span className="definition-schema-label">schema version: "{artifact.definitionType}/{schemaVersion}"</span>
         </div>
         <div className="rule-set-editor-heading-right">
-          <label className="guided-rule-checkbox"><input type="checkbox" checked={visibility === 'exported'} onChange={(e) => setVisibility(e.target.checked ? 'exported' : 'private')} /><span>Visible</span></label>
+          {!onVisibilityChange && <label className="guided-rule-checkbox"><input type="checkbox" checked={visibility === 'exported'} onChange={(e) => setVisibility(e.target.checked ? 'exported' : 'private')} /><span>Visible</span></label>}
           <span className="badge">{artifact.status}</span>
         </div>
       </div>

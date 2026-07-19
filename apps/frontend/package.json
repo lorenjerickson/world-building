@@ -1,5 +1,5 @@
 {
-  "name": "world-building",
+  "name": "@world-building/frontend",
   "version": "0.1.2",
   "private": true,
   "scripts": {

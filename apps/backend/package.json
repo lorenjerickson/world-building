@@ -1,5 +1,5 @@
 {
-  "name": "world-building-backend",
+  "name": "@world-building/backend",
   "version": "1.0.0",
   "description": "AI RPG World Builder API in NestJS",
   "private": true,
@@ -10,10 +10,10 @@
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
-    "test:rules": "npm run build && node --test test/rules-api.test.js",
-    "migration:run": "npm run build && typeorm migration:run -d dist/database/data-source.js",
-    "migration:show": "npm run build && typeorm migration:show -d dist/database/data-source.js",
-    "migration:revert": "npm run build && typeorm migration:revert -d dist/database/data-source.js"
+    "test:rules": "pnpm build && node --test test/rules-api.test.js",
+    "migration:run": "pnpm build && typeorm migration:run -d dist/database/data-source.js",
+    "migration:show": "pnpm build && typeorm migration:show -d dist/database/data-source.js",
+    "migration:revert": "pnpm build && typeorm migration:revert -d dist/database/data-source.js"
   },
   "dependencies": {
     "@nestjs/common": "^10.0.0",
@@ -38,10 +38,12 @@
     "@types/node": "^20.12.7",
     "typescript": "^5.4.5"
   },
-  "allowScripts": {
-    "node-llama-cpp@3.19.0": true,
-    "fsevents@2.3.3": true,
-    "classic-level@1.4.1": true,
-    "@nestjs/core@10.4.22": true
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "node-llama-cpp",
+      "fsevents",
+      "classic-level",
+      "@nestjs/core"
+    ]
   }
 }
