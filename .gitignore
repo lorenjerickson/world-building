@@ -3,8 +3,11 @@ dist
 .next
 .env
 .env.local
+.env.*.local
+docker-compose.local.yml
 *.tsbuildinfo
 apps/backend/data/uploads/
+apps/backend/data/levelgraph-db/
 models/*.gguf
 
 # pnpm / turbo

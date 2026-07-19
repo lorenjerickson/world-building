@@ -21,7 +21,7 @@ ENV NEXT_TELEMETRY_DISABLED=1
 EXPOSE 3000
 ENV PORT=3000
 WORKDIR /app/apps/frontend
-CMD ["pnpm", "dev", "--", "--hostname", "0.0.0.0"]
+CMD ["pnpm", "exec", "next", "dev", "--hostname", "0.0.0.0"]
 
 # ── builder: production build ─────────────────────────────────────────────────
 FROM base AS builder

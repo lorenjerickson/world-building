@@ -4,14 +4,16 @@ import process from 'node:process'
 
 const root = process.cwd()
 const config = readFileSync(path.join(root, 'src/payload.config.ts'), 'utf8')
-const compose = readFileSync(path.resolve(root, '../docker-compose.yml'), 'utf8')
-const dockerignore = readFileSync(path.join(root, '.dockerignore'), 'utf8')
+const compose = readFileSync(path.resolve(root, '../../docker-compose.yml'), 'utf8')
+const dockerignore = readFileSync(path.resolve(root, '../../.dockerignore'), 'utf8')
 
 const failures = []
 if (!/push:\s*false\b/.test(config)) failures.push('Payload postgresAdapter must contain literal push: false')
 if (/push:\s*true\b/.test(config)) failures.push('Executable CMS config contains prohibited push: true')
 if (!/cms_private:\s*\n\s*internal:\s*true/.test(compose)) failures.push('CMS Docker network must be internal')
-if (!/^\.env$/m.test(dockerignore)) failures.push('.dockerignore must exclude the local .env file')
+if (!/^\.env$/m.test(dockerignore) || !/^\*\*\/\.env\.\*$/m.test(dockerignore)) {
+  failures.push('Root .dockerignore must exclude root and app-local environment files')
+}
 
 function serviceBlock(name) {
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')

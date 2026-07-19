@@ -21,6 +21,16 @@ import { Workspaces } from './collections/Workspaces'
 import { Worlds } from './collections/Worlds'
 
 const dirname = path.dirname(fileURLToPath(import.meta.url))
+const databaseUser = process.env.CMS_DATABASE_USER || 'worldcms'
+const databasePassword = process.env.CMS_POSTGRES_PASSWORD || ''
+const databaseHost = process.env.CMS_DATABASE_HOST || '127.0.0.1'
+const databasePort = process.env.CMS_DATABASE_PORT || '5433'
+const databaseName = process.env.CMS_DATABASE_NAME || 'worldcms'
+const databaseURL =
+  process.env.CMS_DATABASE_URL ||
+  (databasePassword
+    ? `postgresql://${encodeURIComponent(databaseUser)}:${encodeURIComponent(databasePassword)}@${databaseHost}:${databasePort}/${encodeURIComponent(databaseName)}`
+    : '')
 
 export default buildConfig({
   admin: {
@@ -44,7 +54,7 @@ export default buildConfig({
   ],
   db: postgresAdapter({
     migrationDir: path.resolve(dirname, 'migrations'),
-    pool: { connectionString: process.env.CMS_DATABASE_URL || '' },
+    pool: { connectionString: databaseURL },
     push: false,
   }),
   editor: lexicalEditor(),

@@ -25,20 +25,12 @@ services:
       - ./apps/backend:/app/apps/backend
       - uploads_data:/app/apps/backend/data/uploads
       - ./models:/models:ro
+    env_file:
+      - ./apps/backend/.env
     environment:
-      - DATABASE_URL=postgresql://worldbuilder:password123@db:5432/worlddb
-      - CMS_BASE_URL=http://cms:3000
-      - CMS_INTERNAL_TOKEN=${CMS_INTERNAL_TOKEN:?Set CMS_INTERNAL_TOKEN in .env}
-      - RULE_API_INTERNAL_TOKEN=${RULE_API_INTERNAL_TOKEN:?Set RULE_API_INTERNAL_TOKEN in .env}
-      - LLM_PROVIDER=${LLM_PROVIDER:-openai}
-      - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-2048}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - OPENAI_LLM_MODEL=${OPENAI_LLM_MODEL:-gpt-4o-mini}
-      - OPENAI_PORTRAIT_IMAGE_MODEL=${OPENAI_PORTRAIT_IMAGE_MODEL:-gpt-image-2}
-      - OPENAI_TOKEN_IMAGE_MODEL=${OPENAI_TOKEN_IMAGE_MODEL:-gpt-image-1.5}
-      - LLAMA_MODEL_PATH=${LLAMA_MODEL_PATH:-/models/model.gguf}
-      - LLAMA_CONTEXT_SIZE=${LLAMA_CONTEXT_SIZE:-8192}
-      - LLAMA_GPU_LAYERS=${LLAMA_GPU_LAYERS:-auto}
+      DATABASE_URL: postgresql://worldbuilder:password123@db:5432/worlddb
+      CMS_BASE_URL: http://cms:3000
+      LLAMA_MODEL_PATH: /models/model.gguf
     depends_on:
       db:
         condition: service_healthy
@@ -58,30 +50,31 @@ services:
       - ./apps/frontend:/app/apps/frontend
       # Keep Linux node_modules and Next's cache inside Docker so macOS
       # native packages don't replace the Linux-built ones.
-      - frontend_node_modules:/app/node_modules
+      - frontend_app_node_modules:/app/apps/frontend/node_modules
       - frontend_next:/app/apps/frontend/.next
+    env_file:
+      - ./apps/frontend/.env.local
     environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:8000
-      - BACKEND_URL=http://backend:8000
-      - RULE_API_INTERNAL_TOKEN=${RULE_API_INTERNAL_TOKEN:?Set RULE_API_INTERNAL_TOKEN in .env}
-      - AUTH0_BASE_URL=${AUTH0_BASE_URL:-${APP_BASE_URL:?Set AUTH0_BASE_URL or APP_BASE_URL in .env}}
-      - AUTH0_ISSUER_BASE_URL=${AUTH0_ISSUER_BASE_URL:-https://${AUTH0_DOMAIN:?Set AUTH0_ISSUER_BASE_URL or AUTH0_DOMAIN in .env}}
-      - AUTH0_CLIENT_ID=${AUTH0_CLIENT_ID:?Set AUTH0_CLIENT_ID in .env}
-      - AUTH0_CLIENT_SECRET=${AUTH0_CLIENT_SECRET:?Set AUTH0_CLIENT_SECRET in .env}
-      - AUTH0_SECRET=${AUTH0_SECRET:?Set AUTH0_SECRET in .env}
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+      BACKEND_URL: http://backend:8000
       # Docker Desktop file-system events are not always forwarded to Linux
       # containers, so let Next/Watchpack poll the bind mount for HMR changes.
-      - WATCHPACK_POLLING=true
-      - WATCHPACK_POLLING_INTERVAL=500
+      WATCHPACK_POLLING: "true"
+      WATCHPACK_POLLING_INTERVAL: "500"
     depends_on:
       - backend
 
   cms-db:
     image: postgres:17-alpine
+    env_file:
+      - ./apps/cms/.env
+    entrypoint:
+      - /bin/sh
+      - -c
+      - export POSTGRES_PASSWORD="$$CMS_POSTGRES_PASSWORD"; exec docker-entrypoint.sh postgres
     environment:
       POSTGRES_DB: worldcms
       POSTGRES_USER: worldcms
-      POSTGRES_PASSWORD: ${CMS_POSTGRES_PASSWORD:?Set CMS_POSTGRES_PASSWORD in .env}
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U worldcms -d worldcms"]
       interval: 5s
@@ -94,10 +87,13 @@ services:
 
   cms-storage:
     image: minio/minio:RELEASE.2025-04-22T22-12-26Z
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: ${CMS_S3_ACCESS_KEY_ID:?Set CMS_S3_ACCESS_KEY_ID in .env}
-      MINIO_ROOT_PASSWORD: ${CMS_S3_SECRET_ACCESS_KEY:?Set CMS_S3_SECRET_ACCESS_KEY in .env}
+    env_file:
+      - ./apps/cms/.env
+    entrypoint:
+      - /bin/sh
+      - -c
+    command:
+      - export MINIO_ROOT_USER="$$S3_ACCESS_KEY_ID"; export MINIO_ROOT_PASSWORD="$$S3_SECRET_ACCESS_KEY"; exec /usr/bin/minio server /data --console-address ":9001"
     expose:
       - "9000"
     volumes:
@@ -111,13 +107,11 @@ services:
     command:
       - -c
       - |
-        until /usr/bin/mc alias set cms-storage http://cms-storage:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"; do sleep 1; done
+        until /usr/bin/mc alias set cms-storage http://cms-storage:9000 "$$S3_ACCESS_KEY_ID" "$$S3_SECRET_ACCESS_KEY"; do sleep 1; done
         /usr/bin/mc mb --ignore-existing "cms-storage/$$S3_BUCKET"
         /usr/bin/mc anonymous set none "cms-storage/$$S3_BUCKET"
-    environment:
-      MINIO_ROOT_USER: ${CMS_S3_ACCESS_KEY_ID:?Set CMS_S3_ACCESS_KEY_ID in .env}
-      MINIO_ROOT_PASSWORD: ${CMS_S3_SECRET_ACCESS_KEY:?Set CMS_S3_SECRET_ACCESS_KEY in .env}
-      S3_BUCKET: ${CMS_S3_BUCKET:-worldcms-media}
+    env_file:
+      - ./apps/cms/.env
     depends_on:
       - cms-storage
     networks:
@@ -127,16 +121,12 @@ services:
     build:
       context: .
       dockerfile: apps/cms/Dockerfile
+    env_file:
+      - ./apps/cms/.env
     environment:
-      CMS_DATABASE_URL: postgresql://worldcms:${CMS_POSTGRES_PASSWORD:?Set CMS_POSTGRES_PASSWORD in .env}@cms-db:5432/worldcms
-      PAYLOAD_SECRET: ${CMS_PAYLOAD_SECRET:?Set CMS_PAYLOAD_SECRET in .env}
-      CMS_INTERNAL_TOKEN: ${CMS_INTERNAL_TOKEN:?Set CMS_INTERNAL_TOKEN in .env}
-      S3_ACCESS_KEY_ID: ${CMS_S3_ACCESS_KEY_ID:?Set CMS_S3_ACCESS_KEY_ID in .env}
-      S3_SECRET_ACCESS_KEY: ${CMS_S3_SECRET_ACCESS_KEY:?Set CMS_S3_SECRET_ACCESS_KEY in .env}
-      S3_BUCKET: ${CMS_S3_BUCKET:-worldcms-media}
+      CMS_DATABASE_HOST: cms-db
+      CMS_DATABASE_PORT: "5432"
       S3_ENDPOINT: http://cms-storage:9000
-      S3_FORCE_PATH_STYLE: "true"
-      S3_REGION: ${CMS_S3_REGION:-us-east-1}
     expose:
       - "3000"
     healthcheck:
@@ -154,7 +144,7 @@ services:
 
 volumes:
   postgres_data:
-  frontend_node_modules:
+  frontend_app_node_modules:
   frontend_next:
   uploads_data:
   cms_postgres_data:

@@ -4,9 +4,11 @@
   "packageManager": "pnpm@10.13.1",
   "scripts": {
     "build": "turbo build",
-    "dev": "turbo dev",
+    "dev": "pnpm db:up && turbo dev",
     "lint": "turbo lint",
-    "test": "turbo test"
+    "test": "turbo test",
+    "db:up": "docker compose stop frontend backend cms && docker compose -f docker-compose.yml -f docker-compose.local.yml up -d cms-storage-init && docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --wait db cms-db cms-db-local cms-storage-local",
+    "db:down": "docker compose -f docker-compose.yml -f docker-compose.local.yml down"
   },
   "devDependencies": {
     "turbo": "^2.5.4"

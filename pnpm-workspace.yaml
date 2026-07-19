@@ -1,2 +1,10 @@
 packages:
-  - 'apps/*'
+  - apps/*
+
+onlyBuiltDependencies:
+  - '@nestjs/core'
+  - classic-level
+  - esbuild
+  - node-llama-cpp
+  - sharp
+  - unrs-resolver

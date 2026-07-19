@@ -15,7 +15,7 @@ import { RulesModule } from './rules/rules.module';
   imports: [
     TypeOrmModule.forRoot({
       type: 'postgres',
-      url: process.env.DATABASE_URL || 'postgresql://worldbuilder:password123@db:5432/worlddb',
+      url: process.env.DATABASE_URL || 'postgresql://worldbuilder:password123@localhost:5432/worlddb',
       entities: applicationEntities,
       migrations: applicationMigrations,
       migrationsRun: true,

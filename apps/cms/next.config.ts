@@ -10,7 +10,9 @@ const nextConfig: NextConfig = {
     localPatterns: [{ pathname: '/api/media/file/**' }],
   },
   turbopack: {
-    root: path.resolve(dirname),
+    // This only controls module resolution. Next still loads env files from
+    // the application directory (apps/cms), not from this workspace root.
+    root: path.resolve(dirname, '../..'),
   },
   webpack: (webpackConfig) => {
     webpackConfig.resolve.extensionAlias = {
