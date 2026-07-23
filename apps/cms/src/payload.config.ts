@@ -7,6 +7,10 @@ import { fileURLToPath } from 'node:url'
 import sharp from 'sharp'
 
 import { Characters } from './collections/Characters'
+import { EncounterMapArtifacts } from './collections/EncounterMapArtifacts'
+import { EncounterMapDrafts } from './collections/EncounterMapDrafts'
+import { EncounterMapRevisions } from './collections/EncounterMapRevisions'
+import { EncounterMaps } from './collections/EncounterMaps'
 import { Locations } from './collections/Locations'
 import { Media } from './collections/Media'
 import { RuleDefinitions } from './collections/RuleDefinitions'
@@ -44,6 +48,10 @@ export default buildConfig({
     Worlds,
     Locations,
     Characters,
+    EncounterMaps,
+    EncounterMapDrafts,
+    EncounterMapRevisions,
+    EncounterMapArtifacts,
     RuleSets,
     RuleModules,
     RuleDefinitions,
@@ -69,6 +77,7 @@ export default buildConfig({
     s3Storage({
       bucket: process.env.S3_BUCKET || 'worldcms-media',
       collections: {
+        'encounter-map-artifacts': { prefix: 'encounter-maps' },
         media: { prefix: 'media' },
       },
       config: {

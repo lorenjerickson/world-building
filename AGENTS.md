@@ -2,6 +2,12 @@
 
 These instructions apply to the entire repository. More specific `AGENTS.md` files may add constraints but must not weaken these requirements.
 
+## Frontend visual consistency
+
+- New pages and setup flows must use the frontend's established visual system from `apps/frontend/app/globals.css`; do not ship ad hoc inline page, form, input, panel, or button styling.
+- Before implementing or reviewing a frontend page, inspect the nearest analogous production page and reuse shared layout and control classes such as `dashboard-container`, `dashboard-header`, `card-surface`, `rule-set-field`, `rule-set-form-actions`, `primary-action`, and `secondary-action` where appropriate.
+- Encounter authoring pages are part of the main authenticated application and must visually match the dashboard and other authoring flows. Functional acceptance is incomplete when an encounter page renders as an unstyled prototype.
+
 ## Payload CMS PostgreSQL schema policy
 
 When Payload CMS is added, PostgreSQL schema changes must be explicit, reviewable, and reproducible. Drizzle schema push is prohibited in this repository, including local development.

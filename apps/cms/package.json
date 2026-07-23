@@ -17,12 +17,15 @@
     "migrate:status": "cross-env NODE_OPTIONS=--no-deprecation payload migrate:status",
     "payload": "cross-env NODE_OPTIONS=--no-deprecation payload",
     "test:acceptance": "cross-env NODE_OPTIONS=--no-deprecation tsx scripts/run-acceptance.ts",
+    "test:encounter-acceptance": "pnpm --filter @world-building/common build && cross-env NODE_OPTIONS=--no-deprecation tsx scripts/run-encounter-acceptance.ts",
+    "admin:local": "cross-env NODE_OPTIONS=--no-deprecation tsx scripts/upsert-local-admin.ts",
     "verify:generated": "node scripts/verify-generated.mjs",
     "verify:migrations": "node scripts/verify-migrations.mjs",
     "verify:policy": "node scripts/verify-policy.mjs",
     "cms:verify-schema": "pnpm verify:policy && pnpm verify:generated && pnpm verify:migrations && pnpm migrate:status && pnpm build"
   },
   "dependencies": {
+    "@world-building/common": "workspace:*",
     "@payloadcms/db-postgres": "3.86.0",
     "@payloadcms/next": "3.86.0",
     "@payloadcms/richtext-lexical": "3.86.0",
@@ -35,7 +38,7 @@
     "payload": "3.86.0",
     "react": "19.2.4",
     "react-dom": "19.2.4",
-    "sharp": "0.34.2"
+    "sharp": "0.34.5"
   },
   "devDependencies": {
     "@types/node": "24.10.1",

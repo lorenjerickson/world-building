@@ -48,6 +48,9 @@ services:
     volumes:
       # Mount source from the host so edits are visible without rebuilding.
       - ./apps/frontend:/app/apps/frontend
+      # The frontend imports the shared geometry package's browser entry point
+      # directly. Mount its source as well so geometry exports stay in sync.
+      - ./packages/common/src:/app/packages/common/src:ro
       # Keep Linux node_modules and Next's cache inside Docker so macOS
       # native packages don't replace the Linux-built ones.
       - frontend_app_node_modules:/app/apps/frontend/node_modules
@@ -126,6 +129,7 @@ services:
     environment:
       CMS_DATABASE_HOST: cms-db
       CMS_DATABASE_PORT: "5432"
+      CMS_ENABLE_LOCAL_ADMIN: "false"
       S3_ENDPOINT: http://cms-storage:9000
     expose:
       - "3000"

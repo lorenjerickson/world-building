@@ -73,6 +73,10 @@ export interface Config {
     worlds: World;
     locations: Location;
     characters: Character;
+    'encounter-maps': EncounterMap;
+    'encounter-map-drafts': EncounterMapDraft;
+    'encounter-map-revisions': EncounterMapRevision;
+    'encounter-map-artifacts': EncounterMapArtifact;
     'rule-sets': RuleSet;
     'rule-modules': RuleModule;
     'rule-definitions': RuleDefinition;
@@ -93,6 +97,10 @@ export interface Config {
     worlds: WorldsSelect<false> | WorldsSelect<true>;
     locations: LocationsSelect<false> | LocationsSelect<true>;
     characters: CharactersSelect<false> | CharactersSelect<true>;
+    'encounter-maps': EncounterMapsSelect<false> | EncounterMapsSelect<true>;
+    'encounter-map-drafts': EncounterMapDraftsSelect<false> | EncounterMapDraftsSelect<true>;
+    'encounter-map-revisions': EncounterMapRevisionsSelect<false> | EncounterMapRevisionsSelect<true>;
+    'encounter-map-artifacts': EncounterMapArtifactsSelect<false> | EncounterMapArtifactsSelect<true>;
     'rule-sets': RuleSetsSelect<false> | RuleSetsSelect<true>;
     'rule-modules': RuleModulesSelect<false> | RuleModulesSelect<true>;
     'rule-definitions': RuleDefinitionsSelect<false> | RuleDefinitionsSelect<true>;
@@ -298,6 +306,108 @@ export interface Character {
     [k: string]: unknown;
   };
   portrait?: (number | null) | Media;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "encounter-maps".
+ */
+export interface EncounterMap {
+  id: number;
+  workspace: number | Workspace;
+  externalId: string;
+  campaignExternalId: string;
+  encounterExternalId: string;
+  location?: (number | null) | Location;
+  name: string;
+  currentDraft?: (number | null) | EncounterMapDraft;
+  currentRevision?: (number | null) | EncounterMapRevision;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "encounter-map-drafts".
+ */
+export interface EncounterMapDraft {
+  id: number;
+  workspace: number | Workspace;
+  externalId: string;
+  map: number | EncounterMap;
+  draftVersion: number;
+  lastCommandId?: string | null;
+  scaleInFeet: '0.5' | '1' | '5';
+  bounds: {
+    x: number;
+    y: number;
+    z: number;
+  };
+  paletteVersion: string;
+  canonicalChecksum: string;
+  canonicalArtifact: number | EncounterMapArtifact;
+  validationStatus: 'pending' | 'valid' | 'invalid';
+  validationErrors?:
+    | {
+        message: string;
+        id?: string | null;
+      }[]
+    | null;
+  validatedAt?: string | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "encounter-map-artifacts".
+ */
+export interface EncounterMapArtifact {
+  id: number;
+  workspace: number | Workspace;
+  map: number | EncounterMap;
+  kind: 'canonical' | 'debug-export' | 'chunk-manifest' | 'chunk';
+  checksum: string;
+  formatVersion: string;
+  compilerVersion?: string | null;
+  paletteVersion: string;
+  prefix?: string | null;
+  updatedAt: string;
+  createdAt: string;
+  url?: string | null;
+  thumbnailURL?: string | null;
+  filename?: string | null;
+  mimeType?: string | null;
+  filesize?: number | null;
+  width?: number | null;
+  height?: number | null;
+  focalX?: number | null;
+  focalY?: number | null;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "encounter-map-revisions".
+ */
+export interface EncounterMapRevision {
+  id: number;
+  workspace: number | Workspace;
+  externalId: string;
+  map: number | EncounterMap;
+  sourceDraft: number | EncounterMapDraft;
+  revisionNumber: number;
+  finalizationCommandId: string;
+  scaleInFeet: '0.5' | '1' | '5';
+  bounds: {
+    x: number;
+    y: number;
+    z: number;
+  };
+  paletteVersion: string;
+  canonicalChecksum: string;
+  compilerVersion: string;
+  canonicalArtifact: number | EncounterMapArtifact;
+  compiledArtifacts?: (number | EncounterMapArtifact)[] | null;
+  finalizedBy: number | User;
+  finalizedAt: string;
   updatedAt: string;
   createdAt: string;
 }
@@ -728,6 +838,22 @@ export interface PayloadLockedDocument {
         value: number | Character;
       } | null)
     | ({
+        relationTo: 'encounter-maps';
+        value: number | EncounterMap;
+      } | null)
+    | ({
+        relationTo: 'encounter-map-drafts';
+        value: number | EncounterMapDraft;
+      } | null)
+    | ({
+        relationTo: 'encounter-map-revisions';
+        value: number | EncounterMapRevision;
+      } | null)
+    | ({
+        relationTo: 'encounter-map-artifacts';
+        value: number | EncounterMapArtifact;
+      } | null)
+    | ({
         relationTo: 'rule-sets';
         value: number | RuleSet;
       } | null)
@@ -910,6 +1036,108 @@ export interface CharactersSelect<T extends boolean = true> {
   portrait?: T;
   updatedAt?: T;
   createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "encounter-maps_select".
+ */
+export interface EncounterMapsSelect<T extends boolean = true> {
+  workspace?: T;
+  externalId?: T;
+  campaignExternalId?: T;
+  encounterExternalId?: T;
+  location?: T;
+  name?: T;
+  currentDraft?: T;
+  currentRevision?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "encounter-map-drafts_select".
+ */
+export interface EncounterMapDraftsSelect<T extends boolean = true> {
+  workspace?: T;
+  externalId?: T;
+  map?: T;
+  draftVersion?: T;
+  lastCommandId?: T;
+  scaleInFeet?: T;
+  bounds?:
+    | T
+    | {
+        x?: T;
+        y?: T;
+        z?: T;
+      };
+  paletteVersion?: T;
+  canonicalChecksum?: T;
+  canonicalArtifact?: T;
+  validationStatus?: T;
+  validationErrors?:
+    | T
+    | {
+        message?: T;
+        id?: T;
+      };
+  validatedAt?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "encounter-map-revisions_select".
+ */
+export interface EncounterMapRevisionsSelect<T extends boolean = true> {
+  workspace?: T;
+  externalId?: T;
+  map?: T;
+  sourceDraft?: T;
+  revisionNumber?: T;
+  finalizationCommandId?: T;
+  scaleInFeet?: T;
+  bounds?:
+    | T
+    | {
+        x?: T;
+        y?: T;
+        z?: T;
+      };
+  paletteVersion?: T;
+  canonicalChecksum?: T;
+  compilerVersion?: T;
+  canonicalArtifact?: T;
+  compiledArtifacts?: T;
+  finalizedBy?: T;
+  finalizedAt?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "encounter-map-artifacts_select".
+ */
+export interface EncounterMapArtifactsSelect<T extends boolean = true> {
+  workspace?: T;
+  map?: T;
+  kind?: T;
+  checksum?: T;
+  formatVersion?: T;
+  compilerVersion?: T;
+  paletteVersion?: T;
+  prefix?: T;
+  updatedAt?: T;
+  createdAt?: T;
+  url?: T;
+  thumbnailURL?: T;
+  filename?: T;
+  mimeType?: T;
+  filesize?: T;
+  width?: T;
+  height?: T;
+  focalX?: T;
+  focalY?: T;
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema

@@ -8,15 +8,19 @@ FROM base AS deps
 WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY apps/frontend/package.json ./apps/frontend/
-RUN pnpm install --filter=@world-building/frontend --frozen-lockfile
+COPY packages/common/package.json ./packages/common/
+RUN pnpm install --filter=@world-building/frontend... --frozen-lockfile
 
 # ── dev: hot-reload target used by docker compose ────────────────────────────
 FROM base AS dev
 WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY apps/frontend/package.json ./apps/frontend/
-RUN pnpm install --filter=@world-building/frontend --frozen-lockfile
+COPY packages/common/package.json ./packages/common/
+RUN pnpm install --filter=@world-building/frontend... --frozen-lockfile
 COPY apps/frontend/ ./apps/frontend/
+COPY packages/common/ ./packages/common/
+RUN pnpm --filter=@world-building/common build
 ENV NEXT_TELEMETRY_DISABLED=1
 EXPOSE 3000
 ENV PORT=3000
@@ -28,11 +32,12 @@ FROM base AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/apps/frontend/node_modules ./apps/frontend/node_modules
+COPY --from=deps /app/packages/common/node_modules ./packages/common/node_modules
 COPY apps/frontend/ ./apps/frontend/
+COPY packages/common/ ./packages/common/
 RUN mkdir -p apps/frontend/public
 ENV NEXT_TELEMETRY_DISABLED=1
-WORKDIR /app/apps/frontend
-RUN pnpm build
+RUN pnpm --filter=@world-building/frontend... build
 
 # ── runner: minimal production image ─────────────────────────────────────────
 FROM base AS runner

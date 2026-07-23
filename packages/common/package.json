@@ -1,0 +1,26 @@
+{
+  "name": "@world-building/common",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Shared framework-free types and encounter geometry utilities",
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "browser": "./src/index.ts",
+      "require": "./dist/src/index.js",
+      "default": "./dist/src/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "pnpm build && node --test dist/test/**/*.test.js",
+    "bench": "pnpm build && node dist/scripts/benchmark.js",
+    "verify:phase0": "pnpm test && node dist/scripts/verify-phase0.js"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.7",
+    "typescript": "^5.4.5"
+  }
+}

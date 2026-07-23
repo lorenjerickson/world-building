@@ -10,6 +10,7 @@ import { CmsModule } from './cms/cms.module';
 import { applicationEntities } from './database/entities';
 import { applicationMigrations } from './database/migrations';
 import { RulesModule } from './rules/rules.module';
+import { EncountersModule } from './encounters/encounters.module';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { RulesModule } from './rules/rules.module';
     GenerateModule,
     CmsModule,
     RulesModule,
+    EncountersModule,
   ],
   controllers: [AppController, UploadsController, CharacterArtController],
   providers: [AppService],

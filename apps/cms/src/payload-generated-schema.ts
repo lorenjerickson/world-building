@@ -40,6 +40,22 @@ export const enum__worlds_v_version_status = pgEnum(
   "enum__worlds_v_version_status",
   ["draft", "published"],
 );
+export const enum_encounter_map_drafts_scale_in_feet = pgEnum(
+  "enum_encounter_map_drafts_scale_in_feet",
+  ["0.5", "1", "5"],
+);
+export const enum_encounter_map_drafts_validation_status = pgEnum(
+  "enum_encounter_map_drafts_validation_status",
+  ["pending", "valid", "invalid"],
+);
+export const enum_encounter_map_revisions_scale_in_feet = pgEnum(
+  "enum_encounter_map_revisions_scale_in_feet",
+  ["0.5", "1", "5"],
+);
+export const enum_encounter_map_artifacts_kind = pgEnum(
+  "enum_encounter_map_artifacts_kind",
+  ["canonical", "debug-export", "chunk-manifest", "chunk"],
+);
 export const enum_rule_sets_lifecycle = pgEnum("enum_rule_sets_lifecycle", [
   "active",
   "deprecated",
@@ -617,6 +633,328 @@ export const characters = pgTable(
     index("characters_portrait_idx").on(columns.portrait),
     index("characters_updated_at_idx").on(columns.updatedAt),
     index("characters_created_at_idx").on(columns.createdAt),
+  ],
+);
+
+export const encounter_maps = pgTable(
+  "encounter_maps",
+  {
+    id: serial("id").primaryKey(),
+    workspace: integer("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, {
+        onDelete: "set null",
+      }),
+    externalId: varchar("external_id").notNull(),
+    campaignExternalId: varchar("campaign_external_id").notNull(),
+    encounterExternalId: varchar("encounter_external_id").notNull(),
+    location: integer("location_id").references(() => locations.id, {
+      onDelete: "set null",
+    }),
+    name: varchar("name").notNull(),
+    currentDraft: integer("current_draft_id").references(
+      (): AnyPgColumn => encounter_map_drafts.id,
+      {
+        onDelete: "set null",
+      },
+    ),
+    currentRevision: integer("current_revision_id").references(
+      (): AnyPgColumn => encounter_map_revisions.id,
+      {
+        onDelete: "set null",
+      },
+    ),
+    updatedAt: timestamp("updated_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    })
+      .defaultNow()
+      .notNull(),
+    createdAt: timestamp("created_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    })
+      .defaultNow()
+      .notNull(),
+  },
+  (columns) => [
+    index("encounter_maps_workspace_idx").on(columns.workspace),
+    uniqueIndex("encounter_maps_external_id_idx").on(columns.externalId),
+    index("encounter_maps_campaign_external_id_idx").on(
+      columns.campaignExternalId,
+    ),
+    index("encounter_maps_encounter_external_id_idx").on(
+      columns.encounterExternalId,
+    ),
+    index("encounter_maps_location_idx").on(columns.location),
+    index("encounter_maps_current_draft_idx").on(columns.currentDraft),
+    index("encounter_maps_current_revision_idx").on(columns.currentRevision),
+    index("encounter_maps_updated_at_idx").on(columns.updatedAt),
+    index("encounter_maps_created_at_idx").on(columns.createdAt),
+  ],
+);
+
+export const encounter_map_drafts_validation_errors = pgTable(
+  "encounter_map_drafts_validation_errors",
+  {
+    _order: integer("_order").notNull(),
+    _parentID: integer("_parent_id").notNull(),
+    id: varchar("id").primaryKey(),
+    message: varchar("message").notNull(),
+  },
+  (columns) => [
+    index("encounter_map_drafts_validation_errors_order_idx").on(
+      columns._order,
+    ),
+    index("encounter_map_drafts_validation_errors_parent_id_idx").on(
+      columns._parentID,
+    ),
+    foreignKey({
+      columns: [columns["_parentID"]],
+      foreignColumns: [encounter_map_drafts.id],
+      name: "encounter_map_drafts_validation_errors_parent_id_fk",
+    }).onDelete("cascade"),
+  ],
+);
+
+export const encounter_map_drafts = pgTable(
+  "encounter_map_drafts",
+  {
+    id: serial("id").primaryKey(),
+    workspace: integer("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, {
+        onDelete: "set null",
+      }),
+    externalId: varchar("external_id").notNull(),
+    map: integer("map_id")
+      .notNull()
+      .references((): AnyPgColumn => encounter_maps.id, {
+        onDelete: "set null",
+      }),
+    draftVersion: numeric("draft_version", { mode: "number" }).notNull(),
+    lastCommandId: varchar("last_command_id"),
+    scaleInFeet:
+      enum_encounter_map_drafts_scale_in_feet("scale_in_feet").notNull(),
+    bounds_x: numeric("bounds_x", { mode: "number" }).notNull(),
+    bounds_y: numeric("bounds_y", { mode: "number" }).notNull(),
+    bounds_z: numeric("bounds_z", { mode: "number" }).notNull(),
+    paletteVersion: varchar("palette_version").notNull(),
+    canonicalChecksum: varchar("canonical_checksum").notNull(),
+    canonicalArtifact: integer("canonical_artifact_id")
+      .notNull()
+      .references((): AnyPgColumn => encounter_map_artifacts.id, {
+        onDelete: "set null",
+      }),
+    validationStatus: enum_encounter_map_drafts_validation_status(
+      "validation_status",
+    )
+      .notNull()
+      .default("pending"),
+    validatedAt: timestamp("validated_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    }),
+    updatedAt: timestamp("updated_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    })
+      .defaultNow()
+      .notNull(),
+    createdAt: timestamp("created_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    })
+      .defaultNow()
+      .notNull(),
+  },
+  (columns) => [
+    index("encounter_map_drafts_workspace_idx").on(columns.workspace),
+    uniqueIndex("encounter_map_drafts_external_id_idx").on(columns.externalId),
+    index("encounter_map_drafts_map_idx").on(columns.map),
+    index("encounter_map_drafts_last_command_id_idx").on(columns.lastCommandId),
+    index("encounter_map_drafts_canonical_checksum_idx").on(
+      columns.canonicalChecksum,
+    ),
+    index("encounter_map_drafts_canonical_artifact_idx").on(
+      columns.canonicalArtifact,
+    ),
+    index("encounter_map_drafts_validation_status_idx").on(
+      columns.validationStatus,
+    ),
+    index("encounter_map_drafts_updated_at_idx").on(columns.updatedAt),
+    index("encounter_map_drafts_created_at_idx").on(columns.createdAt),
+  ],
+);
+
+export const encounter_map_revisions = pgTable(
+  "encounter_map_revisions",
+  {
+    id: serial("id").primaryKey(),
+    workspace: integer("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, {
+        onDelete: "set null",
+      }),
+    externalId: varchar("external_id").notNull(),
+    map: integer("map_id")
+      .notNull()
+      .references((): AnyPgColumn => encounter_maps.id, {
+        onDelete: "set null",
+      }),
+    sourceDraft: integer("source_draft_id")
+      .notNull()
+      .references((): AnyPgColumn => encounter_map_drafts.id, {
+        onDelete: "set null",
+      }),
+    revisionNumber: numeric("revision_number", { mode: "number" }).notNull(),
+    finalizationCommandId: varchar("finalization_command_id").notNull(),
+    scaleInFeet:
+      enum_encounter_map_revisions_scale_in_feet("scale_in_feet").notNull(),
+    bounds_x: numeric("bounds_x", { mode: "number" }).notNull(),
+    bounds_y: numeric("bounds_y", { mode: "number" }).notNull(),
+    bounds_z: numeric("bounds_z", { mode: "number" }).notNull(),
+    paletteVersion: varchar("palette_version").notNull(),
+    canonicalChecksum: varchar("canonical_checksum").notNull(),
+    compilerVersion: varchar("compiler_version").notNull(),
+    canonicalArtifact: integer("canonical_artifact_id")
+      .notNull()
+      .references((): AnyPgColumn => encounter_map_artifacts.id, {
+        onDelete: "set null",
+      }),
+    finalizedBy: integer("finalized_by_id")
+      .notNull()
+      .references(() => users.id, {
+        onDelete: "set null",
+      }),
+    finalizedAt: timestamp("finalized_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    }).notNull(),
+    updatedAt: timestamp("updated_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    })
+      .defaultNow()
+      .notNull(),
+    createdAt: timestamp("created_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    })
+      .defaultNow()
+      .notNull(),
+  },
+  (columns) => [
+    index("encounter_map_revisions_workspace_idx").on(columns.workspace),
+    uniqueIndex("encounter_map_revisions_external_id_idx").on(
+      columns.externalId,
+    ),
+    index("encounter_map_revisions_map_idx").on(columns.map),
+    index("encounter_map_revisions_source_draft_idx").on(columns.sourceDraft),
+    uniqueIndex("encounter_map_revisions_finalization_command_id_idx").on(
+      columns.finalizationCommandId,
+    ),
+    index("encounter_map_revisions_canonical_checksum_idx").on(
+      columns.canonicalChecksum,
+    ),
+    index("encounter_map_revisions_canonical_artifact_idx").on(
+      columns.canonicalArtifact,
+    ),
+    index("encounter_map_revisions_finalized_by_idx").on(columns.finalizedBy),
+    index("encounter_map_revisions_updated_at_idx").on(columns.updatedAt),
+    index("encounter_map_revisions_created_at_idx").on(columns.createdAt),
+  ],
+);
+
+export const encounter_map_revisions_rels = pgTable(
+  "encounter_map_revisions_rels",
+  {
+    id: serial("id").primaryKey(),
+    order: integer("order"),
+    parent: integer("parent_id").notNull(),
+    path: varchar("path").notNull(),
+    "encounter-map-artifactsID": integer("encounter_map_artifacts_id"),
+  },
+  (columns) => [
+    index("encounter_map_revisions_rels_order_idx").on(columns.order),
+    index("encounter_map_revisions_rels_parent_idx").on(columns.parent),
+    index("encounter_map_revisions_rels_path_idx").on(columns.path),
+    index("encounter_map_revisions_rels_encounter_map_artifacts_id_idx").on(
+      columns["encounter-map-artifactsID"],
+    ),
+    foreignKey({
+      columns: [columns["parent"]],
+      foreignColumns: [encounter_map_revisions.id],
+      name: "encounter_map_revisions_rels_parent_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [columns["encounter-map-artifactsID"]],
+      foreignColumns: [encounter_map_artifacts.id],
+      name: "encounter_map_revisions_rels_encounter_map_artifacts_fk",
+    }).onDelete("cascade"),
+  ],
+);
+
+export const encounter_map_artifacts = pgTable(
+  "encounter_map_artifacts",
+  {
+    id: serial("id").primaryKey(),
+    workspace: integer("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, {
+        onDelete: "set null",
+      }),
+    map: integer("map_id")
+      .notNull()
+      .references((): AnyPgColumn => encounter_maps.id, {
+        onDelete: "set null",
+      }),
+    kind: enum_encounter_map_artifacts_kind("kind").notNull(),
+    checksum: varchar("checksum").notNull(),
+    formatVersion: varchar("format_version").notNull(),
+    compilerVersion: varchar("compiler_version"),
+    paletteVersion: varchar("palette_version").notNull(),
+    prefix: varchar("prefix").default("encounter-maps"),
+    updatedAt: timestamp("updated_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    })
+      .defaultNow()
+      .notNull(),
+    createdAt: timestamp("created_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    })
+      .defaultNow()
+      .notNull(),
+    url: varchar("url"),
+    thumbnailURL: varchar("thumbnail_u_r_l"),
+    filename: varchar("filename"),
+    mimeType: varchar("mime_type"),
+    filesize: numeric("filesize", { mode: "number" }),
+    width: numeric("width", { mode: "number" }),
+    height: numeric("height", { mode: "number" }),
+    focalX: numeric("focal_x", { mode: "number" }),
+    focalY: numeric("focal_y", { mode: "number" }),
+  },
+  (columns) => [
+    index("encounter_map_artifacts_workspace_idx").on(columns.workspace),
+    index("encounter_map_artifacts_map_idx").on(columns.map),
+    index("encounter_map_artifacts_kind_idx").on(columns.kind),
+    index("encounter_map_artifacts_checksum_idx").on(columns.checksum),
+    index("encounter_map_artifacts_updated_at_idx").on(columns.updatedAt),
+    index("encounter_map_artifacts_created_at_idx").on(columns.createdAt),
+    uniqueIndex("encounter_map_artifacts_filename_idx").on(columns.filename),
   ],
 );
 
@@ -1720,6 +2058,10 @@ export const payload_locked_documents_rels = pgTable(
     worldsID: integer("worlds_id"),
     locationsID: integer("locations_id"),
     charactersID: integer("characters_id"),
+    "encounter-mapsID": integer("encounter_maps_id"),
+    "encounter-map-draftsID": integer("encounter_map_drafts_id"),
+    "encounter-map-revisionsID": integer("encounter_map_revisions_id"),
+    "encounter-map-artifactsID": integer("encounter_map_artifacts_id"),
     "rule-setsID": integer("rule_sets_id"),
     "rule-modulesID": integer("rule_modules_id"),
     "rule-definitionsID": integer("rule_definitions_id"),
@@ -1743,6 +2085,18 @@ export const payload_locked_documents_rels = pgTable(
     ),
     index("payload_locked_documents_rels_characters_id_idx").on(
       columns.charactersID,
+    ),
+    index("payload_locked_documents_rels_encounter_maps_id_idx").on(
+      columns["encounter-mapsID"],
+    ),
+    index("payload_locked_documents_rels_encounter_map_drafts_id_idx").on(
+      columns["encounter-map-draftsID"],
+    ),
+    index("payload_locked_documents_rels_encounter_map_revisions_id_idx").on(
+      columns["encounter-map-revisionsID"],
+    ),
+    index("payload_locked_documents_rels_encounter_map_artifacts_id_idx").on(
+      columns["encounter-map-artifactsID"],
     ),
     index("payload_locked_documents_rels_rule_sets_id_idx").on(
       columns["rule-setsID"],
@@ -1799,6 +2153,26 @@ export const payload_locked_documents_rels = pgTable(
       columns: [columns["charactersID"]],
       foreignColumns: [characters.id],
       name: "payload_locked_documents_rels_characters_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [columns["encounter-mapsID"]],
+      foreignColumns: [encounter_maps.id],
+      name: "payload_locked_documents_rels_encounter_maps_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [columns["encounter-map-draftsID"]],
+      foreignColumns: [encounter_map_drafts.id],
+      name: "payload_locked_documents_rels_encounter_map_drafts_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [columns["encounter-map-revisionsID"]],
+      foreignColumns: [encounter_map_revisions.id],
+      name: "payload_locked_documents_rels_encounter_map_revisions_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [columns["encounter-map-artifactsID"]],
+      foreignColumns: [encounter_map_artifacts.id],
+      name: "payload_locked_documents_rels_encounter_map_artifacts_fk",
     }).onDelete("cascade"),
     foreignKey({
       columns: [columns["rule-setsID"]],
@@ -2069,6 +2443,127 @@ export const relations_characters = relations(characters, ({ one }) => ({
     relationName: "portrait",
   }),
 }));
+export const relations_encounter_maps = relations(
+  encounter_maps,
+  ({ one }) => ({
+    workspace: one(workspaces, {
+      fields: [encounter_maps.workspace],
+      references: [workspaces.id],
+      relationName: "workspace",
+    }),
+    location: one(locations, {
+      fields: [encounter_maps.location],
+      references: [locations.id],
+      relationName: "location",
+    }),
+    currentDraft: one(encounter_map_drafts, {
+      fields: [encounter_maps.currentDraft],
+      references: [encounter_map_drafts.id],
+      relationName: "currentDraft",
+    }),
+    currentRevision: one(encounter_map_revisions, {
+      fields: [encounter_maps.currentRevision],
+      references: [encounter_map_revisions.id],
+      relationName: "currentRevision",
+    }),
+  }),
+);
+export const relations_encounter_map_drafts_validation_errors = relations(
+  encounter_map_drafts_validation_errors,
+  ({ one }) => ({
+    _parentID: one(encounter_map_drafts, {
+      fields: [encounter_map_drafts_validation_errors._parentID],
+      references: [encounter_map_drafts.id],
+      relationName: "validationErrors",
+    }),
+  }),
+);
+export const relations_encounter_map_drafts = relations(
+  encounter_map_drafts,
+  ({ one, many }) => ({
+    workspace: one(workspaces, {
+      fields: [encounter_map_drafts.workspace],
+      references: [workspaces.id],
+      relationName: "workspace",
+    }),
+    map: one(encounter_maps, {
+      fields: [encounter_map_drafts.map],
+      references: [encounter_maps.id],
+      relationName: "map",
+    }),
+    canonicalArtifact: one(encounter_map_artifacts, {
+      fields: [encounter_map_drafts.canonicalArtifact],
+      references: [encounter_map_artifacts.id],
+      relationName: "canonicalArtifact",
+    }),
+    validationErrors: many(encounter_map_drafts_validation_errors, {
+      relationName: "validationErrors",
+    }),
+  }),
+);
+export const relations_encounter_map_revisions_rels = relations(
+  encounter_map_revisions_rels,
+  ({ one }) => ({
+    parent: one(encounter_map_revisions, {
+      fields: [encounter_map_revisions_rels.parent],
+      references: [encounter_map_revisions.id],
+      relationName: "_rels",
+    }),
+    "encounter-map-artifactsID": one(encounter_map_artifacts, {
+      fields: [encounter_map_revisions_rels["encounter-map-artifactsID"]],
+      references: [encounter_map_artifacts.id],
+      relationName: "encounter-map-artifacts",
+    }),
+  }),
+);
+export const relations_encounter_map_revisions = relations(
+  encounter_map_revisions,
+  ({ one, many }) => ({
+    workspace: one(workspaces, {
+      fields: [encounter_map_revisions.workspace],
+      references: [workspaces.id],
+      relationName: "workspace",
+    }),
+    map: one(encounter_maps, {
+      fields: [encounter_map_revisions.map],
+      references: [encounter_maps.id],
+      relationName: "map",
+    }),
+    sourceDraft: one(encounter_map_drafts, {
+      fields: [encounter_map_revisions.sourceDraft],
+      references: [encounter_map_drafts.id],
+      relationName: "sourceDraft",
+    }),
+    canonicalArtifact: one(encounter_map_artifacts, {
+      fields: [encounter_map_revisions.canonicalArtifact],
+      references: [encounter_map_artifacts.id],
+      relationName: "canonicalArtifact",
+    }),
+    finalizedBy: one(users, {
+      fields: [encounter_map_revisions.finalizedBy],
+      references: [users.id],
+      relationName: "finalizedBy",
+    }),
+    _rels: many(encounter_map_revisions_rels, {
+      relationName: "_rels",
+    }),
+  }),
+);
+export const relations_encounter_map_artifacts = relations(
+  encounter_map_artifacts,
+  ({ one }) => ({
+    workspace: one(workspaces, {
+      fields: [encounter_map_artifacts.workspace],
+      references: [workspaces.id],
+      relationName: "workspace",
+    }),
+    map: one(encounter_maps, {
+      fields: [encounter_map_artifacts.map],
+      references: [encounter_maps.id],
+      relationName: "map",
+    }),
+  }),
+);
 export const relations_rule_sets_tags = relations(
   rule_sets_tags,
   ({ one }) => ({
@@ -2441,6 +2936,26 @@ export const relations_payload_locked_documents_rels = relations(
       references: [characters.id],
       relationName: "characters",
     }),
+    "encounter-mapsID": one(encounter_maps, {
+      fields: [payload_locked_documents_rels["encounter-mapsID"]],
+      references: [encounter_maps.id],
+      relationName: "encounter-maps",
+    }),
+    "encounter-map-draftsID": one(encounter_map_drafts, {
+      fields: [payload_locked_documents_rels["encounter-map-draftsID"]],
+      references: [encounter_map_drafts.id],
+      relationName: "encounter-map-drafts",
+    }),
+    "encounter-map-revisionsID": one(encounter_map_revisions, {
+      fields: [payload_locked_documents_rels["encounter-map-revisionsID"]],
+      references: [encounter_map_revisions.id],
+      relationName: "encounter-map-revisions",
+    }),
+    "encounter-map-artifactsID": one(encounter_map_artifacts, {
+      fields: [payload_locked_documents_rels["encounter-map-artifactsID"]],
+      references: [encounter_map_artifacts.id],
+      relationName: "encounter-map-artifacts",
+    }),
     "rule-setsID": one(rule_sets, {
       fields: [payload_locked_documents_rels["rule-setsID"]],
       references: [rule_sets.id],
@@ -2519,6 +3034,10 @@ type DatabaseSchema = {
   enum_media_purpose: typeof enum_media_purpose;
   enum_worlds_status: typeof enum_worlds_status;
   enum__worlds_v_version_status: typeof enum__worlds_v_version_status;
+  enum_encounter_map_drafts_scale_in_feet: typeof enum_encounter_map_drafts_scale_in_feet;
+  enum_encounter_map_drafts_validation_status: typeof enum_encounter_map_drafts_validation_status;
+  enum_encounter_map_revisions_scale_in_feet: typeof enum_encounter_map_revisions_scale_in_feet;
+  enum_encounter_map_artifacts_kind: typeof enum_encounter_map_artifacts_kind;
   enum_rule_sets_lifecycle: typeof enum_rule_sets_lifecycle;
   enum_rule_sets_status: typeof enum_rule_sets_status;
   enum__rule_sets_v_version_lifecycle: typeof enum__rule_sets_v_version_lifecycle;
@@ -2553,6 +3072,12 @@ type DatabaseSchema = {
   _worlds_v_rels: typeof _worlds_v_rels;
   locations: typeof locations;
   characters: typeof characters;
+  encounter_maps: typeof encounter_maps;
+  encounter_map_drafts_validation_errors: typeof encounter_map_drafts_validation_errors;
+  encounter_map_drafts: typeof encounter_map_drafts;
+  encounter_map_revisions: typeof encounter_map_revisions;
+  encounter_map_revisions_rels: typeof encounter_map_revisions_rels;
+  encounter_map_artifacts: typeof encounter_map_artifacts;
   rule_sets_tags: typeof rule_sets_tags;
   rule_sets: typeof rule_sets;
   _rule_sets_v_version_tags: typeof _rule_sets_v_version_tags;
@@ -2587,6 +3112,12 @@ type DatabaseSchema = {
   relations__worlds_v: typeof relations__worlds_v;
   relations_locations: typeof relations_locations;
   relations_characters: typeof relations_characters;
+  relations_encounter_maps: typeof relations_encounter_maps;
+  relations_encounter_map_drafts_validation_errors: typeof relations_encounter_map_drafts_validation_errors;
+  relations_encounter_map_drafts: typeof relations_encounter_map_drafts;
+  relations_encounter_map_revisions_rels: typeof relations_encounter_map_revisions_rels;
+  relations_encounter_map_revisions: typeof relations_encounter_map_revisions;
+  relations_encounter_map_artifacts: typeof relations_encounter_map_artifacts;
   relations_rule_sets_tags: typeof relations_rule_sets_tags;
   relations_rule_sets: typeof relations_rule_sets;
   relations__rule_sets_v_version_tags: typeof relations__rule_sets_v_version_tags;

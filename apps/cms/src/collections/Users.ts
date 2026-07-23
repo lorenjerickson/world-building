@@ -4,6 +4,7 @@ import type { CollectionConfig, Payload } from 'payload'
 import type { User } from '../payload-types'
 
 let firstUserBootstrap: Promise<User | null> | undefined
+const localAdminEnabled = process.env.NODE_ENV !== 'production' && process.env.CMS_ENABLE_LOCAL_ADMIN === 'true'
 
 function fallbackEmail(subject: string): string {
   const digest = createHash('sha256').update(subject).digest('hex').slice(0, 24)
@@ -92,10 +93,12 @@ export const Users: CollectionConfig = {
     },
   },
   auth: {
-    disableLocalStrategy: {
-      enableFields: true,
-      optionalPassword: true,
-    },
+    ...(localAdminEnabled ? {} : {
+      disableLocalStrategy: {
+        enableFields: true as const,
+        optionalPassword: true as const,
+      },
+    }),
     strategies: [
       {
         name: 'trusted-auth0-subject',

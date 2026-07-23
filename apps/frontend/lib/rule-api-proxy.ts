@@ -1,7 +1,7 @@
 import { getSession } from '@auth0/nextjs-auth0';
 import { NextRequest, NextResponse } from 'next/server';
 
-const allowedMethods = new Set(['GET', 'POST', 'PATCH', 'DELETE']);
+const allowedMethods = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
 
 type SessionActor = {
   email?: string;
@@ -55,7 +55,7 @@ async function proxyAuthenticatedRuleApi(request: Request, apiRoot: string, segm
   const sourceUrl = new URL(request.url);
   const encodedPath = segments.map(encodeURIComponent).join('/');
   const target = `${backendUrl}/api/${apiRoot}${encodedPath ? `/${encodedPath}` : ''}${sourceUrl.search}`;
-  const hasBody = request.method === 'POST' || request.method === 'PATCH';
+  const hasBody = request.method === 'POST' || request.method === 'PUT' || request.method === 'PATCH';
 
   try {
     const response = await fetch(target, {
@@ -93,4 +93,8 @@ export function proxyRuleApi(request: Request, segments: string[] = []): Promise
 
 export function proxyRuleAuthoringApi(request: Request, segments: string[] = []): Promise<NextResponse> {
   return proxyAuthenticatedRuleApi(request, 'rule-authoring', segments);
+}
+
+export function proxyEncounterApi(request: Request, segments: string[] = []): Promise<NextResponse> {
+  return proxyAuthenticatedRuleApi(request, 'encounters', segments);
 }
