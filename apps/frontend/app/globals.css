@@ -985,6 +985,23 @@ body {
 .rule-assistant-assumptions { font-size: .8rem; }
 .rule-assistant-assumptions summary { color: var(--muted); cursor: pointer; font-weight: 700; }
 .rule-assistant-assumptions ul { color: var(--muted); margin: 6px 0 0; padding-left: 17px; }
+.rule-assistant-parser { background: rgba(255, 255, 255, .03); border: 1px solid rgba(255, 255, 255, .12); border-radius: 11px; padding: 10px 12px; }
+.rule-assistant-parser summary { align-items: center; color: var(--text); cursor: pointer; display: flex; font-size: .82rem; font-weight: 700; gap: 8px; justify-content: space-between; }
+.rule-assistant-parser-count { color: var(--muted); font-size: .74rem; font-weight: 500; }
+.rule-assistant-parser-slots { display: grid; gap: 8px; margin-top: 9px; }
+.rule-assistant-parser-slot { background: rgba(2, 2, 3, .36); border: 1px solid rgba(255, 255, 255, .08); border-radius: 10px; padding: 9px 10px; }
+.rule-assistant-parser-slot > header { align-items: baseline; display: flex; gap: 8px; justify-content: space-between; }
+.rule-assistant-parser-slot > header > strong { color: var(--accent); font-size: .78rem; }
+.rule-assistant-parser-slot > header > span { color: var(--muted); font-size: .72rem; }
+.rule-assistant-parser-slot > p { color: var(--text); font-size: .79rem; margin: 5px 0; }
+.rule-assistant-parser-slot dl { display: grid; gap: 2px; grid-template-columns: auto 1fr; margin: 0; }
+.rule-assistant-parser-slot dt { color: var(--muted); font-size: .72rem; }
+.rule-assistant-parser-slot dd { color: var(--text); font-size: .75rem; margin: 0; }
+.rule-assistant-parser-patches { margin-top: 9px; }
+.rule-assistant-parser-patches > strong { color: var(--accent); display: block; font-size: .78rem; margin-bottom: 4px; }
+.rule-assistant-parser-patches ul { display: grid; gap: 5px; margin: 0; padding-left: 16px; }
+.rule-assistant-parser-patches li { color: var(--text); font-size: .76rem; }
+.rule-assistant-parser-patches li small { color: var(--muted); display: block; margin-top: 2px; }
 .rule-assistant-proposals { display: flex; flex-direction: column; gap: 8px; }
 .rule-assistant-proposals > strong { color: var(--accent); display: block; font-size: .82rem; margin-bottom: 2px; }
 .rule-assistant-proposal-card { background: rgba(5, 3, 6, .28); border: 1px solid rgba(229, 182, 76, .16); border-radius: 13px; padding: 14px; }

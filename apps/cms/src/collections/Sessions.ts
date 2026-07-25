@@ -18,13 +18,13 @@ export const Sessions: CollectionConfig = {
       type: 'text',
       required: true,
     },
-    {
-      name: 'campaign',
-      type: 'relationship',
-      relationTo: 'campaigns',
-      required: true,
-      index: true,
-    },
+    // {
+    //   name: 'campaign',
+    //   type: 'relationship',
+    //   relationTo: 'campaigns',
+    //   required: true,
+    //   index: true,
+    // },
     {
       name: 'sessionNumber',
       type: 'number',

@@ -2,7 +2,9 @@
 
 import { useRef, useState } from 'react';
 import {
+  AssistantDraftDefinitionPatch,
   AssistantMessage,
+  AssistantParsedParameter,
   AssistantProposedDefinition,
   AssistantResponse,
   sendAssistantMessage,
@@ -39,6 +41,18 @@ function definitionTypeFromBody(body: Record<string, unknown>): RuleDefinitionTy
 
 function nameFromBody(body: Record<string, unknown>): string {
   return typeof body.name === 'string' ? body.name : 'Untitled';
+}
+
+function formatParserParameter(parameter: AssistantParsedParameter): string {
+  if (parameter.kind === 'dice' && typeof parameter.value === 'object' && parameter.value !== null) {
+    const value = parameter.value as { count: number; sides: number; modifier: number };
+    const modifier = value.modifier === 0 ? '' : value.modifier > 0 ? `+${value.modifier}` : `${value.modifier}`;
+    return `${value.count}d${value.sides}${modifier}`;
+  }
+  if (parameter.kind === 'number') {
+    return `${String(parameter.value)}${parameter.unit ? ` ${parameter.unit}` : ''}`;
+  }
+  return String(parameter.value);
 }
 
 // ── Proposal card ─────────────────────────────────────────────────────────────
@@ -96,6 +110,10 @@ function TurnView({
   onAccept: (proposalId: string) => void;
   onDiscard: (proposalId: string) => void;
 }) {
+  const parser = turn.response?.parser;
+  const parserSlots = parser?.slots ?? [];
+  const parserPatches = parser?.draftDefinitionPatches ?? [];
+
   return (
     <div className={`rule-assistant-turn ${turn.role}`}>
       <div className="rule-assistant-bubble">
@@ -103,6 +121,52 @@ function TurnView({
       </div>
       {turn.role === 'assistant' && turn.response && (
         <div className="rule-assistant-extras">
+          {(parserSlots.length > 0 || parserPatches.length > 0) && (
+            <details className="rule-assistant-parser" open={parserSlots.length > 0}>
+              <summary>
+                Parser extraction
+                <span className="rule-assistant-parser-count">{parserSlots.length} sentence{parserSlots.length === 1 ? '' : 's'} · {parserPatches.length} draft patch{parserPatches.length === 1 ? '' : 'es'}</span>
+              </summary>
+              {parserSlots.length > 0 && (
+                <div className="rule-assistant-parser-slots">
+                  {parserSlots.map((slot, index) => (
+                    <article key={`${slot.sentence}-${index}`} className="rule-assistant-parser-slot">
+                      <header>
+                        <strong>{slot.capability || slot.subject || `Sentence ${index + 1}`}</strong>
+                        <span>confidence {(slot.confidence * 100).toFixed(0)}%</span>
+                      </header>
+                      <p>{slot.sentence}</p>
+                      <dl>
+                        {slot.subject && <><dt>Subject</dt><dd>{slot.subject}</dd></>}
+                        {slot.capability && <><dt>Capability</dt><dd>{slot.capability}</dd></>}
+                        {slot.predicates.length > 0 && <><dt>Predicates</dt><dd>{slot.predicates.join(' · ')}</dd></>}
+                        {slot.parameters.length > 0 && (
+                          <>
+                            <dt>Parameters</dt>
+                            <dd>{slot.parameters.map((parameter) => `${parameter.name}: ${formatParserParameter(parameter)}`).join(' · ')}</dd>
+                          </>
+                        )}
+                      </dl>
+                    </article>
+                  ))}
+                </div>
+              )}
+              {parserPatches.length > 0 && (
+                <div className="rule-assistant-parser-patches">
+                  <strong>Draft definition patch ideas</strong>
+                  <ul>
+                    {parserPatches.map((patch: AssistantDraftDefinitionPatch, index) => (
+                      <li key={`${patch.name}-${index}`}>
+                        <span className="badge">{patch.definitionType}</span>
+                        <span>{patch.name}</span>
+                        <small>{patch.rationale}</small>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </details>
+          )}
           {turn.response.questions.length > 0 && (
             <div className="rule-assistant-questions">
               <strong>Clarifying questions:</strong>
@@ -177,7 +241,17 @@ export function RuleAssistantPanel({
 
       if (!response.llmAvailable) {
         setUnavailable(true);
-        setTurns((prev) => prev.filter((t) => t.id !== userTurnId));
+      }
+
+      if (!response.llmAvailable) {
+        const parserOnlyTurn: TurnEntry = {
+          id: uid(),
+          role: 'assistant',
+          content: response.explanation,
+          response,
+          proposals: [],
+        };
+        setTurns((prev) => [...prev, parserOnlyTurn]);
         return;
       }
 
@@ -247,15 +321,12 @@ export function RuleAssistantPanel({
   }
 
   if (unavailable) {
-    return (
-      <div className="rule-assistant-panel rule-set-child-form">
-        <p className="rule-set-notice">The AI assistant requires a configured language model. Set <code>OPENAI_API_KEY</code> or configure a local LLM in the backend to enable it.</p>
-      </div>
-    );
+    // Keep the panel usable in parser-only mode when no LLM is configured.
   }
 
   return (
     <div className="rule-assistant-panel rule-set-child-form">
+      {unavailable && <p className="rule-set-notice">LLM is unavailable. Parser-only extraction is active. Configure <code>OPENAI_API_KEY</code> or a local model to receive full assistant proposals.</p>}
       <div className="rule-assistant-turn-list">
         {turns.length === 0 && (
           <p className="rule-assistant-empty">Describe a creature ability, resolution mechanic, or trait you'd like to add. The assistant will propose typed rule definitions you can review and accept one by one.</p>

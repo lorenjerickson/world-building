@@ -3,11 +3,13 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
 import { NestExpressApplication } from '@nestjs/platform-express';
+import { WsAdapter } from '@nestjs/platform-ws';
 import * as express from 'express';
 import { join } from 'path';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  app.useWebSocketAdapter(new WsAdapter(app));
   app.enableShutdownHooks();
   app.use('/uploads', express.static(join(process.cwd(), 'data', 'uploads'), {
     immutable: true,

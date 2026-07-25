@@ -9,6 +9,7 @@ import { CharacterArtController } from './character-art.controller';
 import { CmsModule } from './cms/cms.module';
 import { RulesModule } from './rules/rules.module';
 import { EncountersModule } from './encounters/encounters.module';
+import { RealtimeModule } from './realtime/realtime.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { EncountersModule } from './encounters/encounters.module';
     CmsModule,
     RulesModule,
     EncountersModule,
+    RealtimeModule,
   ],
   controllers: [AppController, UploadsController, CharacterArtController],
   providers: [AppService],

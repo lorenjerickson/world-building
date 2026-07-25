@@ -17,6 +17,7 @@ const { meleeResolutionExamples, meleeResolutionFixtures } = require('../dist/ru
 const { compileTraitCompositions } = require('../dist/rules/traits/trait-composition.compiler');
 const { migrateTraitBody, previewTraitDefinitionMigration } = require('../dist/rules/traits/trait-migration');
 const { compileRuleRelease } = require('../dist/rules/releases/rule-release.compiler');
+const { RuleSentenceParserService } = require('../dist/rules/assistant/rule-sentence-parser.service');
 
 const originalFetch = global.fetch;
 const originalRuleApiToken = process.env.RULE_API_INTERNAL_TOKEN;
@@ -1105,6 +1106,36 @@ test('authoring service exposes versioned descriptors and compilation diagnostic
   assert.equal(service.getDescriptor('trait').definitionType, 'trait');
   assert.equal(service.getDescriptor('trait').semanticFrames.length, 2);
   assert.equal(service.validate(creatureCapabilityExamples).valid, true);
+});
+
+test('rule sentence parser extracts semantic slots and deterministic draft patches', () => {
+  const parser = new RuleSentenceParserService();
+  const result = parser.parse('When the scout attacks from cover, roll 2d6+1 damage and gain +2 bonus if target is unaware.');
+
+  assert.ok(result.slots.length >= 1);
+  assert.ok(result.slots[0].confidence >= 0.5);
+  assert.ok(result.slots[0].parameters.some((parameter) => parameter.kind === 'dice'));
+  assert.ok(result.slots[0].predicates.some((predicate) => predicate.startsWith('when ')));
+  assert.ok(result.draftDefinitionPatches.length >= 1);
+  assert.ok(result.draftDefinitionPatches.some((patch) => patch.definitionType === 'check' || patch.definitionType === 'modifier'));
+});
+
+test('authoring service delegates assistant sentence parsing to the assistant provider', () => {
+  let receivedMessage;
+  const expected = {
+    slots: [{ sentence: 'test', parameters: [], predicates: [], confidence: 1 }],
+    draftDefinitionPatches: [],
+  };
+  const service = new RuleAuthoringService({
+    parseSentence(message) {
+      receivedMessage = message;
+      return expected;
+    },
+  });
+
+  const parsed = service.parseRuleSentence('the actor may roll 1d20');
+  assert.equal(receivedMessage, 'the actor may roll 1d20');
+  assert.deepEqual(parsed, expected);
 });
 
 test('Phase 2 melee resolution compiles and produces a deterministic trace', () => {

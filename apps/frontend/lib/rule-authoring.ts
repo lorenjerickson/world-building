@@ -111,11 +111,41 @@ export type AssistantProposedDefinition = {
   diagnostics: AuthoringDiagnostic[];
 };
 
+export type AssistantParsedParameter = {
+  name: string;
+  kind: 'number' | 'dice' | 'keyword';
+  value: number | string | { count: number; sides: number; modifier: number };
+  unit?: string;
+  raw: string;
+};
+
+export type AssistantParsedSentence = {
+  sentence: string;
+  subject?: string;
+  capability?: string;
+  parameters: AssistantParsedParameter[];
+  predicates: string[];
+  confidence: number;
+};
+
+export type AssistantDraftDefinitionPatch = {
+  definitionType: 'trait' | 'check' | 'operation' | 'modifier';
+  name: string;
+  patch: Record<string, unknown>;
+  rationale: string;
+};
+
+export type AssistantParserResult = {
+  slots: AssistantParsedSentence[];
+  draftDefinitionPatches: AssistantDraftDefinitionPatch[];
+};
+
 export type AssistantResponse = {
   questions: string[];
   explanation: string;
   assumptions: string[];
   definitions: AssistantProposedDefinition[];
+  parser: AssistantParserResult;
   llmAvailable: boolean;
 };
 
@@ -132,6 +162,17 @@ export async function sendAssistantMessage(input: {
     method: 'POST',
   });
   return readAuthoringResponse<AssistantResponse>(response);
+}
+
+export async function parseAssistantSentence(input: {
+  message: string;
+}): Promise<AssistantParserResult> {
+  const response = await fetch('/api/rule-authoring/assistant/parse', {
+    body: JSON.stringify(input),
+    headers: { 'content-type': 'application/json' },
+    method: 'POST',
+  });
+  return readAuthoringResponse<AssistantParserResult>(response);
 }
 
 export type FixtureRunResult = {
