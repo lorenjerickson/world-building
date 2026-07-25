@@ -6,13 +6,17 @@ import { buildConfig } from 'payload'
 import { fileURLToPath } from 'node:url'
 import sharp from 'sharp'
 
+import { Campaigns } from './collections/Campaigns'
 import { Characters } from './collections/Characters'
 import { EncounterMapArtifacts } from './collections/EncounterMapArtifacts'
 import { EncounterMapDrafts } from './collections/EncounterMapDrafts'
 import { EncounterMapRevisions } from './collections/EncounterMapRevisions'
 import { EncounterMaps } from './collections/EncounterMaps'
+import { Events } from './collections/Events'
+import { Items } from './collections/Items'
 import { Locations } from './collections/Locations'
 import { Media } from './collections/Media'
+import { Organizations } from './collections/Organizations'
 import { RuleDefinitions } from './collections/RuleDefinitions'
 import { RuleDocuments } from './collections/RuleDocuments'
 import { RuleGenerationPolicies } from './collections/RuleGenerationPolicies'
@@ -20,6 +24,7 @@ import { RuleMigrations } from './collections/RuleMigrations'
 import { RuleModules } from './collections/RuleModules'
 import { RuleReleases } from './collections/RuleReleases'
 import { RuleSets } from './collections/RuleSets'
+import { Sessions } from './collections/Sessions'
 import { Users } from './collections/Users'
 import { Workspaces } from './collections/Workspaces'
 import { Worlds } from './collections/Worlds'
@@ -48,6 +53,11 @@ export default buildConfig({
     Worlds,
     Locations,
     Characters,
+    Campaigns,
+    Sessions,
+    Items,
+    Organizations,
+    Events,
     EncounterMaps,
     EncounterMapDrafts,
     EncounterMapRevisions,

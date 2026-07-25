@@ -339,6 +339,22 @@ export class UpdateRuleDefinitionDto {
   tags?: string[];
 }
 
+export class PublishRuleSetDto {
+  @IsString()
+  @Matches(/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/)
+  @MaxLength(80)
+  version: string;
+
+  @IsString()
+  @IsISO8601({ strict: true })
+  expectedUpdatedAt: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(20_000)
+  releaseNotes?: string;
+}
+
 export class CloneRuleDefinitionDto {
   @IsOptional()
   @IsString()
@@ -350,4 +366,16 @@ export class CloneRuleDefinitionDto {
   @IsInt()
   @Min(1)
   targetModuleId?: number;
+}
+
+export class MigrateTraitDefinitionDto {
+  @IsString()
+  @IsISO8601({ strict: true })
+  expectedUpdatedAt: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(160)
+  name?: string;
 }

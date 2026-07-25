@@ -106,6 +106,41 @@ export interface RuleDefinitionResource {
   updatedAt: string;
 }
 
+export interface TraitMigrationPreview {
+  valid: boolean;
+  sourceVersion: string;
+  targetVersion: 'trait/2';
+  migratedBody?: Record<string, unknown>;
+  pathChanges: Array<{
+    path: string;
+    kind: 'added' | 'removed' | 'changed';
+    before?: string;
+    after?: string;
+  }>;
+  diagnostics: Array<{
+    code: string;
+    message: string;
+    path: string;
+    severity: 'error' | 'warning';
+  }>;
+}
+
+export interface RuleReleaseResource {
+  id: number;
+  externalId: string;
+  ruleSetId: number;
+  version: string;
+  contentHash: string;
+  engineCompatibility: Record<string, unknown>;
+  dependencyLock: unknown[];
+  manifest: Record<string, unknown>;
+  sourceSnapshot: Record<string, unknown>;
+  publishedAt: string;
+  lifecycle: 'published' | 'deprecated' | 'retired';
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface CreateRuleDefinitionInput {
   moduleId: number;
   definitionType: RuleDefinitionType;
@@ -198,6 +233,30 @@ export async function createRuleDefinition(ruleSetId: number, input: CreateRuleD
   return readResponse<RuleDefinitionResource>(response);
 }
 
+export async function previewTraitMigration(
+  ruleSetId: number,
+  definitionId: number,
+): Promise<TraitMigrationPreview> {
+  const response = await fetch(`/api/rule-sets/${ruleSetId}/definitions/${definitionId}/migration/preview`, {
+    headers: { 'content-type': 'application/json' },
+    method: 'POST',
+  });
+  return readResponse<TraitMigrationPreview>(response);
+}
+
+export async function migrateTraitDefinition(
+  ruleSetId: number,
+  definitionId: number,
+  input: { expectedUpdatedAt: string; name?: string },
+): Promise<RuleDefinitionResource> {
+  const response = await fetch(`/api/rule-sets/${ruleSetId}/definitions/${definitionId}/migration`, {
+    body: JSON.stringify(input),
+    headers: { 'content-type': 'application/json' },
+    method: 'POST',
+  });
+  return readResponse<RuleDefinitionResource>(response);
+}
+
 export async function updateRuleModule(ruleSetId: number, moduleId: number, input: UpdateRuleModuleInput): Promise<RuleModuleResource> {
   const response = await fetch(`/api/rule-sets/${ruleSetId}/modules/${moduleId}`, {
     body: JSON.stringify(input),
@@ -232,6 +291,21 @@ export async function deleteRuleSet(ruleSet: RuleSetResource): Promise<void> {
   const params = new URLSearchParams({ expectedUpdatedAt: ruleSet.updatedAt });
   const response = await fetch(`/api/rule-sets/${ruleSet.id}?${params}`, { method: 'DELETE' });
   await readResponse<{ deleted: true; id: number }>(response);
+}
+
+export async function publishRuleSet(
+  ruleSet: RuleSetResource,
+  input: { version: string; releaseNotes?: string },
+): Promise<RuleReleaseResource> {
+  const response = await fetch(`/api/rule-sets/${ruleSet.id}/releases`, {
+    body: JSON.stringify({
+      ...input,
+      expectedUpdatedAt: ruleSet.updatedAt,
+    }),
+    headers: { 'content-type': 'application/json' },
+    method: 'POST',
+  });
+  return readResponse<RuleReleaseResource>(response);
 }
 
 // ── Export / import ───────────────────────────────────────────────────────────

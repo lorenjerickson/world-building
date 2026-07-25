@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "test": "pnpm --filter @world-building/common build && tsc -p tsconfig.test.json && node --test .next/trait-tests/*.test.js"
   },
   "dependencies": {
     "@auth0/nextjs-auth0": "^3.8.0",

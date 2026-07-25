@@ -71,6 +71,11 @@ export class RuleAuthoringController {
     );
   }
 
+  @Post('assistant/parse')
+  parseAssistantSentence(@Body() body: { message?: string }) {
+    return this.authoring.parseRuleSentence(typeof body?.message === 'string' ? body.message : '');
+  }
+
   @Get('assistant/tools')
   @Header('Cache-Control', 'private, max-age=3600')
   getAiToolSchemas() {

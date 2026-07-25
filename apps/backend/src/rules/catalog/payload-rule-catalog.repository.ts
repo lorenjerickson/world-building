@@ -12,6 +12,7 @@ import { randomUUID } from 'crypto';
 import type { RuleApiActor } from '../api/rule-api-actor';
 import {
   CreateRuleDefinitionInput,
+  CreateRuleReleaseInput,
   CreateRuleModuleInput,
   CreateRuleSetInput,
   DraftStatus,
@@ -143,7 +144,7 @@ export class PayloadRuleCatalogRepository implements RuleCatalogRepository {
       });
     }
 
-    return { ...actor, workspaceExternalId };
+    return { ...actor, userId: relationshipId(user.id), workspaceExternalId };
   }
 
   async listRuleSets(actor: RuleApiActor, options: RuleSetListOptions): Promise<Page<RuleSetResource>> {
@@ -359,6 +360,28 @@ export class PayloadRuleCatalogRepository implements RuleCatalogRepository {
 
   async deleteDefinition(actor: RuleApiActor, definitionId: number): Promise<void> {
     await this.deleteDocument('/api/rule-definitions', definitionId, actor, 'RULE_DEFINITION_NOT_FOUND');
+  }
+
+  async createRelease(
+    actor: RuleApiActor,
+    ruleSetId: number,
+    input: CreateRuleReleaseInput,
+  ): Promise<RuleReleaseResource> {
+    const document = await this.mutate('/api/rule-releases', actor, 'POST', {
+      contentHash: input.contentHash,
+      dependencyLock: input.dependencyLock,
+      engineCompatibility: input.engineCompatibility,
+      externalId: randomUUID(),
+      lifecycle: 'published',
+      manifest: input.manifest,
+      publishedAt: input.publishedAt,
+      publishedBy: input.publishedById,
+      releaseNotes: lexicalFromText(input.releaseNotes),
+      ruleSet: ruleSetId,
+      sourceSnapshot: input.sourceSnapshot,
+      version: input.version,
+    });
+    return this.mapRelease(document);
   }
 
   async listReleases(actor: RuleApiActor, ruleSetId: number): Promise<RuleReleaseResource[]> {

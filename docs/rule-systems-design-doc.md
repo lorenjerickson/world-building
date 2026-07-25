@@ -483,7 +483,7 @@ An authorized author may fork a release into a new rule set. The fork receives n
 
 ## 15. Persistence design
 
-The initial persistence, authored-catalog API, and dashboard discovery milestones are implemented. Payload owns authored and published rule-set content; application PostgreSQL owns immutable compositions and mutable runtime/authoring coordination state. NestJS exposes workspace-scoped catalog, module, definition, clone, and release-read APIs through application-owned DTOs. The authenticated landing page lists owned rule sets and supports creating private drafts through a server-side Next.js gateway, with complete catalog and initial detail routes. Publication, compiler behavior, composition/binding mutations, AI authoring orchestration, and the full authoring workspace remain later milestones.
+The initial persistence, authored-catalog API, dashboard discovery, recursive trait compiler, and immutable rule-release publication milestones are implemented. Payload owns authored and published rule-set content; application PostgreSQL owns immutable compositions and mutable runtime/authoring coordination state. NestJS exposes workspace-scoped catalog, module, definition, clone, and release APIs through application-owned DTOs. Publication compiles supported definition metamodels into a canonical `rule-release/1` manifest, stores the exact source snapshot and compiled artifacts together, and rejects concurrent draft changes. Composition/binding mutations, the runtime result-effect pipeline, and the complete authoring workspace remain later milestones.
 
 ### 15.1 Payload collections
 

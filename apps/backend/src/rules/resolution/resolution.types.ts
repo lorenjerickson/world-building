@@ -6,6 +6,8 @@ export type ResolutionExpression =
   | { op: 'literal'; value: ResolutionPrimitive }
   | { op: 'actor-field'; key: string }
   | { op: 'target-field'; key: string }
+  | { op: 'trait-instance-field'; instanceId: string; key: string }
+  | { op: 'trait-path-field'; path: string; mountSelector?: { mode: 'ordinal'; ordinal: number } }
   | { op: 'input'; key: string }
   | { op: 'result'; key: string; property: string }
   | { op: 'add' | 'subtract' | 'multiply' | 'divide'; left: ResolutionExpression; right: ResolutionExpression };
@@ -22,20 +24,72 @@ interface ResolutionDefinitionBase {
   definitionId: string;
   name: string;
   description?: string;
+  subjectTraitIds?: string[];
+  subjectTraitSelections?: Record<string, string[]>;
 }
 
-export interface ModifierDefinition extends ResolutionDefinitionBase {
+export type RollKind = 'saving' | 'hit' | 'damage' | 'other';
+export type DieResultOrigin = 'original' | 'added' | 'replacement';
+
+export interface ResolutionDiePool {
+  dieTraitId: string;
+  count: number;
+  sides: number;
+  rollKind?: RollKind;
+}
+
+export type ResolutionRollSpec =
+  | { count: number; sides: number; dieTraitId?: string; rollKind?: RollKind }
+  | { dice: ResolutionDiePool[]; rollKind?: RollKind; rollTraitId?: string };
+
+export interface ModifierAppliesTo {
+  allRolls?: true;
+  checkIds?: string[];
+  rollKinds?: RollKind[];
+  rollTraitIds?: string[];
+}
+
+export interface TotalModifierDefinition extends ResolutionDefinitionBase {
   definitionType: 'modifier';
-  targetCheckId: string;
+  modifierKind?: 'total';
+  targetCheckId?: string;
+  appliesTo?: ModifierAppliesTo;
+  activatedByTraitIds?: string[];
   operation: 'add' | 'multiply';
   value: ResolutionExpression;
   when?: ResolutionCondition;
 }
 
+export interface RollResultSelector {
+  dieTraitIds?: string[];
+  rollKinds?: RollKind[];
+  rawResults?: number[];
+  origins?: DieResultOrigin[];
+}
+
+export type RollResultOperation =
+  | { kind: 'add-dice'; dice: ResolutionDiePool }
+  | { kind: 'replace-result'; die: Omit<ResolutionDiePool, 'count'>; maximumApplications?: number }
+  | { kind: 'increase-result'; value: ResolutionExpression };
+
+export interface RollModifierDefinition extends ResolutionDefinitionBase {
+  definitionType: 'modifier';
+  modifierKind: 'roll-result';
+  targetCheckId?: string;
+  appliesTo?: ModifierAppliesTo;
+  activatedByTraitIds?: string[];
+  priority?: number;
+  selector?: RollResultSelector;
+  rollOperation: RollResultOperation;
+  when?: ResolutionCondition;
+}
+
+export type ModifierDefinition = TotalModifierDefinition | RollModifierDefinition;
+
 export interface CheckDefinition extends ResolutionDefinitionBase {
   definitionType: 'check';
   checkKind: 'target-number';
-  roll: { count: number; sides: number };
+  roll: ResolutionRollSpec;
   bonus: ResolutionExpression;
   target: ResolutionExpression;
   comparison: 'gte';
@@ -95,6 +149,13 @@ export interface CompiledResolutionArtifact {
   metamodelVersion: typeof RESOLUTION_METAMODEL_VERSION;
   sourceHash: string;
   definitions: ResolutionDefinition[];
+  operationSubjectContracts?: Record<string, {
+    directTraitIds: string[];
+    inheritedTraitIds: string[];
+    effectiveTraitIds: string[];
+    effectiveTraitSelections?: Record<string, string[]>;
+    checkSources: Array<{ checkId: string; traitIds: string[]; traitSelections?: Record<string, string[]> }>;
+  }>;
 }
 
 export interface ResolutionCompilationResult {
@@ -108,6 +169,16 @@ export interface ResolutionContext {
   target: { id: string; fields: Record<string, ResolutionPrimitive> };
   input?: Record<string, ResolutionPrimitive>;
   activeModifierIds?: string[];
+  activeTraitIds?: string[];
+  activeTraitInstances?: Array<{
+    instanceId: string;
+    traitId: string;
+    values?: Record<string, ResolutionPrimitive>;
+  }>;
+  traitPrerequisiteSelections?: Record<string, string[]>;
+  traitInstancePrerequisiteSelections?: Record<string, string[]>;
+  traitInstanceValues?: Record<string, Record<string, ResolutionPrimitive>>;
+  activeEffectIds?: string[];
   entropy: number[];
 }
 
@@ -118,12 +189,96 @@ export interface ResolutionTraceEntry {
   values?: Record<string, ResolutionPrimitive>;
 }
 
+export interface ResolutionDieResult {
+  resultId: string;
+  dieTraitId: string;
+  sides: number;
+  rollKind: RollKind;
+  rawResult: number;
+  effectiveResult: number;
+  origin: DieResultOrigin;
+  sourceDefinitionId: string;
+  sourceRollTraitId?: string;
+  active: boolean;
+  replacesResultId?: string;
+  replacedByResultId?: string;
+  appliedModifierIds: string[];
+}
+
+export interface ResolutionRollResult {
+  resultKey: string;
+  checkId: string;
+  rollTraitId?: string;
+  dice: ResolutionDieResult[];
+  appliedModifierIds: string[];
+  modifierActivations: Array<{
+    modifierId: string;
+    sources: Array<{
+      kind: 'explicit' | 'trait' | 'effect';
+      id: string;
+      rootTraitId?: string;
+      traitChain?: string[];
+      instanceId?: string;
+      rootInstanceId?: string;
+      instanceChain?: string[];
+    }>;
+  }>;
+  totals: Partial<Record<RollKind, number>>;
+  roll: number;
+  bonus: number;
+  total: number;
+  target: number;
+  success: boolean;
+}
+
+export interface ResolutionActiveTrait {
+  traitId: string;
+  roots: Array<{ rootTraitId: string; traitChain: string[] }>;
+}
+
+export interface ResolutionTraitChoice {
+  traitId: string;
+  traitInstanceId?: string;
+  selectedTraitIds: string[];
+  source: 'context' | 'active-roots';
+}
+
+export interface ResolutionActiveTraitInstance {
+  instanceId: string;
+  traitId: string;
+  rootInstanceId: string;
+  rootTraitId: string;
+  parentInstanceId?: string;
+  relation?: 'requires' | 'adds' | 'choice';
+  path?: string;
+  ordinal?: number;
+  mountPath: string[];
+  traitChain: string[];
+  instanceChain: string[];
+  values: Record<string, ResolutionPrimitive>;
+  valueModifiers: Array<{
+    sourceInstanceId: string;
+    sourceTraitId: string;
+    anchor: 'self' | 'this';
+    operation: 'increases' | 'decreases' | 'multiplies' | 'divides' | 'sets';
+    path: string[];
+    amount: ResolutionPrimitive;
+    mountSelector?: { mode: 'all' } | { mode: 'ordinal'; ordinal: number };
+    before?: ResolutionPrimitive;
+    after: ResolutionPrimitive;
+  }>;
+}
+
 export interface ResolutionPreview {
   outcome: 'success' | 'failure';
   data: Record<string, ResolutionPrimitive>;
   resourceChanges: Array<{ resourceId: string; before: number; after: number }>;
   effects: Array<{ effectId: string; targetId: string }>;
   events: Array<{ eventId: string; visibility: string; payload: Record<string, ResolutionPrimitive> }>;
+  activeTraits: ResolutionActiveTrait[];
+  activeTraitInstances: ResolutionActiveTraitInstance[];
+  traitChoices: ResolutionTraitChoice[];
+  rolls: ResolutionRollResult[];
   entropyConsumed: number[];
   trace: ResolutionTraceEntry[];
 }

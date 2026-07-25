@@ -1,0 +1,20 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "incremental": false,
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "noEmit": false,
+    "outDir": ".next/trait-tests",
+    "rootDir": "lib",
+    "types": ["node"]
+  },
+  "include": [
+    "lib/resolution-expression.ts",
+    "lib/resolution-expression.test.ts",
+    "lib/resolution-trait-paths.ts",
+    "lib/resolution-trait-paths.test.ts",
+    "lib/trait-shape.ts",
+    "lib/trait-shape.test.ts"
+  ]
+}

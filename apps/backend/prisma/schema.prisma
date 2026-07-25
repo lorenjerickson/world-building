@@ -1,0 +1,230 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model World {
+  id               String   @id @default(uuid()) @db.Uuid
+  prompt           String
+  generatedContent String   @map("generated_content") @db.Text
+  metadata         Json?
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  @@map("worlds")
+}
+
+model RuleSetComposition {
+  id                  String   @id @default(uuid()) @db.Uuid
+  workspaceExternalId String   @map("workspace_external_id")
+  manifest            Json
+  compositionHash     String   @map("composition_hash")
+  engineVersion       String   @map("engine_version")
+  compilerVersion     String   @map("compiler_version")
+  validationSummary   Json?    @map("validation_summary")
+  createdBy           String   @map("created_by")
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  @@unique([workspaceExternalId, compositionHash])
+  @@index([workspaceExternalId])
+  @@index([compositionHash])
+  @@map("rule_set_compositions")
+}
+
+model RuleSetCompositionMember {
+  id             String @id @default(uuid()) @db.Uuid
+  compositionId String @map("composition_id") @db.Uuid
+  ruleSetId      Int    @map("rule_set_id")
+  releaseId      Int    @map("release_id")
+  releaseHash    String @map("release_hash")
+  namespaceAlias String @map("namespace_alias")
+  sortOrder      Int    @map("sort_order")
+  policy         Json   @default("{}")
+
+  @@unique([compositionId, namespaceAlias])
+  @@unique([compositionId, sortOrder])
+  @@map("rule_set_composition_members")
+}
+
+model RuleSetBinding {
+  id                  String   @id @default(uuid()) @db.Uuid
+  workspaceExternalId String   @map("workspace_external_id")
+  scopeType           String   @map("scope_type")
+  scopeId             String   @map("scope_id")
+  gameplayProfileName String   @map("gameplay_profile_name")
+  compositionId       String   @map("composition_id") @db.Uuid
+  compositionHash     String   @map("composition_hash")
+  active              Boolean  @default(false)
+  stateVersion        BigInt   @default(1) @map("state_version")
+  status              String   @default("active")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  @@unique([scopeType, scopeId, gameplayProfileName])
+  @@index([workspaceExternalId])
+  @@map("rule_set_bindings")
+}
+
+model RuleInstance {
+  id           String   @id @default(uuid()) @db.Uuid
+  bindingId    String   @map("binding_id") @db.Uuid
+  typeId       String   @map("type_id")
+  state        Json
+  stateVersion BigInt   @default(1) @map("state_version")
+  createdBy    String   @map("created_by")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@index([bindingId, typeId])
+  @@map("rule_instances")
+}
+
+model RuleEffect {
+  id           String    @id @default(uuid()) @db.Uuid
+  bindingId    String    @map("binding_id") @db.Uuid
+  targetId     String    @map("target_id")
+  definitionId String    @map("definition_id")
+  sourceRef    Json      @map("source_ref")
+  state        Json
+  expiresAt    DateTime? @map("expires_at") @db.Timestamptz
+  stateVersion BigInt    @default(1) @map("state_version")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  @@index([bindingId, targetId])
+  @@index([bindingId, expiresAt])
+  @@map("rule_effects")
+}
+
+model RuleExecution {
+  id             String   @id @default(uuid()) @db.Uuid
+  bindingId      String   @map("binding_id") @db.Uuid
+  operationId    String   @map("operation_id")
+  actorId        String   @map("actor_id")
+  idempotencyKey String   @map("idempotency_key")
+  input          Json
+  result         Json?
+  traceRef       String?  @map("trace_ref")
+  status         String   @default("pending")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@unique([bindingId, actorId, idempotencyKey])
+  @@map("rule_executions")
+}
+
+model RuleEvent {
+  id            String   @id @default(uuid()) @db.Uuid
+  bindingId     String   @map("binding_id") @db.Uuid
+  sequence      BigInt
+  eventTypeId   String   @map("event_type_id")
+  visibility    String   @default("public")
+  payload       Json
+  causationId   String?  @map("causation_id") @db.Uuid
+  correlationId String?  @map("correlation_id") @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@unique([bindingId, sequence])
+  @@map("rule_events")
+}
+
+model RuleContinuation {
+  id                   String   @id @default(uuid()) @db.Uuid
+  executionId          String   @map("execution_id") @db.Uuid
+  stepId               String   @map("step_id")
+  state                Json
+  authorizedResponders Json     @map("authorized_responders")
+  expiresAt            DateTime @map("expires_at") @db.Timestamptz
+  status               String   @default("pending")
+  stateVersion         BigInt   @default(1) @map("state_version")
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  @@index([executionId])
+  @@index([status, expiresAt])
+  @@map("rule_continuations")
+}
+
+model RuleArtifact {
+  id                        String   @id @default(uuid()) @db.Uuid
+  artifactHash              String   @unique @map("artifact_hash")
+  releaseOrCompositionHash String   @map("release_or_composition_hash")
+  engineVersion             String   @map("engine_version")
+  artifactLocation          String   @map("artifact_location")
+  validationSummary         Json     @map("validation_summary")
+  compiledAt                DateTime @default(now()) @map("compiled_at")
+
+  @@unique([releaseOrCompositionHash, engineVersion])
+  @@map("rule_artifacts")
+}
+
+model ArtifactRuleContext {
+  id                  String   @id @default(uuid()) @db.Uuid
+  artifactId          String   @map("artifact_id")
+  generationJobId     String   @map("generation_job_id")
+  bindingId           String?  @map("binding_id") @db.Uuid
+  compositionHash     String   @map("composition_hash")
+  policyHash          String   @map("policy_hash")
+  applicableReleases  Json     @map("applicable_releases")
+  context             Json
+  applicabilityStatus String   @default("applicable") @map("applicability_status")
+  validationSummary   Json     @map("validation_summary")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  @@index([artifactId, compositionHash])
+  @@index([generationJobId])
+  @@map("artifact_rule_contexts")
+}
+
+model RuleAuthoringSession {
+  id              String   @id @default(uuid()) @db.Uuid
+  ruleSetId       Int      @map("rule_set_id")
+  draftId         String   @map("draft_id")
+  actorId         String   @map("actor_id")
+  baseRevision    String   @map("base_revision")
+  status          String   @default("active")
+  modelMetadata   Json     @map("model_metadata")
+  retentionPolicy Json     @map("retention_policy")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@index([ruleSetId, draftId, actorId])
+  @@map("rule_authoring_sessions")
+}
+
+model RuleAuthoringProposal {
+  id                String   @id @default(uuid()) @db.Uuid
+  sessionId         String   @map("session_id") @db.Uuid
+  baseRevision      String   @map("base_revision")
+  proposalHash      String   @map("proposal_hash")
+  patch             Json
+  assumptions       Json
+  validationSummary Json     @map("validation_summary")
+  status            String   @default("proposed")
+  decisionBy        String?  @map("decision_by")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  @@unique([sessionId, proposalHash])
+  @@map("rule_authoring_proposals")
+}
+
+model RuleDefinitionSnapshot {
+  id                   String   @id @default(uuid()) @db.Uuid
+  ruleSetId            Int      @map("rule_set_id")
+  definitionId         Int      @map("definition_id")
+  definitionExternalId String   @map("definition_external_id")
+  name                 String
+  body                 Json
+  reason               String   @default("autosave")
+  actorId             String   @map("actor_id")
+  createdAt            DateTime @default(now()) @map("created_at")
+
+  @@index([ruleSetId, definitionId, createdAt])
+  @@index([definitionId])
+  @@map("rule_definition_snapshots")
+}

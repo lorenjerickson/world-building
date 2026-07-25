@@ -24,6 +24,8 @@ import {
 import {
   createRuleDefinition,
   createRuleModule,
+  migrateTraitDefinition,
+  previewTraitMigration,
   ruleDefinitionTypes,
   RuleDefinitionResource,
   RuleDefinitionType,
@@ -31,6 +33,7 @@ import {
   RuleSetApiError,
   updateRuleDefinition,
   updateRuleModule,
+  type TraitMigrationPreview,
 } from '@/lib/rule-sets';
 import type { TemplateInstantiationResult } from '@/lib/rule-authoring';
 import { RuleDefinitionSnapshotPanel } from './rule-definition-snapshot-panel';
@@ -40,7 +43,6 @@ import {
   grantsDraftFromBody,
   prerequisitesDraftFromBody,
   GuidedTraitGrantsEditor,
-  newGrant,
   type GrantDraft,
   type PrerequisiteSpec,
 } from './guided-trait-grants-editor';
@@ -74,12 +76,12 @@ export function RuleModuleCreateForm({ onCancel, onCreated, ruleSetId }: ChildFo
     setError(undefined);
     setSubmitting(true);
     try {
-      const module = await createRuleModule(ruleSetId, {
+      const createdModule = await createRuleModule(ruleSetId, {
         description: description.trim() || undefined,
         name: name.trim(),
         namespace,
       });
-      onCreated(module);
+      onCreated(createdModule);
     } catch (cause) {
       setError(cause instanceof RuleSetApiError ? cause.message : 'The module could not be created.');
     } finally {
@@ -171,6 +173,31 @@ export function RuleDefinitionCreateForm({ definitions, modules, onCancel, onCre
       }
     }
 
+    if (authoringExperience === 'grants' && definitionType === 'trait') {
+      try {
+        const related = definitions
+          .filter((item) => item.definitionType === 'trait' && ['trait/1', 'trait/2'].includes(String(item.body.metamodelVersion)))
+          .map((item) => ({ externalId: item.externalId, name: item.name, body: item.body }));
+        const validation = await validateRuleAuthoringDefinitions([
+          ...related,
+          {
+            externalId: 'trait:draft-new',
+            name: name.trim(),
+            body: parsedBody as Record<string, unknown>,
+          },
+        ]);
+        setDiagnostics(validation.diagnostics);
+        if (!validation.valid) {
+          setError(validation.diagnostics.find((item) => item.severity === 'error')?.message
+            ?? 'Resolve the trait-contract issues before creating this definition.');
+          return;
+        }
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : 'The trait contract could not be validated.');
+        return;
+      }
+    }
+
     setSubmitting(true);
     try {
       const definition = await createRuleDefinition(ruleSetId, {
@@ -179,6 +206,10 @@ export function RuleDefinitionCreateForm({ definitions, modules, onCancel, onCre
         description: description.trim() || undefined,
         moduleId: Number(moduleId),
         name: name.trim(),
+        schemaVersion: definitionType === 'trait'
+          && (parsedBody as Record<string, unknown>).metamodelVersion === 'trait/2'
+          ? 2
+          : undefined,
         tags,
         visibility,
       });
@@ -224,7 +255,7 @@ export function RuleDefinitionCreateForm({ definitions, modules, onCancel, onCre
           : templateDraft
             ? <GuidedTemplateEditor description={description} diagnostics={diagnostics} draft={templateDraft} name={name} onChange={setTemplateDraft} />
             : resolutionDraft
-              ? <GuidedResolutionEditor description={description} diagnostics={diagnostics} draft={resolutionDraft} name={name} onChange={setResolutionDraft} relatedBodies={definitions.map((item) => item.body)} />
+              ? <GuidedResolutionEditor description={description} diagnostics={diagnostics} draft={resolutionDraft} name={name} onChange={setResolutionDraft} relatedDefinitions={definitions} />
               : <label className="rule-set-field rule-set-field-wide"><span>Rule data (JSON)</span><textarea className="rule-set-json-field" rows={7} value={body} onChange={(event) => { setBody(event.target.value); setBodyLabelSynced(false); }} spellCheck={false} /><small>Advanced structured data interpreted by this definition type. An empty object is valid for an initial draft.</small></label>}
       </div>
       {error && <p className="rule-set-notice error" role="alert">{error}</p>}
@@ -270,7 +301,7 @@ export function RuleModuleEditForm({ artifact, onCancel, onDelete, onSaved, rule
     }
     setSubmitting(true);
     try {
-      const module = await updateRuleModule(ruleSetId, artifact.id, {
+      const savedModule = await updateRuleModule(ruleSetId, artifact.id, {
         description: description.trim(),
         dependencies: parsedDependencies,
         expectedUpdatedAt: artifact.updatedAt,
@@ -280,7 +311,7 @@ export function RuleModuleEditForm({ artifact, onCancel, onDelete, onSaved, rule
         requiredEngineFeatureLevel: requiredEngineFeatureLevel.trim(),
         sortOrder: Number(sortOrder),
       });
-      onSaved(module);
+      onSaved(savedModule);
     } catch (cause) {
       setError(cause instanceof RuleSetApiError ? cause.message : 'The module could not be saved.');
     } finally {
@@ -343,6 +374,35 @@ export function RuleDefinitionEditForm({ artifact, definitions, modules, onCance
   );
   const [conflict, setConflict] = useState<{ serverUpdatedAt: string; serverName: string } | undefined>();
   const [showHistory, setShowHistory] = useState(false);
+  const [migrationPreview, setMigrationPreview] = useState<TraitMigrationPreview>();
+  const [migrationBusy, setMigrationBusy] = useState(false);
+
+  async function loadMigrationPreview() {
+    setMigrationBusy(true);
+    setError(undefined);
+    try {
+      setMigrationPreview(await previewTraitMigration(ruleSetId, artifact.id));
+    } catch (cause) {
+      setError(cause instanceof RuleSetApiError ? cause.message : 'The migration preview could not be generated.');
+    } finally {
+      setMigrationBusy(false);
+    }
+  }
+
+  async function createMigratedDraft() {
+    setMigrationBusy(true);
+    setError(undefined);
+    try {
+      const migrated = await migrateTraitDefinition(ruleSetId, artifact.id, {
+        expectedUpdatedAt: artifact.updatedAt,
+      });
+      onSaved(migrated);
+    } catch (cause) {
+      setError(cause instanceof RuleSetApiError ? cause.message : 'The migrated draft could not be created.');
+    } finally {
+      setMigrationBusy(false);
+    }
+  }
 
   async function bulkCreateFromTemplate(result: TemplateInstantiationResult) {
     setBulkCreating(true);
@@ -374,7 +434,20 @@ export function RuleDefinitionEditForm({ artifact, definitions, modules, onCance
     let parsedBody: unknown;
     let parsedPresentation: unknown;
     try {
-      parsedBody = grantsDraft ? buildGrantsBody(grantsDraft, prerequisitesDraft, definitions.filter((d) => d.definitionType === 'trait' && d.id !== artifact.id)) : guidedDraft ? buildGuidedTraitBody(name, description, guidedDraft) : templateDraft ? buildTemplateBody(name, description, templateDraft) : resolutionDraft ? buildResolutionBody(name, description, resolutionDraft) : JSON.parse(body);
+      parsedBody = grantsDraft
+        ? buildGrantsBody(
+            grantsDraft,
+            prerequisitesDraft,
+            definitions.filter((d) => d.definitionType === 'trait' && d.id !== artifact.id),
+            artifact.body.metamodelVersion === 'trait/1' ? 'trait/1' : 'trait/2',
+          )
+        : guidedDraft
+          ? buildGuidedTraitBody(name, description, guidedDraft)
+          : templateDraft
+            ? buildTemplateBody(name, description, templateDraft)
+            : resolutionDraft
+              ? buildResolutionBody(name, description, resolutionDraft)
+              : JSON.parse(body);
       parsedPresentation = JSON.parse(presentation);
     } catch {
       setError('Rule data and presentation must be valid JSON.');
@@ -385,7 +458,33 @@ export function RuleDefinitionEditForm({ artifact, definitions, modules, onCance
       return;
     }
 
-    if (guidedDraft || resolutionDraft) {
+    if (grantsDraft) {
+      try {
+        const related = definitions
+          .filter((item) =>
+            item.id !== artifact.id
+            && item.definitionType === 'trait'
+            && ['trait/1', 'trait/2'].includes(String(item.body.metamodelVersion)))
+          .map((item) => ({ externalId: item.externalId, name: item.name, body: item.body }));
+        const validation = await validateRuleAuthoringDefinitions([
+          ...related,
+          {
+            externalId: artifact.externalId,
+            name: name.trim(),
+            body: parsedBody as Record<string, unknown>,
+          },
+        ]);
+        setDiagnostics(validation.diagnostics);
+        if (!validation.valid) {
+          setError(validation.diagnostics.find((item) => item.severity === 'error')?.message
+            ?? 'Resolve the trait-contract issues before saving this definition.');
+          return;
+        }
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : 'The trait contract could not be validated.');
+        return;
+      }
+    } else if (guidedDraft || resolutionDraft) {
       try {
         const related = resolutionDraft ? definitions.filter((item) => item.id !== artifact.id).map((item) => item.body).filter((item) => item.metamodelVersion === 'resolution/1') : [];
         const validation = await validateRuleAuthoringDefinitions([...related, parsedBody as Record<string, unknown>]);
@@ -439,13 +538,38 @@ export function RuleDefinitionEditForm({ artifact, definitions, modules, onCance
         <div>
           <span className="eyebrow">Edit or rename {artifact.definitionType}</span>
           <h4>{artifact.name}</h4>
-          <span className="definition-schema-label">schema version: "{artifact.definitionType}/{schemaVersion}"</span>
+          <span className="definition-schema-label">schema version: &quot;{artifact.definitionType}/{schemaVersion}&quot;</span>
         </div>
         <div className="rule-set-editor-heading-right">
           {!onVisibilityChange && <label className="guided-rule-checkbox"><input type="checkbox" checked={visibility === 'exported'} onChange={(e) => setVisibility(e.target.checked ? 'exported' : 'private')} /><span>Visible</span></label>}
           <span className="badge">{artifact.status}</span>
         </div>
       </div>
+      {artifact.definitionType === 'trait' && artifact.body.metamodelVersion === 'trait/1' && (
+        <section className="card-surface rule-set-field-wide">
+          <span className="eyebrow">Compatibility migration</span>
+          <h5>Upgrade this draft to trait/2</h5>
+          <p>The stable trait identity and every published release remain unchanged. The current trait/1 source is saved in draft history before implicit local additions become explicit destinations.</p>
+          {!migrationPreview
+            ? <button className="secondary-action" type="button" disabled={migrationBusy} onClick={loadMigrationPreview}>{migrationBusy ? 'Comparing…' : 'Preview trait/2 migration'}</button>
+            : <>
+                <p className={`rule-set-notice${migrationPreview.valid ? '' : ' error'}`}>
+                  {migrationPreview.valid
+                    ? migrationPreview.pathChanges.length
+                      ? `${migrationPreview.pathChanges.length} effective path change${migrationPreview.pathChanges.length === 1 ? '' : 's'} require review.`
+                      : 'No effective path changes. The migrated source preserves the current contract.'
+                    : 'Resolve the migration diagnostics before upgrading this draft.'}
+                </p>
+                {!!migrationPreview.pathChanges.length && <ul>{migrationPreview.pathChanges.map((change) => <li key={`${change.kind}:${change.path}`}><strong>{change.kind}</strong> {change.path}{change.before && change.after ? ` (${change.before} → ${change.after})` : ''}</li>)}</ul>}
+                {!!migrationPreview.diagnostics.length && <ul>{migrationPreview.diagnostics.map((diagnostic) => <li key={`${diagnostic.code}:${diagnostic.path}`}>{diagnostic.path}: {diagnostic.message}</li>)}</ul>}
+                <details><summary>Canonical trait/2 source</summary><pre>{JSON.stringify(migrationPreview.migratedBody, null, 2)}</pre></details>
+                <div className="rule-set-form-actions">
+                  <button className="secondary-action" type="button" disabled={migrationBusy} onClick={loadMigrationPreview}>Refresh preview</button>
+                  <button className="primary-action" type="button" disabled={migrationBusy || !migrationPreview.valid} onClick={createMigratedDraft}>{migrationBusy ? 'Upgrading…' : 'Upgrade draft to trait/2'}</button>
+                </div>
+              </>}
+        </section>
+      )}
       <div className="rule-set-form-grid">
         <label className="rule-set-field"><span>Name</span><input required maxLength={160} value={name} onChange={(event) => setName(event.target.value)} autoFocus /></label>
         <label className="rule-set-field"><span>Module</span><select value={moduleId} onChange={(e) => setModuleId(Number(e.target.value))}>{modules.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}</select></label>
@@ -487,7 +611,7 @@ export function RuleDefinitionEditForm({ artifact, definitions, modules, onCance
                 </div>
               </>
             : resolutionDraft
-              ? <><GuidedResolutionEditor description={description} diagnostics={diagnostics} draft={resolutionDraft} name={name} onChange={setResolutionDraft} relatedBodies={definitions.map((item) => item.body)} /><div className="guided-rule-exit rule-set-field-wide"><button type="button" onClick={() => { setResolutionDraft(undefined); setDiagnostics([]); }}>Return to the advanced draft without saving this guided version</button></div></>
+              ? <><GuidedResolutionEditor description={description} diagnostics={diagnostics} draft={resolutionDraft} name={name} onChange={setResolutionDraft} relatedDefinitions={definitions} /><div className="guided-rule-exit rule-set-field-wide"><button type="button" onClick={() => { setResolutionDraft(undefined); setDiagnostics([]); }}>Return to the advanced draft without saving this guided version</button></div></>
               : grantsDraft === null
                 ? <label className="rule-set-field rule-set-field-wide"><span>Rule data (JSON)</span><textarea className="rule-set-json-field" rows={10} value={body} onChange={(event) => setBody(event.target.value)} spellCheck={false} /></label>
                 : null}

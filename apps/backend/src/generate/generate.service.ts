@@ -1,7 +1,5 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { World } from './entities/world.entity';
+import { PrismaService } from '../database/prisma.service';
 import { GraphService } from '../graph/graph.service';
 import { GenerateElementDto } from './dto/generate-element.dto';
 import { LlmService } from '../llm/llm.service';
@@ -12,8 +10,7 @@ export class GenerateService {
   private readonly logger = new Logger(GenerateService.name);
 
   constructor(
-    @InjectRepository(World)
-    private readonly worldsRepository: Repository<World>,
+    private readonly prisma: PrismaService,
     private readonly graphService: GraphService,
     private readonly llmService: LlmService,
   ) {}
@@ -120,16 +117,17 @@ Ensure the JSON is valid. Only return the raw JSON object, no markdown styling. 
     }
 
     // 1. Save metadata to PostgreSQL database
-    const world = new World();
-    world.prompt = prompt;
-    world.generatedContent = worldData.description || 'No description generated.';
-    world.metadata = {
-      name: worldData.name,
-      places: worldData.places,
-      characters: worldData.characters,
-    };
-    
-    const savedWorld = await this.worldsRepository.save(world);
+    let savedWorld = await this.prisma.world.create({
+      data: {
+        prompt,
+        generatedContent: worldData.description || 'No description generated.',
+        metadata: {
+          name: worldData.name,
+          places: worldData.places,
+          characters: worldData.characters,
+        },
+      },
+    });
     this.logger.log(`Saved world metadata to PostgreSQL database: ${savedWorld.id}`);
 
     // 2. Save graph triples to LevelGraph
@@ -156,8 +154,10 @@ Ensure the JSON is valid. Only return the raw JSON object, no markdown styling. 
 
       try {
         await this.graphService.put(triplesToInsert);
-        savedWorld.metadata = { ...savedWorld.metadata, triples: triplesToInsert };
-        await this.worldsRepository.save(savedWorld);
+        savedWorld = await this.prisma.world.update({
+          where: { id: savedWorld.id },
+          data: { metadata: { ...(savedWorld.metadata as any), triples: triplesToInsert } },
+        });
         this.logger.log(`Saved ${triplesToInsert.length} triples to LevelGraph`);
       } catch (graphError) {
         this.logger.error('Failed to write triples to LevelGraph database', graphError);
@@ -180,17 +180,18 @@ Ensure the JSON is valid. Only return the raw JSON object, no markdown styling. 
 
   async updateWorld(id: string, metadata: any, description?: string, triples?: any[]): Promise<any> {
     this.logger.log(`Updating world metadata for world: ${id}`);
-    const world = await this.worldsRepository.findOne({ where: { id } });
+    const world = await this.prisma.world.findUnique({ where: { id } });
     if (!world) {
       throw new Error(`World not found with ID ${id}`);
     }
 
-    world.metadata = metadata;
-    if (description) {
-      world.generatedContent = description;
-    }
-
-    const savedWorld = await this.worldsRepository.save(world);
+    const savedWorld = await this.prisma.world.update({
+      where: { id },
+      data: {
+        metadata: metadata as any,
+        generatedContent: description ?? world.generatedContent,
+      },
+    });
 
     if (triples && Array.isArray(triples)) {
       const triplesToInsert = triples.map(t => ({
@@ -213,7 +214,7 @@ Ensure the JSON is valid. Only return the raw JSON object, no markdown styling. 
   }
 
   async deleteWorld(id: string): Promise<{ deleted: true; id: string }> {
-    const world = await this.worldsRepository.findOne({ where: { id } });
+    const world = await this.prisma.world.findUnique({ where: { id } });
     if (!world) {
       throw new NotFoundException({
         code: 'WORLD_NOT_FOUND',
@@ -222,30 +223,31 @@ Ensure the JSON is valid. Only return the raw JSON object, no markdown styling. 
       });
     }
 
-    const triples = Array.isArray(world.metadata?.triples)
-      ? world.metadata.triples.filter((triple: any) =>
+    const triples = Array.isArray((world.metadata as any)?.triples)
+      ? (world.metadata as any).triples.filter((triple: any) =>
         triple && typeof triple.subject === 'string' && typeof triple.predicate === 'string' && typeof triple.object === 'string')
       : [];
     await this.graphService.del(triples);
-    await this.worldsRepository.remove(world);
+    await this.prisma.world.delete({ where: { id } });
     this.logger.log(`Deleted world ${id} and ${triples.length} associated graph triples.`);
     return { deleted: true, id };
   }
 
   async generateElement(worldId: string, elementType: string, dto: GenerateElementDto): Promise<any> {
     this.logger.log(`Generating element of type ${elementType} for world ${worldId} with prompt: "${dto.prompt}"`);
-    const world = await this.worldsRepository.findOne({ where: { id: worldId } });
+    const world = await this.prisma.world.findUnique({ where: { id: worldId } });
     if (!world) {
       throw new Error(`World not found with ID ${worldId}`);
     }
 
-    const worldName = world.metadata?.name || 'Unnamed World';
+    const metadata = (world.metadata as any) ?? {};
+    const worldName = metadata.name || 'Unnamed World';
     const worldDesc = world.generatedContent || '';
 
     let parentLocationName = '';
     let parentLocationDesc = '';
-    if (dto.parentId && world.metadata?.locations) {
-      const parentLoc = world.metadata.locations.find((l: any) => l.id === dto.parentId);
+    if (dto.parentId && metadata.locations) {
+      const parentLoc = metadata.locations.find((l: any) => l.id === dto.parentId);
       if (parentLoc) {
         parentLocationName = parentLoc.name;
         parentLocationDesc = parentLoc.description;

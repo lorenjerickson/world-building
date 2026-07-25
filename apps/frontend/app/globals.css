@@ -860,6 +860,28 @@ body {
 .guided-grants-list { display: flex; flex-direction: column; gap: 8px; }
 .guided-grants-empty { margin: 4px 0 12px; }
 .guided-grants-add { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.trait-shape-preview { border-top: 1px solid rgba(255, 255, 255, .08); margin-top: 22px; padding-top: 18px; }
+.trait-shape-preview-heading { align-items: center; display: flex; gap: 16px; justify-content: space-between; }
+.trait-shape-preview-heading h5 { color: #fff; font-size: 1rem; margin: 4px 0 0; }
+.trait-shape-preview > .subtext { font-size: .78rem; margin: 8px 0 13px; }
+.trait-shape-root { background: rgba(4, 3, 5, .42); border: 1px solid rgba(255, 255, 255, .08); border-radius: 12px; overflow-x: auto; padding: 13px 15px 15px; }
+.trait-shape-root-label { align-items: center; color: #fff; display: flex; gap: 8px; min-height: 28px; }
+.trait-shape-root-label code,
+.trait-shape-node-row code { color: rgba(229, 182, 76, .72); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: .7rem; }
+.trait-shape-root-mark { align-items: center; background: rgba(229, 182, 76, .18); border: 1px solid rgba(229, 182, 76, .35); border-radius: 7px; color: var(--accent); display: inline-flex; font-size: .68rem; font-weight: 800; height: 24px; justify-content: center; width: 24px; }
+.trait-shape-tree { border-left: 1px solid rgba(229, 182, 76, .2); display: flex; flex-direction: column; gap: 5px; list-style: none; margin: 5px 0 0 11px; min-width: 560px; padding: 2px 0 0 18px; }
+.trait-shape-node { list-style: none; position: relative; }
+.trait-shape-node::before { border-top: 1px solid rgba(229, 182, 76, .2); content: ""; left: -18px; position: absolute; top: 15px; width: 13px; }
+.trait-shape-node-row { align-items: center; display: flex; gap: 8px; min-height: 30px; }
+.trait-shape-connector { color: rgba(229, 182, 76, .72); font-size: .58rem; width: 10px; }
+.trait-shape-node.is-terminal .trait-shape-connector { color: rgba(166, 116, 207, .85); }
+.trait-shape-node.is-collection > .trait-shape-node-row > .trait-shape-connector { color: #78c7b7; font-size: .78rem; }
+.trait-shape-node.is-collection-entry > .trait-shape-node-row > .trait-shape-connector { color: #78c7b7; font-size: .72rem; font-weight: 800; }
+.trait-shape-collection-entries { border-left-color: rgba(120, 199, 183, .26); }
+.trait-shape-node-name { color: var(--text); font-size: .82rem; font-weight: 700; }
+.trait-shape-node-type { background: rgba(255, 255, 255, .055); border: 1px solid rgba(255, 255, 255, .09); border-radius: 999px; color: var(--muted); font-size: .65rem; font-weight: 700; padding: 2px 7px; }
+.trait-shape-node-source { color: var(--muted); font-size: .68rem; margin-left: auto; padding-left: 16px; }
+.trait-shape-empty { background: rgba(4, 3, 5, .3); border: 1px dashed rgba(255, 255, 255, .12); border-radius: 11px; color: var(--muted); font-size: .8rem; padding: 16px; text-align: center; }
 .guided-grant-sentence { align-items: center; background: rgba(4, 3, 5, .42); border: 1px solid rgba(255, 255, 255, .08); border-radius: 12px; color: var(--text); display: flex; flex-wrap: wrap; font-size: .9rem; gap: 6px; line-height: 1.8; padding: 11px 14px; }
 /* type-switcher select always visible */
 .guided-grant-sentence select { appearance: auto; background: rgba(229, 182, 76, .1); border: 1px solid rgba(229, 182, 76, .28); border-radius: 7px; color: #fff; font: inherit; font-weight: 700; padding: 3px 7px; }
@@ -927,6 +949,7 @@ body {
   .guided-rule-conversion { align-items: stretch; flex-direction: column; }
   .guided-rule-conversion > div:last-child { flex-wrap: wrap; }
   .guided-rule-editor-heading { align-items: flex-start; flex-direction: column; }
+  .trait-shape-preview-heading { align-items: flex-start; flex-direction: column; }
 }
 .resolution-pipeline { display: grid; gap: 7px; list-style: none; margin: 4px 0 0; padding: 0; }
 .resolution-pipeline li { align-items: center; background: rgba(3, 3, 4, .38); border: 1px solid rgba(255, 255, 255, .08); border-radius: 10px; display: grid; gap: 10px; grid-template-columns: 28px minmax(130px, .6fr) 1fr; padding: 9px 12px; }

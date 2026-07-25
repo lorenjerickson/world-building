@@ -11,6 +11,12 @@
       "browser": "./src/index.ts",
       "require": "./dist/src/index.js",
       "default": "./dist/src/index.js"
+    },
+    "./trait-shape": {
+      "types": "./dist/src/trait-shape.d.ts",
+      "browser": "./src/trait-shape.ts",
+      "require": "./dist/src/trait-shape.js",
+      "default": "./dist/src/trait-shape.js"
     }
   },
   "scripts": {

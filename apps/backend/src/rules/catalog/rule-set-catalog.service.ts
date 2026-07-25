@@ -7,6 +7,8 @@ import {
   CreateRuleSetDto,
   ListRuleDefinitionsQueryDto,
   ListRuleSetsQueryDto,
+  MigrateTraitDefinitionDto,
+  PublishRuleSetDto,
   UpdateRuleDefinitionDto,
   UpdateRuleModuleDto,
   UpdateRuleSetDto,
@@ -23,6 +25,10 @@ import {
   RuleSetResource,
 } from './rule-catalog.types';
 import { RuleDefinitionSnapshotService } from './rule-definition-snapshot.service';
+import { compileTraitCompositions } from '../traits/trait-composition.compiler';
+import type { TraitCompositionSourceDefinition } from '../traits/trait-composition.types';
+import { previewTraitDefinitionMigration } from '../traits/trait-migration';
+import { compileRuleRelease } from '../releases/rule-release.compiler';
 
 @Injectable()
 export class RuleSetCatalogService {
@@ -195,6 +201,16 @@ export class RuleSetCatalogService {
     await this.repository.getRuleSet(resolvedActor, ruleSetId);
     const module = await this.repository.getModule(resolvedActor, dto.moduleId);
     this.requireRuleSetRelation(module.ruleSetId, ruleSetId, 'RULE_MODULE_NOT_FOUND');
+    await this.validateTraitDefinitionChange(
+      resolvedActor,
+      ruleSetId,
+      dto.definitionType,
+      {
+        externalId: 'trait:draft-new',
+        name: dto.name.trim(),
+        body: dto.body,
+      },
+    );
     return this.repository.createDefinition(resolvedActor, ruleSetId, {
       body: dto.body,
       definitionType: dto.definitionType,
@@ -202,7 +218,8 @@ export class RuleSetCatalogService {
       moduleId: dto.moduleId,
       name: dto.name.trim(),
       presentation: dto.presentation,
-      schemaVersion: dto.schemaVersion ?? 1,
+      schemaVersion: dto.schemaVersion
+        ?? (dto.definitionType === 'trait' && dto.body.metamodelVersion === 'trait/2' ? 2 : 1),
       tags: this.uniqueTags(dto.tags),
       visibility: dto.visibility ?? 'exported',
     });
@@ -230,6 +247,19 @@ export class RuleSetCatalogService {
     const definition = await this.repository.getDefinition(resolvedActor, definitionId);
     this.requireRuleSetRelation(definition.ruleSetId, ruleSetId, 'RULE_DEFINITION_NOT_FOUND');
     this.requireRevision(definition.updatedAt, expectedUpdatedAt);
+    if (changes.body !== undefined || changes.name !== undefined) {
+      await this.validateTraitDefinitionChange(
+        resolvedActor,
+        ruleSetId,
+        definition.definitionType,
+        {
+          externalId: definition.externalId,
+          name: changes.name?.trim() || definition.name,
+          body: changes.body ?? definition.body,
+        },
+        definition.id,
+      );
+    }
     // Capture snapshot of current state before overwriting
     await this.snapshots.capture({
       actorId: actor.auth0Subject,
@@ -303,6 +333,69 @@ export class RuleSetCatalogService {
     });
   }
 
+  async previewTraitMigration(
+    actor: RuleApiActor,
+    ruleSetId: number,
+    definitionId: number,
+  ) {
+    const resolvedActor = await this.repository.resolveActor(actor);
+    await this.repository.getRuleSet(resolvedActor, ruleSetId);
+    const source = await this.repository.getDefinition(resolvedActor, definitionId);
+    this.requireRuleSetRelation(source.ruleSetId, ruleSetId, 'RULE_DEFINITION_NOT_FOUND');
+    if (source.definitionType !== 'trait') {
+      throw new BadRequestException({
+        code: 'RULE_TRAIT_MIGRATION_TYPE_INVALID',
+        message: 'Only trait definitions can be migrated.',
+        retryable: false,
+      });
+    }
+    const catalog = await this.repository.listDefinitions(resolvedActor, ruleSetId, { type: 'trait' });
+    return previewTraitDefinitionMigration(
+      { externalId: source.externalId, name: source.name, body: source.body },
+      catalog
+        .filter((definition) => ['trait/1', 'trait/2'].includes(String(definition.body.metamodelVersion)))
+        .map((definition) => ({
+          externalId: definition.externalId,
+          name: definition.name,
+          body: definition.body,
+        })),
+    );
+  }
+
+  async migrateTraitDefinition(
+    actor: RuleApiActor,
+    ruleSetId: number,
+    definitionId: number,
+    dto: MigrateTraitDefinitionDto,
+  ): Promise<RuleDefinitionResource> {
+    const resolvedActor = await this.repository.resolveActor(actor);
+    await this.repository.getRuleSet(resolvedActor, ruleSetId);
+    const source = await this.repository.getDefinition(resolvedActor, definitionId);
+    this.requireRuleSetRelation(source.ruleSetId, ruleSetId, 'RULE_DEFINITION_NOT_FOUND');
+    this.requireRevision(source.updatedAt, dto.expectedUpdatedAt);
+    const preview = await this.previewTraitMigration(actor, ruleSetId, definitionId);
+    if (!preview.valid || !preview.migratedBody) {
+      throw new BadRequestException({
+        code: 'RULE_TRAIT_MIGRATION_INVALID',
+        message: 'The trait cannot be migrated until its compatibility diagnostics are resolved.',
+        diagnostics: preview.diagnostics,
+        retryable: false,
+      });
+    }
+    return this.updateDefinition(
+      actor,
+      ruleSetId,
+      definitionId,
+      {
+        expectedUpdatedAt: dto.expectedUpdatedAt,
+        body: preview.migratedBody,
+        schemaVersion: 2,
+        ...(dto.name?.trim() ? { name: dto.name.trim() } : {}),
+      },
+      'manual',
+    );
+  }
+
   async exportRuleSet(actor: RuleApiActor, ruleSetId: number): Promise<RuleSetExportBundle> {
     const resolvedActor = await this.repository.resolveActor(actor);
     const ruleSet = await this.repository.getRuleSet(resolvedActor, ruleSetId);
@@ -347,6 +440,7 @@ export class RuleSetCatalogService {
     this.validateImportBundle(bundle);
     const resolvedActor = await this.repository.resolveActor(actor);
     await this.repository.getRuleSet(resolvedActor, ruleSetId);
+    await this.validateImportedTraitDefinitions(resolvedActor, ruleSetId, bundle);
     const existingModules = await this.repository.listModules(resolvedActor, ruleSetId);
     const moduleByNamespace = new Map(existingModules.map((m) => [m.namespace, m]));
 
@@ -462,6 +556,17 @@ export class RuleSetCatalogService {
         retryable: false,
       });
     }
+    await this.validateTraitDefinitionChange(
+      resolvedActor,
+      ruleSetId,
+      definition.definitionType,
+      {
+        externalId: definition.externalId,
+        name: snapshot.name,
+        body: snapshot.body,
+      },
+      definition.id,
+    );
     // Capture the current state before restoring (so user can undo the restore itself)
     await this.snapshots.capture({
       actorId: actor.auth0Subject,
@@ -482,6 +587,72 @@ export class RuleSetCatalogService {
     const resolvedActor = await this.repository.resolveActor(actor);
     await this.repository.getRuleSet(resolvedActor, ruleSetId);
     return this.repository.listReleases(resolvedActor, ruleSetId);
+  }
+
+  async publish(
+    actor: RuleApiActor,
+    ruleSetId: number,
+    dto: PublishRuleSetDto,
+  ): Promise<RuleReleaseResource> {
+    const resolvedActor = await this.repository.resolveActor(actor);
+    const ruleSet = await this.repository.getRuleSet(resolvedActor, ruleSetId);
+    this.requireRevision(ruleSet.updatedAt, dto.expectedUpdatedAt);
+    const [modules, definitions] = await Promise.all([
+      this.repository.listModules(resolvedActor, ruleSetId),
+      this.repository.listDefinitions(resolvedActor, ruleSetId, {}),
+    ]);
+    const initialRevision = this.catalogRevision(ruleSet, modules, definitions);
+    const compilation = compileRuleRelease(ruleSet, modules, definitions);
+    if (!compilation.valid) {
+      throw new BadRequestException({
+        code: 'RULE_RELEASE_INVALID',
+        message: 'The rule-set draft is not ready to publish.',
+        diagnostics: compilation.diagnostics,
+        retryable: false,
+      });
+    }
+
+    const [confirmedRuleSet, confirmedModules, confirmedDefinitions, releases] = await Promise.all([
+      this.repository.getRuleSet(resolvedActor, ruleSetId),
+      this.repository.listModules(resolvedActor, ruleSetId),
+      this.repository.listDefinitions(resolvedActor, ruleSetId, {}),
+      this.repository.listReleases(resolvedActor, ruleSetId),
+    ]);
+    if (this.catalogRevision(confirmedRuleSet, confirmedModules, confirmedDefinitions) !== initialRevision) {
+      throw new ConflictException({
+        code: 'RULE_PUBLISH_STALE',
+        message: 'The rule-set draft changed while it was being compiled. Review the latest draft and publish again.',
+        retryable: true,
+      });
+    }
+    const existingVersion = releases.find((release) => release.version === dto.version);
+    if (existingVersion) {
+      if (existingVersion.contentHash === compilation.release.contentHash) return existingVersion;
+      throw new ConflictException({
+        code: 'RULE_RELEASE_VERSION_EXISTS',
+        message: `Release version '${dto.version}' already identifies different content.`,
+        retryable: false,
+      });
+    }
+    const published = await this.repository.createRelease(resolvedActor, ruleSetId, {
+      version: dto.version,
+      contentHash: compilation.release.contentHash,
+      dependencyLock: compilation.release.dependencyLock,
+      engineCompatibility: compilation.release.engineCompatibility,
+      manifest: compilation.release.manifest,
+      sourceSnapshot: compilation.release.sourceSnapshot,
+      publishedById: resolvedActor.userId,
+      publishedAt: new Date().toISOString(),
+      releaseNotes: dto.releaseNotes?.trim() || undefined,
+    });
+    if (published.contentHash !== compilation.release.contentHash) {
+      throw new ConflictException({
+        code: 'RULE_RELEASE_HASH_MISMATCH',
+        message: 'The persisted release hash does not match the compiled release.',
+        retryable: false,
+      });
+    }
+    return published;
   }
 
   async getRelease(actor: RuleApiActor, ruleSetId: number, releaseId: number): Promise<RuleReleaseResource> {
@@ -508,6 +679,93 @@ export class RuleSetCatalogService {
         retryable: false,
       });
     }
+  }
+
+  private async validateTraitDefinitionChange(
+    actor: RuleApiActor,
+    ruleSetId: number,
+    definitionType: string,
+    candidate: TraitCompositionSourceDefinition,
+    replacedDefinitionId?: number,
+  ): Promise<void> {
+    if (!['trait/1', 'trait/2'].includes(String(candidate.body.metamodelVersion))) return;
+    if (definitionType !== 'trait') {
+      throw new BadRequestException({
+        code: 'RULE_TRAIT_DEFINITION_TYPE_INVALID',
+        message: "Bodies using a trait metamodelVersion must be stored as trait definitions.",
+        retryable: false,
+      });
+    }
+    const existing = await this.repository.listDefinitions(actor, ruleSetId, { type: 'trait' });
+    const sources: TraitCompositionSourceDefinition[] = existing
+      .filter((definition) =>
+        definition.id !== replacedDefinitionId
+        && ['trait/1', 'trait/2'].includes(String(definition.body.metamodelVersion)))
+      .map((definition) => ({
+        externalId: definition.externalId,
+        name: definition.name,
+        body: definition.body,
+      }));
+    sources.push(candidate);
+    const result = compileTraitCompositions(sources);
+    if (!result.valid) {
+      throw new BadRequestException({
+        code: 'RULE_TRAIT_COMPOSITION_INVALID',
+        message: 'The trait contract is invalid.',
+        diagnostics: result.diagnostics,
+        retryable: false,
+      });
+    }
+  }
+
+  private async validateImportedTraitDefinitions(
+    actor: RuleApiActor,
+    ruleSetId: number,
+    bundle: RuleSetExportBundle,
+  ): Promise<void> {
+    const existing = await this.repository.listDefinitions(actor, ruleSetId, { type: 'trait' });
+    const traits: TraitCompositionSourceDefinition[] = existing
+      .filter((definition) => ['trait/1', 'trait/2'].includes(String(definition.body.metamodelVersion)))
+      .map((definition) => ({
+        externalId: definition.externalId,
+        name: definition.name,
+        body: definition.body,
+      }));
+    traits.push(...bundle.definitions
+      .filter((definition) =>
+        definition.definitionType === 'trait'
+        && ['trait/1', 'trait/2'].includes(String(definition.body.metamodelVersion)))
+      .map((definition, index) => ({
+        externalId: definition.externalId || `trait:import-${index}`,
+        name: definition.name,
+        body: definition.body,
+      })));
+    if (!traits.length) return;
+    const result = compileTraitCompositions(traits);
+    if (!result.valid) {
+      throw new BadRequestException({
+        code: 'RULE_TRAIT_COMPOSITION_INVALID',
+        message: 'The imported trait contracts are invalid.',
+        diagnostics: result.diagnostics,
+        retryable: false,
+      });
+    }
+  }
+
+  private catalogRevision(
+    ruleSet: RuleSetResource,
+    modules: RuleModuleResource[],
+    definitions: RuleDefinitionResource[],
+  ): string {
+    return JSON.stringify({
+      ruleSet: [ruleSet.id, ruleSet.updatedAt],
+      modules: modules
+        .map((module) => [module.id, module.updatedAt])
+        .sort(([left], [right]) => Number(left) - Number(right)),
+      definitions: definitions
+        .map((definition) => [definition.id, definition.updatedAt])
+        .sort(([left], [right]) => Number(left) - Number(right)),
+    });
   }
 
   private boundedInteger(value: string | undefined, fallback: number, min: number, max: number): number {

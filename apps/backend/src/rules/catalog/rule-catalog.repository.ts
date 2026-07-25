@@ -1,6 +1,7 @@
 import type { RuleApiActor } from '../api/rule-api-actor';
 import {
   CreateRuleDefinitionInput,
+  CreateRuleReleaseInput,
   CreateRuleModuleInput,
   CreateRuleSetInput,
   Page,
@@ -33,6 +34,7 @@ export abstract class RuleCatalogRepository {
   abstract getDefinition(actor: RuleApiActor, definitionId: number): Promise<RuleDefinitionResource>;
   abstract updateDefinition(actor: RuleApiActor, definitionId: number, input: UpdateRuleDefinitionInput): Promise<RuleDefinitionResource>;
   abstract deleteDefinition(actor: RuleApiActor, definitionId: number): Promise<void>;
+  abstract createRelease(actor: RuleApiActor, ruleSetId: number, input: CreateRuleReleaseInput): Promise<RuleReleaseResource>;
   abstract listReleases(actor: RuleApiActor, ruleSetId: number): Promise<RuleReleaseResource[]>;
   abstract getRelease(actor: RuleApiActor, releaseId: number): Promise<RuleReleaseResource>;
 }

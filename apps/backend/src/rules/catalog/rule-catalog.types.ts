@@ -75,6 +75,18 @@ export interface RuleReleaseResource {
   updatedAt: string;
 }
 
+export interface CreateRuleReleaseInput {
+  version: string;
+  contentHash: string;
+  engineCompatibility: Record<string, unknown>;
+  dependencyLock: unknown[];
+  manifest: Record<string, unknown>;
+  sourceSnapshot: Record<string, unknown>;
+  publishedById: number;
+  publishedAt: string;
+  releaseNotes?: string;
+}
+
 export interface Page<T> {
   items: T[];
   page: number;
@@ -139,6 +151,7 @@ export interface RuleDefinitionListOptions {
 
 export interface RuleCatalogActor extends RuleApiActor {
   workspaceExternalId: string;
+  userId: number;
 }
 
 // ── Export/import bundle ──────────────────────────────────────────────────────

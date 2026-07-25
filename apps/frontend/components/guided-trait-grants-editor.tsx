@@ -1,12 +1,21 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { RuleDefinitionResource } from '@/lib/rule-sets';
+import {
+  buildTraitShape,
+  resolveTraitShapeTerminal,
+  traitShapeChildren,
+  type TraitShape,
+  type TraitShapeGrant,
+  type TraitShapeNode,
+} from '@/lib/trait-shape';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-export type GrantDataType = 'text' | 'number' | 'boolean' | 'enum' | 'trait' | 'modifier' | 'slot' | 'slot-affinity';
+export type GrantDataType = 'text' | 'number' | 'boolean' | 'enum' | 'trait' | 'trait-collection' | 'modifier' | 'slot' | 'slot-affinity';
 export type ModifierOperation = 'increases' | 'decreases' | 'multiplies' | 'divides' | 'sets';
+export type ModifierMountSelectorMode = 'all' | 'ordinal';
 
 export interface GrantDraft {
   _id: string;
@@ -24,10 +33,16 @@ export interface GrantDraft {
   allowedValues: string;
   // trait reference (externalId)
   ref: string;
+  traitPlacement: 'named' | 'collection' | 'nested';
+  traitCount: string;
+  traitCollection: string;
+  traitParentPath: string;
   // modifier — path expressed as ordered segments: [root][subtrait…][property]
   modifierOperation: ModifierOperation;
   modifierFieldSegments: string[];
   modifierAmount: string;
+  modifierMountSelectorMode: ModifierMountSelectorMode;
+  modifierMountOrdinal: string;
   // slot
   slotCount: string;
   slotGrantTypes: string[];
@@ -45,7 +60,7 @@ export type PrerequisiteSpec = {
 };
 
 export type TraitGrantsBody = {
-  metamodelVersion: 'trait/1';
+  metamodelVersion: 'trait/1' | 'trait/2';
   grants: GrantEntry[];
   prerequisites?: PrerequisiteSpec;
 };
@@ -60,10 +75,13 @@ type GrantEntry = {
   default?: number | string | boolean;
   allowedValues?: string[];
   ref?: string;
+  into?: string;
+  at?: string;
   // modifier
   operation?: ModifierOperation;
   field?: string;
   amount?: boolean | number | string;
+  mountSelector?: { mode: 'all' } | { mode: 'ordinal'; ordinal: number };
   // slot
   count?: number;
   /** Type tags on the slot (e.g. ["armor", "hands"]). Replaces the old single slotType string. */
@@ -82,21 +100,53 @@ export function newGrant(dataType: GrantDataType): GrantDraft {
     _id: crypto.randomUUID(),
     key: '', label: '', dataType, required: true,
     min: '', max: '', defaultNum: '', defaultStr: '', allowedValues: '', ref: '',
+    traitPlacement: 'named', traitCount: '1', traitCollection: '', traitParentPath: '',
     modifierOperation: 'increases', modifierFieldSegments: [], modifierAmount: '',
+    modifierMountSelectorMode: 'all', modifierMountOrdinal: '1',
     slotCount: '1', slotGrantTypes: [], acceptedTraits: [], acceptedTraitsMode: 'any', slotAffinityTypes: [], slotAffinityMode: 'any',
   };
+}
+
+function traitShapeGrantsFromDraft(grants: GrantDraft[]): TraitShapeGrant[] {
+  return grants.map((grant) => ({
+    key: grant.key,
+    label: grant.label,
+    dataType: grant.dataType,
+    ref: grant.ref,
+    acceptedTraits: grant.acceptedTraits,
+    acceptsMode: grant.acceptedTraitsMode,
+    ...(grant.dataType === 'trait' && grant.traitPlacement === 'collection'
+      ? {
+        count: Number(grant.traitCount),
+        into: grant.traitCollection,
+      }
+      : {}),
+    ...(grant.dataType === 'trait' && grant.traitPlacement === 'nested' && grant.traitParentPath.trim() && grant.key.trim()
+      ? { at: `${grant.traitParentPath.trim()}.${grant.key.trim()}` }
+      : {}),
+    ...(grant.dataType === 'enum'
+      ? { allowedValues: grant.allowedValues.split(',').map((value) => value.trim()).filter(Boolean) }
+      : {}),
+  }));
 }
 
 export function buildGrantsBody(
   grants: GrantDraft[],
   prerequisites: PrerequisiteSpec = { mode: 'any', ids: [] },
   traitDefinitions: RuleDefinitionResource[] = [],
+  metamodelVersion: 'trait/1' | 'trait/2' = 'trait/2',
 ): TraitGrantsBody {
+  const traitShape = buildTraitShape({
+    definitions: traitDefinitions,
+    prerequisiteIds: prerequisites.ids,
+    prerequisiteMode: prerequisites.mode,
+    draftGrants: traitShapeGrantsFromDraft(grants),
+  });
   return {
-    metamodelVersion: 'trait/1',
+    metamodelVersion,
     grants: grants.map((g): GrantEntry => {
       const entry: GrantEntry = { dataType: g.dataType };
-      if (g.key.trim()) entry.key = g.key.trim();
+      if (g.key.trim() && (g.dataType !== 'trait' || metamodelVersion === 'trait/1' && g.traitPlacement === 'named')) entry.key = g.key.trim();
       if (g.label.trim()) entry.label = g.label.trim();
       if (g.dataType !== 'trait' && g.required) entry.required = true;
       if (g.dataType === 'number') {
@@ -114,12 +164,38 @@ export function buildGrantsBody(
         else if (g.defaultStr === 'false') entry.default = false;
       } else if (g.dataType === 'trait') {
         if (g.ref) entry.ref = g.ref;
+        if (g.traitPlacement === 'collection') {
+          if (g.traitCollection.trim()) {
+            entry.into = (/^(self|this|owner|target)\./.test(g.traitCollection.trim())
+              || metamodelVersion === 'trait/1')
+                ? g.traitCollection.trim()
+                : `this.${g.traitCollection.trim()}`;
+          }
+          if (g.traitCount !== '') entry.count = Number(g.traitCount);
+        } else if (g.traitPlacement === 'nested' && g.traitParentPath.trim() && g.key.trim()) {
+          const path = `${g.traitParentPath.trim()}.${g.key.trim()}`;
+          entry.at = (/^(self|this|owner|target)\./.test(path) || metamodelVersion === 'trait/1')
+            ? path
+            : `this.${path}`;
+        } else if (g.key.trim() && metamodelVersion === 'trait/2') {
+          entry.at = `this.${g.key.trim()}`;
+        }
+      } else if (g.dataType === 'trait-collection') {
+        if (g.acceptedTraits.length > 0) {
+          entry.acceptedTraits = g.acceptedTraits.filter(Boolean);
+          if (g.acceptedTraitsMode === 'all') entry.acceptsMode = 'all';
+        }
       } else if (g.dataType === 'modifier') {
         entry.operation = g.modifierOperation;
         const segs = g.modifierFieldSegments.filter((s) => s.trim());
         if (segs.length > 0) entry.field = segs.join('.');
+        if (segs.some((segment) => segment.endsWith('[]'))) {
+          entry.mountSelector = g.modifierMountSelectorMode === 'ordinal'
+            ? { mode: 'ordinal', ordinal: Number(g.modifierMountOrdinal) }
+            : { mode: 'all' };
+        }
         if (g.modifierAmount !== '') {
-          const resolved = resolveTerminalGrant(g.modifierFieldSegments, traitDefinitions, prerequisites.ids, grants);
+          const resolved = resolveTerminalGrant(g.modifierFieldSegments, traitShape, traitDefinitions);
           const tt = resolved?.dataType ?? null;
           if (tt === 'boolean') {
             entry.amount = g.modifierAmount === 'true';
@@ -151,7 +227,7 @@ export function buildGrantsBody(
 
 export function prerequisitesDraftFromBody(body: Record<string, unknown>): PrerequisiteSpec {
   const empty: PrerequisiteSpec = { mode: 'any', ids: [] };
-  if (body.metamodelVersion !== 'trait/1') return empty;
+  if (!['trait/1', 'trait/2'].includes(String(body.metamodelVersion))) return empty;
   const p = body.prerequisites;
   // New format: { mode, ids }
   if (p !== null && typeof p === 'object' && !Array.isArray(p)) {
@@ -171,11 +247,10 @@ export function prerequisitesDraftFromBody(body: Record<string, unknown>): Prere
 }
 
 export function grantsDraftFromBody(body: Record<string, unknown>): GrantDraft[] | null {
-  if (body.metamodelVersion !== 'trait/1') return null;
+  if (!['trait/1', 'trait/2'].includes(String(body.metamodelVersion))) return null;
   if (!Array.isArray(body.grants)) return null;
   return (body.grants as GrantEntry[]).map((g): GrantDraft => ({
     _id: crypto.randomUUID(),
-    key: g.key ?? '',
     label: g.label ?? '',
     dataType: g.dataType ?? 'text',
     required: g.required ?? true,
@@ -186,9 +261,22 @@ export function grantsDraftFromBody(body: Record<string, unknown>): GrantDraft[]
       ? String(g.default) : '',
     allowedValues: Array.isArray(g.allowedValues) ? g.allowedValues.join(', ') : '',
     ref: g.ref ?? '',
+    traitPlacement: g.into
+      ? 'collection'
+      : g.at && !(g.at.startsWith('this.') && g.at.split('.').length === 2)
+        ? 'nested'
+        : 'named',
+    traitCount: g.count != null && g.dataType === 'trait' ? String(g.count) : '1',
+    traitCollection: g.into ?? '',
+    traitParentPath: g.at && !(g.at.startsWith('this.') && g.at.split('.').length === 2)
+      ? g.at.split('.').slice(0, -1).join('.')
+      : '',
+    key: g.at ? g.at.split('.').at(-1) ?? '' : g.key ?? '',
     modifierOperation: (g.operation ?? 'increases') as ModifierOperation,
     modifierFieldSegments: g.field ? g.field.split('.') : [],
     modifierAmount: g.amount != null ? String(g.amount) : '',
+    modifierMountSelectorMode: g.mountSelector?.mode === 'ordinal' ? 'ordinal' : 'all',
+    modifierMountOrdinal: g.mountSelector?.mode === 'ordinal' ? String(g.mountSelector.ordinal) : '1',
     slotCount: g.count != null ? String(g.count) : '1',
     // slotTypes is now an array for slot grants; accept legacy single-string slotType too
     slotGrantTypes: g.dataType === 'slot'
@@ -209,8 +297,9 @@ function getTabFields(dataType: GrantDataType): string[] {
     case 'number':  return ['key', 'dataType', 'label', 'min', 'max', 'defaultNum'];
     case 'boolean': return ['key', 'dataType', 'defaultStr', 'label'];
     case 'enum':    return ['key', 'dataType', 'allowedValues', 'defaultStr', 'label'];
-    case 'trait':         return ['dataType', 'ref', 'key'];
-    case 'modifier':      return ['dataType', 'modifierOperation', 'modifierPath', 'modifierAmount'];
+    case 'trait':         return ['dataType', 'traitCount', 'ref', 'key'];
+    case 'trait-collection': return ['dataType', 'key'];
+    case 'modifier':      return ['dataType', 'modifierOperation', 'modifierPath', 'modifierMountSelector', 'modifierMountOrdinal', 'modifierAmount'];
     case 'slot':          return ['dataType'];
     case 'slot-affinity': return ['dataType'];
   }
@@ -218,180 +307,111 @@ function getTabFields(dataType: GrantDataType): string[] {
 
 // ── Field path options ────────────────────────────────────────────────────────
 
-const GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-/** Convert a human-readable trait name to a path-safe slug (e.g. "Main Hand" → "main-hand"). */
-function nameToSlug(name: string): string {
-  return name.trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
-}
-
-/**
- * Extract a readable path slug from a trait's externalId, or fall back to
- * the definition's display name. Returns null for GUIDs with no slug form.
- */
-function traitSlug(def: RuleDefinitionResource, segment: 'root' | 'leaf'): string | null {
-  const id = def.externalId ?? '';
-  if (id.startsWith('trait:')) {
-    const path = id.slice(6);
-    const part = segment === 'root' ? path.split('.')[0] : (path.split('.').pop() ?? '');
-    if (part && !GUID_RE.test(part)) return part;
-  }
-  // externalId is a bare GUID or absent — derive from the human-readable name instead
-  const slug = nameToSlug(def.name);
-  return slug || null;
-}
-
-/**
- * Return only the trait definitions whose externalId is listed in prerequisiteIds.
- */
-function filterPrereqDefs(
-  traitDefinitions: RuleDefinitionResource[],
-  prerequisiteIds: string[],
-): RuleDefinitionResource[] {
-  if (!prerequisiteIds.length) return [];
-  const idSet = new Set(prerequisiteIds);
-  return traitDefinitions.filter((d) => d.externalId != null && idSet.has(d.externalId));
-}
-
-/**
- * Return all terminal (settable) keyed grants from a trait/1 body.
- * Excludes trait-type grants — those are navigable intermediates, not terminal properties.
- */
-function grantGrantsFrom(def: RuleDefinitionResource): { key: string; dataType: GrantDataType }[] {
-  if (def.body?.metamodelVersion !== 'trait/1') return [];
-  if (!Array.isArray(def.body.grants)) return [];
-  return (def.body.grants as GrantEntry[])
-    .filter((g) => g.key?.trim() && g.dataType !== 'trait')
-    .map((g) => ({ key: g.key!.trim(), dataType: g.dataType }));
-}
-
-/**
- * Resolve a path key that refers to a named trait grant (e.g. 'senses' in self.senses.vision).
- * Looks in:
- *  1. The current trait's own draft grants (siblingGrants)
- *  2. Named trait grants nested inside each prerequisite trait's grants
- * Returns the referenced trait definition if found.
- */
-function resolveNamedTraitGrantDef(
-  key: string,
-  traitDefinitions: RuleDefinitionResource[],
-  prerequisiteIds: string[],
-  siblingGrants: GrantDraft[],
-): RuleDefinitionResource | null {
-  // 1. Current trait's own named trait grants
-  const sibling = siblingGrants.find((g) => g.dataType === 'trait' && g.key.trim() === key);
-  if (sibling?.ref) {
-    const def = traitDefinitions.find((d) => d.externalId === sibling.ref);
-    if (def) return def;
-  }
-  // 2. Named trait grants inside each prerequisite trait
-  const prereqs = filterPrereqDefs(traitDefinitions, prerequisiteIds);
-  for (const prereq of prereqs) {
-    if (prereq.body?.metamodelVersion !== 'trait/1' || !Array.isArray(prereq.body.grants)) continue;
-    const traitGrant = (prereq.body.grants as GrantEntry[]).find(
-      (g) => g.dataType === 'trait' && g.key?.trim() === key,
-    );
-    if (traitGrant?.ref) {
-      const def = traitDefinitions.find((d) => d.externalId === traitGrant.ref);
-      if (def) return def;
-    }
-  }
-  return null;
-}
-
 function numericCompatible(op: ModifierOperation, dataType: GrantDataType): boolean {
   if (op === 'increases' || op === 'decreases' || op === 'multiplies' || op === 'divides') return dataType === 'number';
   return true; // 'sets' works with any type
 }
 
-function propertyOptions(
-  grants: { key: string; dataType: GrantDataType }[],
+function branchHasCompatibleTerminal(
+  shape: TraitShape,
+  branch: Extract<TraitShapeNode, { kind: 'branch' }>,
   operation: ModifierOperation,
-): ComboOption[] {
-  const seen = new Set<string>();
-  return grants
-    .filter((g) => numericCompatible(operation, g.dataType) && !seen.has(g.key) && seen.add(g.key))
-    .sort((a, b) => a.key.localeCompare(b.key))
-    .map((g) => ({ value: g.key, label: g.key, hint: g.dataType }));
+): boolean {
+  return shape.nodes.some((node) =>
+    node.kind === 'terminal'
+    && node.path.length > branch.path.length
+    && branch.path.every((segment, index) => node.path[index] === segment)
+    && numericCompatible(operation, node.dataType));
+}
+
+function collectionElementShape(
+  shape: TraitShape,
+  segments: string[],
+  traitDefinitions: RuleDefinitionResource[],
+): TraitShape | null {
+  const repeatedIndex = segments.findIndex((segment) => segment.endsWith('[]'));
+  if (repeatedIndex < 1) return null;
+  const collectionPath = [
+    ...segments.slice(1, repeatedIndex),
+    segments[repeatedIndex].replace(/\[\]$/, ''),
+  ];
+  const collection = shape.nodes.find((node) =>
+    node.kind === 'collection' && node.path.join('.') === collectionPath.join('.'));
+  if (!collection || collection.kind !== 'collection' || !collection.acceptedTraitIds.length) return null;
+  return buildTraitShape({
+    definitions: traitDefinitions,
+    prerequisiteIds: collection.acceptedTraitIds,
+    prerequisiteMode: collection.acceptsMode,
+  });
+}
+
+function collectionHasCompatibleTerminal(
+  shape: TraitShape,
+  collection: Extract<TraitShapeNode, { kind: 'collection' }>,
+  operation: ModifierOperation,
+  traitDefinitions: RuleDefinitionResource[],
+): boolean {
+  const elementShape = buildTraitShape({
+    definitions: traitDefinitions,
+    prerequisiteIds: collection.acceptedTraitIds,
+    prerequisiteMode: collection.acceptsMode,
+  });
+  return elementShape.nodes.some((node) =>
+    node.kind === 'terminal' && node.path.length === 1 && numericCompatible(operation, node.dataType));
 }
 
 /**
  * Build ComboOption[] for a single segment of a modifier field path.
  *
  * depth 0  — self / target / owner
- * depth 1  — prerequisite trait slugs + named trait-grant keys (actor-relative roots)
- * depth 2+ — property keys from the matched trait, filtered by operation compatibility
+ * depth 1+ — recursively composed branches and terminal fields
  */
 function buildSegmentOptions(
   depth: number,
   segments: string[],
-  traitDefinitions: RuleDefinitionResource[],
-  prerequisiteIds: string[],
   operation: ModifierOperation,
-  siblingGrants: GrantDraft[] = [],
+  shape: TraitShape,
+  traitDefinitions: RuleDefinitionResource[],
 ): ComboOption[] {
   if (depth === 0) {
     return [
       { value: 'self',   label: 'self'   },
+      { value: 'this',   label: 'this'   },
       { value: 'target', label: 'target' },
       { value: 'owner',  label: 'owner'  },
     ];
   }
 
   const rootIsActorRelative = ACTOR_RELATIVE_ROOTS.has(segments[0] ?? '');
+  if (!rootIsActorRelative) return [];
 
-  // depth 1: trait slugs from prerequisites + named trait-grant keys
-  if (depth === 1 && rootIsActorRelative) {
-    const defs = filterPrereqDefs(traitDefinitions, prerequisiteIds);
-    const seen = new Set<string>();
-    const options: ComboOption[] = [];
-
-    // Prerequisite trait slugs
-    for (const d of defs) {
-      const slug = traitSlug(d, 'leaf');
-      if (slug && !seen.has(slug)) { seen.add(slug); options.push({ value: slug, label: slug }); }
-    }
-
-    // Named trait-grant keys from sibling grants
-    for (const g of siblingGrants) {
-      const k = g.dataType === 'trait' ? g.key.trim() : '';
-      if (k && !seen.has(k)) { seen.add(k); options.push({ value: k, label: k, hint: 'sub-trait' }); }
-    }
-    // Named trait-grant keys nested inside each prerequisite
-    for (const prereq of defs) {
-      if (prereq.body?.metamodelVersion !== 'trait/1' || !Array.isArray(prereq.body.grants)) continue;
-      for (const g of prereq.body.grants as GrantEntry[]) {
-        const k = g.dataType === 'trait' ? g.key?.trim() ?? '' : '';
-        if (k && !seen.has(k)) { seen.add(k); options.push({ value: k, label: k, hint: 'sub-trait' }); }
-      }
-    }
-
-    if (options.length) return options.sort((a, b) => a.value.localeCompare(b.value));
+  const repeatedIndex = segments.findIndex((segment) => segment.endsWith('[]'));
+  if (repeatedIndex >= 1 && depth > repeatedIndex) {
+    if (depth !== repeatedIndex + 1) return [];
+    const elementShape = collectionElementShape(shape, segments, traitDefinitions);
+    if (!elementShape) return [];
+    return traitShapeChildren(elementShape, [])
+      .filter((node): node is Extract<TraitShapeNode, { kind: 'terminal' }> =>
+        node.kind === 'terminal' && numericCompatible(operation, node.dataType))
+      .map((node) => ({
+        value: node.path.at(-1)!,
+        label: node.label,
+        hint: node.dataType,
+      }));
   }
 
-  // depth 2+: properties of the trait identified by segments[1]
-  if (depth >= 2 && rootIsActorRelative && segments[1]) {
-    // Named trait-grant key takes priority over a same-name slug
-    const namedDef = resolveNamedTraitGrantDef(segments[1], traitDefinitions, prerequisiteIds, siblingGrants);
-    if (namedDef) {
-      const grants = grantGrantsFrom(namedDef);
-      if (grants.length) return propertyOptions(grants, operation);
-    }
-    // Fall back to prerequisite trait slug
-    const defs = filterPrereqDefs(traitDefinitions, prerequisiteIds);
-    const matched = defs.find((d) => traitSlug(d, 'leaf') === segments[1]);
-    if (matched) {
-      const grants = grantGrantsFrom(matched);
-      if (grants.length) return propertyOptions(grants, operation);
-    }
-  }
-
-  // Generic fallback: all property keys across all trait definitions, filtered by operation
-  const all: { key: string; dataType: GrantDataType }[] = [];
-  for (const def of traitDefinitions) {
-    for (const g of grantGrantsFrom(def)) all.push(g);
-  }
-  return propertyOptions(all, operation);
+  const parentPath = segments.slice(1, depth).filter(Boolean);
+  return traitShapeChildren(shape, parentPath)
+    .filter((node) => node.kind === 'branch'
+      ? branchHasCompatibleTerminal(shape, node, operation)
+      : node.kind === 'collection'
+        ? collectionHasCompatibleTerminal(shape, node, operation, traitDefinitions)
+        : node.kind === 'terminal' && numericCompatible(operation, node.dataType))
+    .map((node) => ({
+      value: node.kind === 'collection' ? `${node.path.at(-1)!}[]` : node.path.at(-1)!,
+      label: node.label,
+      hint: node.kind === 'branch' ? 'trait' : node.kind === 'terminal' ? node.dataType : 'collection',
+    }));
 }
 
 // ── Static option sets ────────────────────────────────────────────────────────
@@ -410,6 +430,7 @@ const DATA_TYPE_OPTIONS: ComboOption[] = [
   { value: 'boolean',  label: 'true / false', hint: 'boolean' },
   { value: 'enum',     label: 'one of…',     hint: 'enumerated' },
   { value: 'trait',    label: 'trait',       hint: 'trait reference' },
+  { value: 'trait-collection', label: 'trait collection', hint: 'repeatable typed traits' },
   { value: 'modifier', label: 'modifier',    hint: 'arithmetic change' },
   { value: 'slot',         label: 'slot',            hint: 'equipment slot' },
   { value: 'slot-affinity', label: 'slot-affinity',  hint: 'slot compatibility' },
@@ -723,7 +744,7 @@ function extractSlotTypes(
   const seen = new Set<string>();
   // From persisted trait bodies
   for (const def of traitDefinitions) {
-    if (def.body?.metamodelVersion !== 'trait/1' || !Array.isArray(def.body.grants)) continue;
+    if (!['trait/1', 'trait/2'].includes(String(def.body?.metamodelVersion)) || !Array.isArray(def.body.grants)) continue;
     for (const g of def.body.grants as GrantEntry[]) {
       if (g.dataType === 'slot') {
         // New format: slotTypes array
@@ -747,65 +768,37 @@ type ResolvedGrant = { dataType: GrantDataType; allowedValues?: string[] };
 /**
  * Given a complete modifier path (segments), resolve the terminal property's
  * grant definition so the value control can adapt its type.
- *
- * For actor-relative paths (self / owner):
- *   2 segments  → property is directly on one of the prerequisites
- *   3+ segments → segments[-2] is a trait slug or named sub-trait key
- *
- * Falls back to a generic search across all traitDefinitions if no match found.
  */
 function resolveTerminalGrant(
   segments: string[],
-  traitDefinitions: RuleDefinitionResource[],
-  prerequisiteIds: string[],
-  siblingGrants: GrantDraft[] = [],
+  shape: TraitShape,
+  traitDefinitions: RuleDefinitionResource[] = [],
 ): ResolvedGrant | null {
-  if (segments.length < 2) return null;
-  const propertyKey = segments.at(-1);
-  if (!propertyKey) return null;
-  const traitSeg = segments.at(-2)!;
-
-  const prereqs = filterPrereqDefs(traitDefinitions, prerequisiteIds);
-
-  let searchIn: RuleDefinitionResource[];
-  if (ACTOR_RELATIVE_ROOTS.has(traitSeg)) {
-    // Two-segment path: search all prerequisites for the property
-    searchIn = prereqs.length ? prereqs : traitDefinitions;
-  } else {
-    // Named sub-trait key (e.g. 'senses' in self.senses.vision) takes priority over slug
-    const namedDef = resolveNamedTraitGrantDef(traitSeg, traitDefinitions, prerequisiteIds, siblingGrants);
-    if (namedDef) {
-      searchIn = [namedDef];
-    } else {
-      // Fall back to prerequisite trait slug
-      const matched = prereqs.find((d) => traitSlug(d, 'leaf') === traitSeg);
-      searchIn = matched ? [matched] : traitDefinitions;
-    }
-  }
-
-  for (const def of searchIn) {
-    if (def.body?.metamodelVersion !== 'trait/1' || !Array.isArray(def.body.grants)) continue;
-    for (const g of def.body.grants as GrantEntry[]) {
-      if (g.key === propertyKey) {
-        return { dataType: g.dataType, allowedValues: g.allowedValues };
-      }
-    }
-  }
-  return null;
+  if (segments.length < 2 || !ACTOR_RELATIVE_ROOTS.has(segments[0] ?? '')) return null;
+  const repeatedIndex = segments.findIndex((segment) => segment.endsWith('[]'));
+  const terminal = repeatedIndex >= 1
+    ? segments.slice(repeatedIndex + 1).length === 1
+      ? resolveTraitShapeTerminal(
+        collectionElementShape(shape, segments, traitDefinitions) ?? { nodes: [], diagnostics: [] },
+        segments.slice(repeatedIndex + 1),
+      )
+      : undefined
+    : resolveTraitShapeTerminal(shape, segments.slice(1));
+  return terminal
+    ? { dataType: terminal.dataType, allowedValues: terminal.allowedValues }
+    : null;
 }
 
 // ── ModifierPathEditor — single popup for the whole segment path ──────────────
 
-const ACTOR_RELATIVE_ROOTS = new Set(['self', 'owner']);
+const ACTOR_RELATIVE_ROOTS = new Set(['self', 'this', 'owner']);
 
 function ModifierPathEditor({
-  segments, traitDefinitions, prerequisiteIds, siblingGrants, operation, isTerminalResolved, fieldKey, editingField, onEdit, onDone, onTabNext, onTabPrev, onChange,
+  segments, shape, traitDefinitions, operation, isTerminalResolved, fieldKey, editingField, onEdit, onDone, onTabNext, onTabPrev, onChange,
 }: {
   segments: string[];
+  shape: TraitShape;
   traitDefinitions: RuleDefinitionResource[];
-  prerequisiteIds: string[];
-  /** Named trait grants from the current trait's own draft — enables sub-trait path navigation */
-  siblingGrants: GrantDraft[];
   /** Current modifier operation — narrows property options at the terminal depth */
   operation: ModifierOperation;
   /** When true, the path has resolved to a known terminal property — adding further segments is blocked */
@@ -861,7 +854,7 @@ function ModifierPathEditor({
     else filled.push(value);
     setSearch('');
 
-    const resolved = resolveTerminalGrant(filled, traitDefinitions, prerequisiteIds, siblingGrants);
+    const resolved = resolveTerminalGrant(filled, shape, traitDefinitions);
     if (resolved) {
       // Terminal reached — commit, close popup, advance to value field
       onChange(filled);
@@ -889,7 +882,7 @@ function ModifierPathEditor({
   }
 
   const displayPath = segments.filter(Boolean).join(' › ');
-  const options = buildSegmentOptions(activeIdx, segments, traitDefinitions, prerequisiteIds, operation, siblingGrants);
+  const options = buildSegmentOptions(activeIdx, segments, operation, shape, traitDefinitions);
   const trimmedSearch = search.trim();
   const filtered = trimmedSearch
     ? options.filter((o) => o.value.toLowerCase().includes(trimmedSearch.toLowerCase()))
@@ -1000,13 +993,13 @@ function ModifierPathEditor({
 // ── Grant row ─────────────────────────────────────────────────────────────────
 
 function GrantRow({
-  grant, traitDefinitions, prerequisiteIds, siblingGrants, slotTypeOptions, autoFocus, onChange, onRemove,
+  collectionOptions, grant, nestedParentOptions, traitDefinitions, traitShape, slotTypeOptions, autoFocus, onChange, onRemove,
 }: {
+  collectionOptions: ComboOption[];
   grant: GrantDraft;
+  nestedParentOptions: ComboOption[];
   traitDefinitions: RuleDefinitionResource[];
-  prerequisiteIds: string[];
-  /** All grants in the same trait — enables sub-trait path navigation */
-  siblingGrants: GrantDraft[];
+  traitShape: TraitShape;
   slotTypeOptions: ComboOption[];
   /** When true, opens the first field for editing immediately on mount */
   autoFocus?: boolean;
@@ -1033,7 +1026,26 @@ function GrantRow({
     // Slot and slot-affinity have dynamic field lists; compute them inline.
     let fields: string[];
     if (grant.dataType === 'modifier') {
-      fields = ['dataType', 'modifierOperation', 'modifierPath', 'modifierAmount'];
+      const repeated = grant.modifierFieldSegments.some((segment) => segment.endsWith('[]'));
+      fields = [
+        'dataType',
+        'modifierOperation',
+        'modifierPath',
+        ...(repeated ? ['modifierMountSelector'] : []),
+        ...(repeated && grant.modifierMountSelectorMode === 'ordinal' ? ['modifierMountOrdinal'] : []),
+        'modifierAmount',
+      ];
+    } else if (grant.dataType === 'trait') {
+      fields = grant.traitPlacement === 'collection'
+        ? ['dataType', 'traitCount', 'ref', 'traitCollection']
+        : grant.traitPlacement === 'nested'
+          ? ['dataType', 'traitParentPath', 'ref', 'key']
+        : ['dataType', 'ref', 'key'];
+    } else if (grant.dataType === 'trait-collection') {
+      fields = [
+        'dataType', 'key',
+        ...grant.acceptedTraits.map((_, i) => `acceptedTrait_${i}`),
+      ];
     } else if (grant.dataType === 'slot') {
       fields = [
         'dataType',
@@ -1074,10 +1086,9 @@ function GrantRow({
 
   // ── Modifier sentence: "[modifier] [op] [path popup] to/by [value]" ──────
   if (grant.dataType === 'modifier') {
-    const resolvedTerminal = resolveTerminalGrant(
-      grant.modifierFieldSegments, traitDefinitions, prerequisiteIds, siblingGrants,
-    );
+    const resolvedTerminal = resolveTerminalGrant(grant.modifierFieldSegments, traitShape, traitDefinitions);
     const terminalType = resolvedTerminal?.dataType ?? null;
+    const repeatedPath = grant.modifierFieldSegments.some((segment) => segment.endsWith('[]'));
 
     // Only increases/decreases/sets make sense for numbers; everything else is sets-only
     const opOptions = (terminalType === null || terminalType === 'number')
@@ -1127,9 +1138,8 @@ function GrantRow({
         <ModifierPathEditor
           fieldKey="modifierPath"
           segments={grant.modifierFieldSegments}
+          shape={traitShape}
           traitDefinitions={traitDefinitions}
-          prerequisiteIds={prerequisiteIds}
-          siblingGrants={siblingGrants}
           operation={grant.modifierOperation}
           isTerminalResolved={terminalType !== null}
           editingField={editingField}
@@ -1138,7 +1148,7 @@ function GrantRow({
           onTabNext={() => tabFrom('modifierPath', 'next')}
           onTabPrev={() => tabFrom('modifierPath', 'prev')}
           onChange={(segs) => {
-            const resolved = resolveTerminalGrant(segs, traitDefinitions, prerequisiteIds, siblingGrants);
+            const resolved = resolveTerminalGrant(segs, traitShape, traitDefinitions);
             const tt = resolved?.dataType ?? null;
             const patch: Partial<GrantDraft> = { modifierFieldSegments: segs, modifierAmount: '' };
             // Non-numeric types only support 'sets'
@@ -1146,6 +1156,21 @@ function GrantRow({
             onChange(patch);
           }}
         />
+        {repeatedPath && terminalType !== null && <> for{' '}
+          <ComboToken {...ct('modifierMountSelector')} value={grant.modifierMountSelectorMode}
+            placeholder="entries"
+            options={[
+              { value: 'all', label: 'all entries' },
+              { value: 'ordinal', label: 'entry number' },
+            ]}
+            onSelect={(value) => onChange({ modifierMountSelectorMode: value as ModifierMountSelectorMode })} />
+          {grant.modifierMountSelectorMode === 'ordinal' && <>
+            {' #'}
+            <Token {...tok('modifierMountOrdinal')} value={grant.modifierMountOrdinal}
+              placeholder="1" inputType="number"
+              onChange={(value) => onChange({ modifierMountOrdinal: value })} />
+          </>}
+        </>}
         {terminalType !== null && prep}
         {valueNode}
         <button type="button" className="guided-grant-remove" aria-label="Remove" onClick={onRemove}>×</button>
@@ -1272,18 +1297,115 @@ function GrantRow({
     );
   }
 
-  // ── Trait sentence: "[trait] → [name]" ────────────────────────────────────
+  // ── Trait collection: "[collection] [key] accepts [base trait]" ───────────
+  if (grant.dataType === 'trait-collection') {
+    return (
+      <div className="guided-grant-sentence">
+        <ComboToken {...ct('dataType')} value={grant.dataType} placeholder="type"
+          options={DATA_TYPE_OPTIONS} onSelect={(v) => onChange({ dataType: v as GrantDataType })} />
+        <Token {...tok('key')} value={grant.key} placeholder="collection name"
+          size="md" onChange={(v) => onChange({ key: v })} />
+        {' '}accepts traits compatible with
+        <button
+          type="button"
+          className={`slot-affinity-mode-toggle${grant.acceptedTraitsMode === 'all' ? ' is-all' : ''}`}
+          title={grant.acceptedTraitsMode === 'any'
+            ? 'A trait may satisfy any listed base trait. Click to require all.'
+            : 'A trait must satisfy all listed base traits. Click to accept any.'}
+          onClick={() => onChange({ acceptedTraitsMode: grant.acceptedTraitsMode === 'any' ? 'all' : 'any' })}
+        >{grant.acceptedTraitsMode === 'any' ? 'any of:' : 'all of:'}</button>
+        {grant.acceptedTraits.map((ref, i) => (
+          <span key={i} className="guided-grant-trait-ref">
+            <ComboToken
+              {...ct(`acceptedTrait_${i}`)}
+              value={ref}
+              placeholder="— base trait —"
+              options={traitOptions}
+              hierarchical={hasHierarchy}
+              onSelect={(v) => {
+                const updated = [...grant.acceptedTraits];
+                updated[i] = v;
+                onChange({ acceptedTraits: updated });
+              }}
+            />
+            <button
+              type="button"
+              className="guided-grant-trait-ref-remove"
+              aria-label="Remove accepted base trait"
+              onClick={() => onChange({ acceptedTraits: grant.acceptedTraits.filter((_, j) => j !== i) })}
+            >×</button>
+          </span>
+        ))}
+        <button
+          type="button"
+          className="secondary-action compact-action"
+          onClick={() => onChange({ acceptedTraits: [...grant.acceptedTraits, ''] })}
+        >+ base trait</button>
+        <button type="button" className="guided-grant-remove" aria-label="Remove" onClick={onRemove}>×</button>
+      </div>
+    );
+  }
+
+  // ── Trait sentence: named trait or counted collection contribution ─────────
   if (grant.dataType === 'trait') {
     return (
       <div className="guided-grant-sentence">
         <ComboToken {...ct('dataType')} value={grant.dataType} placeholder="type"
           options={DATA_TYPE_OPTIONS} onSelect={(v) => onChange({ dataType: v as GrantDataType })} />
-        →
+        {grant.traitPlacement === 'collection' && (
+          <>
+            <Token {...tok('traitCount')} value={grant.traitCount} placeholder="1"
+              inputType="number" onChange={(v) => onChange({ traitCount: v })} />
+            ×
+          </>
+        )}
+        {grant.traitPlacement === 'named' && '→'}
         <ComboToken {...ct('ref')} value={grant.ref} placeholder="— select trait —"
           options={traitOptions} onSelect={(v) => onChange({ ref: v })} hierarchical={hasHierarchy} />
-        {' as '}
-        <Token {...tok('key')} value={grant.key} placeholder="path name"
-          onChange={(v) => onChange({ key: v })} />
+        {grant.traitPlacement === 'named' ? (
+          <>
+            {' as '}
+            <Token {...tok('key')} value={grant.key} placeholder="path name"
+              onChange={(v) => onChange({ key: v })} />
+            <button type="button" className="secondary-action compact-action"
+              disabled={collectionOptions.length === 0}
+              title={collectionOptions.length === 0 ? 'Add a trait collection first.' : 'Add a counted contribution to a trait collection.'}
+              onClick={() => onChange({ traitPlacement: 'collection', key: '' })}>
+              add to collection
+            </button>
+            <button type="button" className="secondary-action compact-action"
+              disabled={nestedParentOptions.length === 0}
+              title={nestedParentOptions.length === 0 ? 'Add or require a trait branch first.' : 'Extend an existing trait branch.'}
+              onClick={() => onChange({ traitPlacement: 'nested', key: '' })}>
+              extend a trait
+            </button>
+          </>
+        ) : grant.traitPlacement === 'collection' ? (
+          <>
+            {' into '}
+            <ComboToken {...ct('traitCollection')} value={grant.traitCollection}
+              placeholder="— collection —" options={collectionOptions}
+              onSelect={(v) => onChange({ traitCollection: v })} />
+            <button type="button" className="secondary-action compact-action"
+              onClick={() => onChange({ traitPlacement: 'named', traitCollection: '', traitCount: '1' })}>
+              use named path
+            </button>
+          </>
+        ) : (
+          <>
+            {' extends '}
+            <ComboToken {...ct('traitParentPath')} value={grant.traitParentPath}
+              placeholder="— parent trait —" options={nestedParentOptions}
+              onSelect={(v) => onChange({ traitParentPath: v })} />
+            {' as '}
+            <Token {...tok('key')} value={grant.key} placeholder="path name"
+              onChange={(v) => onChange({ key: v })} />
+            <button type="button" className="secondary-action compact-action"
+              onClick={() => onChange({ traitPlacement: 'named', traitParentPath: '' })}>
+              use named path
+            </button>
+          </>
+        )}
         <button type="button" className="guided-grant-remove" aria-label="Remove" onClick={onRemove}>×</button>
       </div>
     );
@@ -1361,6 +1483,141 @@ function GrantRow({
   );
 }
 
+// ── Effective shape preview ───────────────────────────────────────────────────
+
+function TraitShapeTree({
+  currentTraitName,
+  definitionsById,
+  parentPath,
+  shape,
+}: {
+  currentTraitName: string;
+  definitionsById: Map<string, RuleDefinitionResource>;
+  parentPath: string[];
+  shape: TraitShape;
+}) {
+  const children = traitShapeChildren(shape, parentPath);
+  if (children.length === 0) return null;
+
+  return (
+    <ul className="trait-shape-tree" role={parentPath.length === 0 ? 'tree' : 'group'}>
+      {children.map((node) => {
+        const segment = node.path.at(-1)!;
+        const sourceName = node.sourceTraitId
+          ? definitionsById.get(node.sourceTraitId)?.name ?? node.sourceTraitId
+          : currentTraitName;
+        return (
+          <li
+            aria-expanded={node.kind === 'branch' || (node.kind === 'collection' && node.entries.length > 0) ? true : undefined}
+            aria-selected={false}
+            className={`trait-shape-node is-${node.kind}`}
+            key={node.path.join('.')}
+            role="treeitem"
+          >
+            <div className="trait-shape-node-row">
+              <span className="trait-shape-connector" aria-hidden="true">
+                {node.kind === 'branch' ? '◆' : node.kind === 'collection' ? '▦' : '●'}
+              </span>
+              <span className="trait-shape-node-name">{node.label}</span>
+              <code>.{segment}</code>
+              <span className="trait-shape-node-type">
+                {node.kind === 'branch' ? 'trait' : node.kind === 'collection' ? 'collection' : node.dataType}
+              </span>
+              <span className="trait-shape-node-source">
+                {node.kind === 'branch' ? 'added by ' : node.kind === 'collection' ? 'declared by ' : 'defined by '}
+                {sourceName}
+              </span>
+            </div>
+            {node.kind === 'branch' && (
+              <TraitShapeTree
+                currentTraitName={currentTraitName}
+                definitionsById={definitionsById}
+                parentPath={node.path}
+                shape={shape}
+              />
+            )}
+            {node.kind === 'collection' && node.entries.length > 0 && (
+              <ul className="trait-shape-tree trait-shape-collection-entries" role="group">
+                {node.entries.map((entry, index) => {
+                  const entryName = definitionsById.get(entry.traitId)?.name ?? entry.traitId;
+                  const entrySource = entry.sourceTraitId
+                    ? definitionsById.get(entry.sourceTraitId)?.name ?? entry.sourceTraitId
+                    : currentTraitName;
+                  return (
+                    <li className="trait-shape-node is-collection-entry"
+                      aria-selected={false}
+                      key={`${entry.traitId}-${entry.sourceTraitId ?? 'draft'}-${index}`} role="treeitem">
+                      <div className="trait-shape-node-row">
+                        <span className="trait-shape-connector" aria-hidden="true">×</span>
+                        <span className="trait-shape-node-name">{entryName}</span>
+                        <span className="trait-shape-node-type">×{entry.count}</span>
+                        <span className="trait-shape-node-source">added by {entrySource}</span>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function TraitShapePreview({
+  currentTraitName,
+  definitions,
+  shape,
+}: {
+  currentTraitName: string;
+  definitions: RuleDefinitionResource[];
+  shape: TraitShape;
+}) {
+  const definitionsById = useMemo(
+    () => new Map(definitions.map((definition) => [definition.externalId, definition])),
+    [definitions],
+  );
+  const terminalCount = shape.nodes.filter((node) => node.kind === 'terminal').length;
+  const collectionCount = shape.nodes.filter((node) => node.kind === 'collection').length;
+  const branchCount = shape.nodes.length - terminalCount - collectionCount;
+  const previewTitleId = useId();
+
+  return (
+    <section className="trait-shape-preview" aria-labelledby={previewTitleId}>
+      <div className="trait-shape-preview-heading">
+        <div>
+          <span className="eyebrow">Effective shape</span>
+          <h5 id={previewTitleId}>Structure available on Self</h5>
+        </div>
+        <span className="badge">{branchCount} traits · {collectionCount} collections · {terminalCount} fields</span>
+      </div>
+      <p className="subtext">
+        Guaranteed by the selected prerequisites, plus additions from {currentTraitName}.
+      </p>
+      {shape.nodes.length === 0 ? (
+        <div className="trait-shape-empty">
+          Add a prerequisite or a named field or trait to begin building this structure.
+        </div>
+      ) : (
+        <div className="trait-shape-root">
+          <div className="trait-shape-root-label">
+            <span className="trait-shape-root-mark" aria-hidden="true">S</span>
+            <strong>Self</strong>
+            <code>self</code>
+          </div>
+          <TraitShapeTree
+            currentTraitName={currentTraitName}
+            definitionsById={definitionsById}
+            parentPath={[]}
+            shape={shape}
+          />
+        </div>
+      )}
+    </section>
+  );
+}
+
 // ── Editor ────────────────────────────────────────────────────────────────────
 
 const DEFAULT_PREREQS: PrerequisiteSpec = { mode: 'any', ids: [] };
@@ -1379,6 +1636,26 @@ export function GuidedTraitGrantsEditor({
   const [prereqModeEditing, setPrereqModeEditing] = useState(false);
   const [lastAddedId, setLastAddedId] = useState<string | null>(null);
   const slotTypeOptions = useMemo(() => extractSlotTypes(traitDefinitions, grants), [traitDefinitions, grants]);
+  const traitShape = useMemo(() => buildTraitShape({
+    definitions: traitDefinitions,
+    prerequisiteIds: prerequisites.ids,
+    prerequisiteMode: prerequisites.mode,
+    draftGrants: traitShapeGrantsFromDraft(grants),
+  }), [grants, prerequisites.ids, prerequisites.mode, traitDefinitions]);
+  const collectionOptions = useMemo(() => traitShape.nodes
+    .filter((node): node is Extract<TraitShapeNode, { kind: 'collection' }> => node.kind === 'collection')
+    .map((node) => ({
+      value: `self.${node.path.join('.')}`,
+      label: `Self › ${node.path.map((segment) => segment.replace(/-/g, ' ')).join(' › ')}`,
+      hint: 'trait collection',
+    })), [traitShape.nodes]);
+  const nestedParentOptions = useMemo(() => traitShape.nodes
+    .filter((node): node is Extract<TraitShapeNode, { kind: 'branch' }> => node.kind === 'branch')
+    .map((node) => ({
+      value: `self.${node.path.join('.')}`,
+      label: `Self › ${node.path.map((segment) => segment.replace(/-/g, ' ')).join(' › ')}`,
+      hint: 'trait branch',
+    })), [traitShape.nodes]);
 
   function update(id: string, patch: Partial<GrantDraft>) {
     onChange(grants.map((g) => g._id === id ? { ...g, ...patch } : g));
@@ -1483,6 +1760,7 @@ export function GuidedTraitGrantsEditor({
         <button type="button" className="secondary-action compact-action" onClick={() => add('boolean')}>+ true/false</button>
         <button type="button" className="secondary-action compact-action" onClick={() => add('enum')}>+ enum</button>
         <button type="button" className="secondary-action compact-action" onClick={() => add('trait')}>+ trait grant</button>
+        <button type="button" className="secondary-action compact-action" onClick={() => add('trait-collection')}>+ trait collection</button>
         <button type="button" className="secondary-action compact-action" onClick={() => add('modifier')}>+ modifier</button>
         <button type="button" className="secondary-action compact-action" onClick={() => add('slot')}>+ slot</button>
         <button type="button" className="secondary-action compact-action" onClick={() => add('slot-affinity')}>+ slot-affinity</button>
@@ -1491,14 +1769,34 @@ export function GuidedTraitGrantsEditor({
       {grants.length > 0 && (
         <div className="guided-grants-list">
           {grants.map((grant) => (
-            <GrantRow key={grant._id} grant={grant} traitDefinitions={traitDefinitions}
-              prerequisiteIds={prerequisites.ids}
-              siblingGrants={grants}
+            <GrantRow key={grant._id} collectionOptions={collectionOptions} grant={grant}
+              nestedParentOptions={nestedParentOptions} traitDefinitions={traitDefinitions}
+              traitShape={traitShape}
               slotTypeOptions={slotTypeOptions}
               autoFocus={grant._id === lastAddedId}
               onChange={(patch) => update(grant._id, patch)}
               onRemove={() => remove(grant._id)} />
           ))}
+        </div>
+      )}
+
+      <TraitShapePreview
+        currentTraitName={traitName.trim() || 'This trait'}
+        definitions={traitDefinitions}
+        shape={traitShape}
+      />
+
+      {traitShape.diagnostics.length > 0 && (
+        <div className="guided-rule-diagnostics" aria-live="polite">
+          <strong>Trait structure needs attention</strong>
+          <ul>
+            {traitShape.diagnostics.map((diagnostic, index) => (
+              <li key={`${diagnostic.code}-${diagnostic.path.join('.')}-${index}`}>
+                <span>{diagnostic.path.length > 0 ? `self.${diagnostic.path.join('.')}` : 'self'}</span>
+                {diagnostic.message}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
     </div>

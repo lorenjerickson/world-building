@@ -22,6 +22,8 @@ import {
   CreateRuleSetDto,
   ListRuleDefinitionsQueryDto,
   ListRuleSetsQueryDto,
+  MigrateTraitDefinitionDto,
+  PublishRuleSetDto,
   UpdateRuleDefinitionDto,
   UpdateRuleModuleDto,
   UpdateRuleSetDto,
@@ -193,9 +195,39 @@ export class RuleSetsController {
     return this.catalog.cloneDefinition(actor, ruleSetId, definitionId, dto);
   }
 
+  @Post(':ruleSetId/definitions/:definitionId/migration/preview')
+  previewTraitMigration(
+    @CurrentRuleActor() actor: RuleApiActor,
+    @Param('ruleSetId', RuleApiIdPipe) ruleSetId: number,
+    @Param('definitionId', RuleApiIdPipe) definitionId: number,
+  ) {
+    return this.catalog.previewTraitMigration(actor, ruleSetId, definitionId);
+  }
+
+  @Post(':ruleSetId/definitions/:definitionId/migration')
+  @HttpCode(HttpStatus.CREATED)
+  migrateTraitDefinition(
+    @CurrentRuleActor() actor: RuleApiActor,
+    @Param('ruleSetId', RuleApiIdPipe) ruleSetId: number,
+    @Param('definitionId', RuleApiIdPipe) definitionId: number,
+    @Body() dto: MigrateTraitDefinitionDto,
+  ) {
+    return this.catalog.migrateTraitDefinition(actor, ruleSetId, definitionId, dto);
+  }
+
   @Get(':ruleSetId/releases')
   listReleases(@CurrentRuleActor() actor: RuleApiActor, @Param('ruleSetId', RuleApiIdPipe) ruleSetId: number) {
     return this.catalog.listReleases(actor, ruleSetId);
+  }
+
+  @Post(':ruleSetId/releases')
+  @HttpCode(HttpStatus.CREATED)
+  publish(
+    @CurrentRuleActor() actor: RuleApiActor,
+    @Param('ruleSetId', RuleApiIdPipe) ruleSetId: number,
+    @Body() dto: PublishRuleSetDto,
+  ) {
+    return this.catalog.publish(actor, ruleSetId, dto);
   }
 
   @Get(':ruleSetId/releases/:releaseId')

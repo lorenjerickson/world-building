@@ -19,14 +19,15 @@ import {
   exportRuleSet,
   getRuleSet,
   getRuleSetChildren,
+  publishRuleSet,
   RuleDefinitionResource,
   RuleModuleResource,
+  RuleReleaseResource,
   RuleSetApiError,
   RuleSetResource,
   ruleDefinitionTypes,
 } from '@/lib/rule-sets';
 
-type RuleRelease = { id: number; version: string; lifecycle: string; publishedAt: string };
 type EditingArtifact =
   | { kind: 'definition'; artifact: RuleDefinitionResource }
   | { kind: 'module'; artifact: RuleModuleResource };
@@ -38,7 +39,7 @@ export function RuleSetDetailRoute({ ruleSetId }: { ruleSetId: string }) {
   const [ruleSet, setRuleSet] = useState<RuleSetResource>();
   const [modules, setModules] = useState<RuleModuleResource[]>([]);
   const [definitions, setDefinitions] = useState<RuleDefinitionResource[]>([]);
-  const [releases, setReleases] = useState<RuleRelease[]>([]);
+  const [releases, setReleases] = useState<RuleReleaseResource[]>([]);
   const [error, setError] = useState<string>();
   const [authoring, setAuthoring] = useState<'module' | 'definition'>();
   const [editing, setEditing] = useState<EditingArtifact>();
@@ -52,6 +53,11 @@ export function RuleSetDetailRoute({ ruleSetId }: { ruleSetId: string }) {
   const [selectedModuleId, setSelectedModuleId] = useState<number | null>(null);
   const [showAssistant, setShowAssistant] = useState(false);
   const [showImport, setShowImport] = useState(false);
+  const [showPublish, setShowPublish] = useState(false);
+  const [publishVersion, setPublishVersion] = useState('1.0.0');
+  const [releaseNotes, setReleaseNotes] = useState('');
+  const [publishing, setPublishing] = useState(false);
+  const [publishError, setPublishError] = useState<string>();
   const [exporting, setExporting] = useState(false);
   const [definitionVisibilityDraft, setDefinitionVisibilityDraft] = useState<'exported' | 'private'>('exported');
 
@@ -62,7 +68,7 @@ export function RuleSetDetailRoute({ ruleSetId }: { ruleSetId: string }) {
       getRuleSet(numericId, controller.signal),
       getRuleSetChildren<RuleModuleResource>(numericId, 'modules', controller.signal),
       getRuleSetChildren<RuleDefinitionResource>(numericId, 'definitions', controller.signal),
-      getRuleSetChildren<RuleRelease>(numericId, 'releases', controller.signal),
+      getRuleSetChildren<RuleReleaseResource>(numericId, 'releases', controller.signal),
     ]).then(([ruleSetResult, moduleResult, definitionResult, releaseResult]) => {
       setRuleSet(ruleSetResult);
       setModules(moduleResult);
@@ -111,15 +117,79 @@ export function RuleSetDetailRoute({ ruleSetId }: { ruleSetId: string }) {
           <Link href="/rule-sets" className="secondary-action">Back to rule sets</Link>
           <button type="button" className="secondary-action" disabled={exporting} onClick={async () => { setExporting(true); try { const bundle = await exportRuleSet(numericId); const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `${ruleSet.slug || ruleSet.name.toLowerCase().replace(/\s+/g, '-')}-export.json`; a.click(); URL.revokeObjectURL(url); } catch (cause) { /* silently ignore */ } finally { setExporting(false); } }}>{exporting ? 'Exporting…' : 'Export'}</button>
           <button type="button" className="secondary-action" onClick={() => setShowImport((v) => !v)}>{showImport ? 'Cancel import' : 'Import'}</button>
+          <button type="button" className="primary-action" disabled={!modules.length || !definitions.length}
+            title={!modules.length || !definitions.length ? 'Add at least one module and definition before publishing.' : undefined}
+            onClick={() => {
+              setShowPublish((visible) => !visible);
+              setPublishError(undefined);
+              const versions = releases
+                .map((release) => release.version.match(/^(\d+)\.(\d+)\.(\d+)$/))
+                .filter((match): match is RegExpMatchArray => match !== null)
+                .map((match) => [Number(match[1]), Number(match[2]), Number(match[3])] as const)
+                .sort((left, right) => right[0] - left[0] || right[1] - left[1] || right[2] - left[2]);
+              const latest = versions[0];
+              setPublishVersion(latest ? `${latest[0]}.${latest[1]}.${latest[2] + 1}` : '1.0.0');
+            }}>
+            {showPublish ? 'Cancel publish' : 'Publish'}
+          </button>
           <DeleteArtifactButton artifactName={ruleSet.name} artifactType="rule set" disabled={releases.length > 0} onDelete={async () => { await deleteRuleSet(ruleSet); router.replace('/rule-sets'); router.refresh(); }} />
         </div>
       </header>
       {releases.length > 0 && <p className="rule-set-notice">Published rule sets are immutable and must be retired instead of deleted.</p>}
+      {showPublish && (
+        <form className="card-surface rule-set-child-form" onSubmit={async (event) => {
+          event.preventDefault();
+          setPublishing(true);
+          setPublishError(undefined);
+          try {
+            const release = await publishRuleSet(ruleSet, {
+              version: publishVersion.trim(),
+              releaseNotes: releaseNotes.trim() || undefined,
+            });
+            setReleases((current) => [
+              release,
+              ...current.filter((candidate) => candidate.id !== release.id),
+            ].sort((left, right) => right.publishedAt.localeCompare(left.publishedAt)));
+            setShowPublish(false);
+            setReleaseNotes('');
+          } catch (cause) {
+            if (cause instanceof RuleSetApiError) {
+              const diagnostics = Array.isArray(cause.context.diagnostics)
+                ? cause.context.diagnostics as Array<{ message?: unknown }>
+                : [];
+              const firstDiagnostic = diagnostics.find((diagnostic) => typeof diagnostic.message === 'string');
+              setPublishError(typeof firstDiagnostic?.message === 'string' ? firstDiagnostic.message : cause.message);
+            } else {
+              setPublishError('The rule set could not be published.');
+            }
+          } finally {
+            setPublishing(false);
+          }
+        }}>
+          <div className="section-title-bar">
+            <div className="rule-set-panel-title"><h3>Publish immutable release</h3><span>Compile and snapshot the current draft</span></div>
+          </div>
+          <div className="rule-set-form-grid">
+            <label className="rule-set-field"><span>Semantic version</span><input required maxLength={80}
+              pattern="^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
+              value={publishVersion} onChange={(event) => setPublishVersion(event.target.value)} placeholder="1.0.0" /></label>
+            <label className="rule-set-field rule-set-field-wide"><span>Release notes</span><textarea rows={3} maxLength={20000}
+              value={releaseNotes} onChange={(event) => setReleaseNotes(event.target.value)}
+              placeholder="What changed in this release?" /></label>
+          </div>
+          <p className="subtext">Publishing validates every definition, resolves the complete trait graph, and stores a content-addressed source snapshot. The resulting release cannot be edited or deleted.</p>
+          {publishError && <p className="rule-set-notice error" role="alert">{publishError}</p>}
+          <div className="rule-set-form-actions">
+            <button className="secondary-action" type="button" onClick={() => setShowPublish(false)}>Cancel</button>
+            <button className="primary-action" type="submit" disabled={publishing}>{publishing ? 'Compiling…' : `Publish ${publishVersion || 'release'}`}</button>
+          </div>
+        </form>
+      )}
       {showImport && <RuleSetImportModal ruleSetId={numericId} onClose={() => setShowImport(false)} onImported={(result) => { if (result.definitionsCreated > 0) { getRuleSetChildren<RuleDefinitionResource>(numericId, 'definitions').then(setDefinitions).catch(() => {}); getRuleSetChildren<RuleModuleResource>(numericId, 'modules').then(setModules).catch(() => {}); } }} />}
       <section className="rule-set-detail-summary">
         <article className="card-surface"><span className="eyebrow">Modules</span><strong>{modules.length}</strong><p>Namespaces organizing this rule set.</p></article>
         <article className="card-surface"><span className="eyebrow">Definitions</span><strong>{definitions.length}</strong><p>Traits, operations, effects, and other authored rules.</p></article>
-        <article className="card-surface"><span className="eyebrow">Releases</span><strong>{releases.length}</strong><p>Immutable versions available for future compositions.</p></article>
+        <article className="card-surface"><span className="eyebrow">Releases</span><strong>{releases.length}</strong><p>{releases[0] ? `Latest: ${releases[0].version}` : 'Immutable versions available for future compositions.'}</p></article>
       </section>
       <div className="rule-set-detail-grid">
         <section className="card-surface rule-set-child-section">

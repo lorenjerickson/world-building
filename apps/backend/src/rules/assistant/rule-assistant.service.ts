@@ -6,6 +6,7 @@ import { creatureCapabilityExamples } from '../metamodel/creature-capability.exa
 import { compileResolutionDefinitions } from '../resolution/resolution.compiler';
 import { resolutionMetamodelDescriptor } from '../resolution/resolution.descriptors';
 import { meleeResolutionExamples } from '../resolution/resolution.examples';
+import { RuleSentenceParseResult, RuleSentenceParserService } from './rule-sentence-parser.service';
 
 export interface AssistantMessage {
   role: 'user' | 'assistant';
@@ -23,6 +24,7 @@ export interface AssistantResponse {
   explanation: string;
   assumptions: string[];
   definitions: AssistantProposedDefinition[];
+  parser: RuleSentenceParseResult;
   raw?: string;
   llmAvailable: boolean;
 }
@@ -31,7 +33,10 @@ export interface AssistantResponse {
 export class RuleAssistantService {
   private readonly logger = new Logger(RuleAssistantService.name);
 
-  constructor(private readonly llm: LlmService) {}
+  constructor(
+    private readonly llm: LlmService,
+    private readonly sentenceParser: RuleSentenceParserService,
+  ) {}
 
   get isAvailable(): boolean {
     return this.llm.isConfigured;
@@ -39,7 +44,7 @@ export class RuleAssistantService {
 
   // ── System prompt ───────────────────────────────────────────────────────────
 
-  private buildSystemPrompt(contextDefinitions: unknown[]): string {
+  private buildSystemPrompt(contextDefinitions: unknown[], parserResult: RuleSentenceParseResult): string {
     const creatureTypes = creatureCapabilityMetamodelDescriptor.definitionTypes.join(', ');
     const resolutionTypes = resolutionMetamodelDescriptor.definitionTypes.join(', ');
     const creatureExampleJson = JSON.stringify(creatureCapabilityExamples.slice(0, 2), null, 2);
@@ -71,6 +76,10 @@ ${resolutionExampleJson}
 
 ## Context
 ${contextSummary}
+
+## Deterministic sentence parser hints
+Use these hints as guidance only. They may be incomplete and must be corrected if inconsistent.
+${JSON.stringify(parserResult, null, 2)}
 
 ## Instructions
 When the GM describes a mechanic:
@@ -140,17 +149,20 @@ Never include prose, markdown, or any content outside the JSON object.`;
     userMessage: string,
     contextDefinitions: unknown[] = [],
   ): Promise<AssistantResponse> {
+    const parser = this.sentenceParser.parse(userMessage);
+
     if (!this.llm.isConfigured) {
       return {
         questions: [],
         explanation: 'The AI assistant is not configured. Set OPENAI_API_KEY or LLAMA_MODEL_PATH to enable it.',
         assumptions: [],
         definitions: [],
+        parser,
         llmAvailable: false,
       };
     }
 
-    const systemPrompt = this.buildSystemPrompt(contextDefinitions);
+    const systemPrompt = this.buildSystemPrompt(contextDefinitions, parser);
     const messages = [
       { role: 'system' as const, content: systemPrompt },
       ...history.map((m) => ({ role: m.role, content: m.content })),
@@ -171,11 +183,31 @@ Never include prose, markdown, or any content outside the JSON object.`;
       parsed = this.parseResponse(raw);
     } catch {
       this.logger.warn('Failed to parse assistant response as JSON', raw.slice(0, 200));
-      return { questions: [], explanation: 'The assistant returned an unreadable response. Please try rephrasing your request.', assumptions: [], definitions: [], raw, llmAvailable: true };
+      return {
+        questions: [],
+        explanation: 'The assistant returned an unreadable response. Please try rephrasing your request.',
+        assumptions: [],
+        definitions: [],
+        parser,
+        raw,
+        llmAvailable: true,
+      };
     }
 
     const definitions = this.validateProposedDefinitions(parsed.rawDefinitions);
-    return { questions: parsed.questions, explanation: parsed.explanation, assumptions: parsed.assumptions, definitions, raw, llmAvailable: true };
+    return {
+      questions: parsed.questions,
+      explanation: parsed.explanation,
+      assumptions: parsed.assumptions,
+      definitions,
+      parser,
+      raw,
+      llmAvailable: true,
+    };
+  }
+
+  parseSentence(message: string): RuleSentenceParseResult {
+    return this.sentenceParser.parse(message);
   }
 
   /** Generate AI tool schemas from metamodel descriptors — the "shared metamodel" piece. */
