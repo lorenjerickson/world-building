@@ -1,3 +1,11 @@
+---
+title: "Turn-of-the-Century Fiction"
+created: "2026-01-01"
+last_updated: "2026-07-25"
+completion_status: unknown
+disposition: unknown
+---
+
 Here are summaries of notable fiction published or set between 1890 and 1920 that perfectly capture the occult, gothic horror, and supernatural dread of the era.
 ## Classic Novels and Novellas
 

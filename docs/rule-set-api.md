@@ -1,3 +1,11 @@
+---
+title: "Rule-set application API"
+created: "2026-01-01"
+last_updated: "2026-07-25"
+completion_status: in-progress
+disposition: unknown
+---
+
 # Rule-set application API
 
 The initial NestJS rule-set API exposes the authored catalog already backed by Payload CMS. Public responses use application-owned resources; Payload relationship shapes, pagination fields, draft flags, Lexical rich text, internal credentials, and errors remain private to the repository adapter.

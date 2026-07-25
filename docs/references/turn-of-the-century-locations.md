@@ -1,3 +1,11 @@
+---
+title: "Turn-of-the-Century Locations"
+created: "2026-01-01"
+last_updated: "2026-07-25"
+completion_status: unknown
+disposition: unknown
+---
+
 To tie this world-building exercise together, here is a gazetteer of highly atmospheric, real-world locations that were central to the history, geopolitics, and gothic anxieties of the 1890–1920 era. These locales serve as perfect anchors for narratives blending industrial progress with cosmic and supernatural dread.
 ## The Imperial and Industrial Hubs
 

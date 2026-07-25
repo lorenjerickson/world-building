@@ -1,3 +1,11 @@
+---
+title: "Payload CMS proof of concept"
+created: "2026-07-14"
+last_updated: "2026-07-25"
+completion_status: complete
+disposition: approved
+---
+
 # Payload CMS proof of concept
 
 | Field | Result |

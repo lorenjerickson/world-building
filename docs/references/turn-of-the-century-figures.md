@@ -1,3 +1,11 @@
+---
+title: "Turn-of-the-Century Figures"
+created: "2026-01-01"
+last_updated: "2026-07-25"
+completion_status: unknown
+disposition: unknown
+---
+
 To capture the unique atmosphere of the late Victorian, Edwardian, and World War I eras (1890–1920), the historical figures and fictional characters can be grouped by their connection to the era's obsession with science, the occult, imperial exploration, and gothic dread.
 ## Real Historical Figures## The Occultists and Psychologists
 

@@ -1,3 +1,11 @@
+---
+title: "Development configuration"
+created: "2026-01-01"
+last_updated: "2026-07-25"
+completion_status: unknown
+disposition: unknown
+---
+
 # Development configuration
 
 Each application owns its environment file. The repository root `.env` is not

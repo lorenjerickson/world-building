@@ -1,3 +1,11 @@
+---
+title: "Turn-of-the-Century Organizations"
+created: "2026-01-01"
+last_updated: "2026-07-25"
+completion_status: unknown
+disposition: unknown
+---
+
 To fully understand the global power dynamics of the 1890–1920 era, organizations can be categorized by their massive social, economic, and political influence. This period saw the rise of modern international governance, powerful labor movements, secret societies, and massive corporate monopolies.
 ## Political and Government Organizations
 

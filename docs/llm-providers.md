@@ -1,3 +1,11 @@
+---
+title: "Text LLM providers"
+created: "2026-01-01"
+last_updated: "2026-07-25"
+completion_status: unknown
+disposition: unknown
+---
+
 # Text LLM providers
 
 NestJS text generation uses an application-owned `LlmService` and provider-neutral request/response types. OpenAI and `node-llama-cpp` are adapters behind that boundary; generation code must not import either vendor SDK directly.

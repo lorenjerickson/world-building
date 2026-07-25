@@ -1,3 +1,11 @@
+---
+title: "Rule Data Authoring Strategy"
+created: "2026-01-01"
+last_updated: "2026-07-25"
+completion_status: in-progress
+disposition: draft
+---
+
 # Rule Data Authoring Strategy
 
 ## 1. Purpose

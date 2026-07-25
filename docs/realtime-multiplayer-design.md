@@ -1,3 +1,11 @@
+---
+title: "Realtime Multiplayer and Collaboration Transport"
+created: "2026-01-01"
+last_updated: "2026-07-25"
+completion_status: unknown
+disposition: draft
+---
+
 # Realtime Multiplayer and Collaboration Transport
 
 | Field | Value |
@@ -15,7 +23,7 @@ The current application has:
 
 - a Next.js 16 / React 19 frontend;
 - a NestJS 10 backend on port 8000;
-- PostgreSQL through TypeORM for generated worlds;
+- PostgreSQL through Prisma for generated worlds and application runtime state;
 - a LevelGraph store for lore relationships;
 - mandatory Auth0 authentication for frontend pages and application APIs;
 - session routes without a persistent session catalog or realtime transport; and
@@ -77,7 +85,8 @@ The preferred packages are:
 - `@nestjs/websockets` for gateways, message decorators, lifecycle hooks, and WebSocket exceptions;
 - `@nestjs/platform-ws` for the built-in, browser-compatible `WsAdapter`;
 - `class-validator` and `class-transformer` through Nest validation pipes for DTO validation;
-- `@nestjs/typeorm` for transactional durable state and repositories;
+- `@prisma/client` through the application `PrismaService` for transactional
+  durable state;
 - `@nestjs/config` for typed realtime settings and environment validation;
 - `@nestjs/throttler` for coarse connection/user limits, supplemented by a realtime-aware guard for per-message and per-scope limits;
 - `@nestjs/schedule` only for low-volume maintenance such as snapshot cleanup, not heartbeat timing or event delivery; and
@@ -146,7 +155,7 @@ SessionModule
 ├── SessionProjectionService        snapshots and recipient projections
 ├── SessionReplayService            replay/snapshot selection
 ├── SessionPolicyService            capability decisions
-└── TypeORM repositories/entities
+└── PrismaService and application persistence services
 
 ProtocolModule (or shared workspace package)
 ├── message DTOs and discriminated types
@@ -574,7 +583,8 @@ Model at least 10 participants per session initially, with 100 concurrently acti
 
 - Add a shared protocol/schema package used by frontend and backend.
 - Add backend authentication/authorization primitives and realtime ticket endpoint.
-- Add session, participant, event, and snapshot persistence with migrations; disable TypeORM `synchronize` outside local development.
+- Add session, participant, event, and snapshot persistence with reviewed
+  Prisma migrations; never use `prisma db push` for schema deployment.
 - Add `RealtimeModule` configuration and tests around Nest guards, pipes, filters, and interceptors.
 - Define the connection-state UI and telemetry conventions.
 

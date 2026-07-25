@@ -1,3 +1,11 @@
+---
+title: "Payload CMS service implementation"
+created: "2026-07-14"
+last_updated: "2026-07-25"
+completion_status: in-progress
+disposition: unknown
+---
+
 # Payload CMS service implementation
 
 | Field | Value |
@@ -35,7 +43,13 @@ The third migration was generated while promoting the PoC to Payload 3.86.0 and 
 
 The fourth migration establishes the authored rule-set foundation: workspace-scoped rule sets, modules, typed definitions, generation policies, immutable release snapshots, draft migrations, and documentation. The fifth migration, `20260715_142221_phase2_definition_types`, additively extends both current and versioned rule-definition enums with `derived-value`, `modifier`, `check`, and `resource`; its down migration refuses to discard documents using those values. Draft-capable collections use Payload versions; releases reject changes to canonical identity, manifest, source snapshot, dependency lock, publication identity, and hashes after creation.
 
-Application PostgreSQL now uses checked-in TypeORM migrations with `synchronize: false`. It stores compiled composition manifests and members, named gameplay-profile bindings, instances, effects, executions, ordered events, continuations, compiled artifacts, generated-content rule context, and AI-authoring sessions/proposals. These tables intentionally remain outside Payload because they are mutable runtime or coordination state. The persistence entities are marked non-synchronizing so the reviewed migrations—not TypeORM schema synchronization—remain authoritative.
+Application PostgreSQL uses Prisma Client and checked-in Prisma migrations. It
+stores compiled composition manifests and members, named gameplay-profile
+bindings, instances, effects, executions, ordered events, continuations,
+compiled artifacts, generated-content rule context, and AI-authoring
+sessions/proposals. These tables intentionally remain outside Payload because
+they are mutable runtime or coordination state. `prisma migrate deploy` applies
+the reviewed application migrations; schema push is not part of this workflow.
 
 The CMS verification commands enforce:
 

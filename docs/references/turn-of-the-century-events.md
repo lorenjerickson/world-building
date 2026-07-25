@@ -1,3 +1,11 @@
+---
+title: "Turn-of-the-Century Events"
+created: "2026-01-01"
+last_updated: "2026-07-25"
+completion_status: unknown
+disposition: unknown
+---
+
 The period between 1890 and 1920 was a transformative era defined by the peak of New Imperialism, global industrialization, the devastation of World War I, and massive geopolitical restructuring.
 ## 1890–1899: Imperial Expansion and Technological Dawn
 

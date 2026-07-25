@@ -1,3 +1,11 @@
+---
+title: "Headless CMS Market Survey and Recommendation"
+created: "2026-07-14"
+last_updated: "2026-07-25"
+completion_status: in-progress
+disposition: approved
+---
+
 # Headless CMS Market Survey and Recommendation
 
 | Field | Value |
@@ -54,16 +62,21 @@ The targeted proof of concept is complete. It demonstrated code-only schema chan
 
 A CMS is the system of record for authored/generated content and media metadata. It is not the system of record for every application concern. Realtime connection state, high-frequency game state, idempotency records, event journals, background job state, and ephemeral presence stay in purpose-built application storage described by the realtime design. LevelGraph may remain a derived relationship/search projection until a separate decision replaces it.
 
-## 3. Current-state findings
+## 3. Historical current-state findings
+
+This section records the repository state at the time of the original CMS
+survey. Application persistence has since moved to Prisma with checked-in
+migrations.
 
 The repository currently has a fragmented content system rather than a single PostgreSQL content store.
 
 ### 3.1 Structured content
 
-- `World` is the only TypeORM content entity.
+- `World` was the only application ORM content entity.
 - It stores `prompt`, a text `generatedContent` description, an untyped `jsonb` `metadata` object, and `createdAt`.
 - World updates replace the metadata JSON as a whole.
-- TypeORM `synchronize: true` is enabled, so there is no production-safe, reviewed migration history.
+- The former ORM used automatic synchronization, so there was no
+  production-safe, reviewed migration history at the time.
 - Lore relationships are also written to LevelGraph, but no durable link ties those records to a versioned CMS document.
 - Campaigns and sessions are fixture data rather than persistent content models.
 - Much of the editable world object is cached and updated in browser `localStorage` under `aethelgard_worlds`; this can contain content newer or richer than PostgreSQL.
@@ -124,7 +137,9 @@ Scores are directional, not benchmarks. A proof of concept remains necessary.
 **Cautions**
 
 - Payload 3 is also an application framework, not a NestJS module. Treat it as a service boundary instead of trying to mount it inside Nest.
-- It creates and owns its relational schema. Use a separate PostgreSQL database on the same server/cluster, not the current `public` schema, to avoid TypeORM/Payload ownership conflicts.
+- It creates and owns its relational schema. Use a separate PostgreSQL database
+  on the same server/cluster, not the application `public` schema, to avoid
+  Prisma/Payload ownership conflicts.
 - Payload's PostgreSQL workflow enables Drizzle push by default in development. This repository prohibits schema push: keep literal, unconditional `push: false` and require checked-in migrations in every environment, including local development. The mandatory workflow and completion checks are defined in the repository's `AGENTS.md`.
 - Local API calls bypass access control by default unless explicitly configured. The proposed separate-service integration should normally use authenticated REST/SDK calls; migration scripts using the Local API must consciously set their access behavior. Payload's APIs and management interface must also be network-private: Docker must publish no Payload port, and only NestJS may reach the service on an internal container network.
 - Rich block/array structures can create relational complexity. Model core domain entities as collections and relationships rather than one enormous nested world document.
@@ -236,7 +251,12 @@ flowchart LR
 
 ### 7.2 Why a separate CMS database
 
-Use the same PostgreSQL server/cluster for operational simplicity but create a distinct `worldcms` database and credentials. This provides clear schema ownership, least privilege, independent backup/restore, safer migrations, and no collision between Payload/Drizzle and Nest/TypeORM. Cross-database consistency is achieved through idempotent workflow/outbox patterns, not cross-schema ORM writes.
+Use the same PostgreSQL server/cluster for operational simplicity but create a
+distinct `worldcms` database and credentials. This provides clear schema
+ownership, least privilege, independent backup/restore, safer migrations, and
+no collision between Payload/Drizzle and Nest/Prisma. Cross-database
+consistency is achieved through idempotent workflow/outbox patterns, not
+cross-schema ORM writes.
 
 ### 7.3 Network isolation
 
@@ -417,7 +437,8 @@ Exit: CMS is authoritative, application APIs no longer read the legacy `worlds` 
 ### Phase 6 — Decommission
 
 - Archive immutable source exports and migration reports according to retention policy.
-- Remove TypeORM ownership of migrated content tables after rollback expires.
+- Remove legacy application ownership of migrated content tables after rollback
+  expires.
 - Delete quarantined orphans only after reference scans and approval.
 - Keep LevelGraph only as an explicitly rebuildable projection.
 
@@ -441,7 +462,7 @@ Exit: CMS is authoritative, application APIs no longer read the legacy `worlds` 
 | --- | --- |
 | Payload/Next version coupling | Separate service first; pin versions and test upgrades in CI |
 | CMS framework leaks into application | Nest `ContentRepository` and application DTO contract tests |
-| Conflicting schema ownership | Separate database and credentials; no TypeORM entities for Payload tables |
+| Conflicting schema ownership | Separate database and credentials; no Prisma models for Payload tables |
 | Unauthorized cross-user content | Workspace-scoped access functions in CMS plus Nest policy; adversarial tests |
 | Local API bypasses access control | Avoid it in request paths or require explicit user plus `overrideAccess: false` |
 | Large relational rich-content schema | Keep domain entities separate; benchmark blocks/arrays and relationship depth |

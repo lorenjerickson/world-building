@@ -1,19 +1,27 @@
+---
+title: "Recursive Trait Composition"
+created: "2026-01-01"
+last_updated: "2026-07-25"
+completion_status: in-progress
+disposition: approved
+---
+
 # Recursive Trait Composition
 
 | Attribute | Value |
 | --- | --- |
-| Status | Recursive composition Phases 0–6 are complete; `trait/2` migration and semantic diff are implemented; advanced modifier semantics remain |
+| Status | Core recursive composition, publication, migration, mounted-instance evaluation, and Phase A are implemented; Phase B preview and UI verification are in progress, while units and advanced modifier semantics remain |
 | Audience | Product, rule-system architecture, frontend, backend, and QA |
-| Last updated | 2026-07-23 |
+| Last updated | 2026-07-25 |
 | Related designs | [Rule sets design](./rule-systems-design-doc.md), [Rule data authoring strategy](./rule-data-authoring.md) |
 
 ## 1. Purpose
 
 This document records the product and implementation direction for composing fine-grained traits into progressively richer entity structures.
 
-It addresses a concrete authoring problem in the current grants editor: a GM can define a trait such as `Speed` that grants `Walk`, `Run`, and other traits, but modifier-path completion only evaluates one trait level below the holder. A modifier author who selects `self.speed` therefore receives no useful completion even when `Speed` grants traits that eventually expose numeric fields.
+The original motivating problem was a one-level grants editor: a GM could define a trait such as `Speed` that grants `Walk`, `Run`, and other traits, but modifier-path completion stopped one trait level below the holder. A modifier author who selected `self.speed` therefore received no useful completion even when `Speed` granted traits that eventually exposed numeric fields.
 
-That behavior is an implementation limitation, not an intended rule-model constraint.
+The shared recursive resolver now removes that limitation for the implemented exact-path slice. The design remains the source of truth for completing the surrounding authoring, schema, and advanced-composition behavior.
 
 The central decision is:
 
@@ -69,11 +77,13 @@ Winged extends Speed with Fly as fly.
 The canonical meaning is:
 
 ```text
-Winged requires self.speed.
+Winged's existing contract guarantees self.speed.
 Winged adds Fly at self.speed.fly.
 ```
 
-`extends` should initially be syntactic or presentation sugar over a nested `adds` operation, not a separate composition primitive. This keeps the canonical model small while giving the GM a natural sentence for a common intent.
+`extends` is presentation sugar over a nested `adds` operation, not a separate composition primitive. The parent path must already be guaranteed by the trait's prerequisites or earlier additions; `extends` does not silently add another prerequisite. This keeps the canonical model small and makes the compiler's existing-parent validation authoritative.
+
+If a future authoring case needs a path requirement without otherwise composing the parent, that requirement must receive an explicit canonical representation rather than being inferred from the selected path.
 
 ### 2.4 Applies
 
@@ -120,7 +130,7 @@ Boots of Striding modifies self.speed.walk.rate by +10 feet.
 
 The modifier affects walking without implicitly affecting running, swimming, or flying. Modifier evaluation must retain provenance so the system can explain the base value, each contribution, and the effective result.
 
-The detailed semantics for modifiers declared locally inside a nested trait remain a follow-up design decision. See [Open decisions](#11-open-decisions).
+Exact local modifier scope is implemented: `this` begins at the contributing mounted instance, while `self` begins at the root composition. Advanced stacking, suppression, replacement, and conditional behavior remain open. See [Resolved and open decisions](#11-resolved-and-open-decisions).
 
 ### 2.7 Replaces and suppresses
 
@@ -771,6 +781,8 @@ The expected path language is:
 
 The ordinary UI should avoid making a GM type these tokens. It should present readable breadcrumbs and sentences.
 
+The implemented trait-value-modifier slice exposes only `self` and `this`. `target` and `owner` remain reserved for surrounding resolution or ownership contracts and are rejected until they have distinct compiled and runtime semantics.
+
 Examples:
 
 ```text
@@ -805,7 +817,7 @@ self.speed.walk.rate
 
 When a high-level trait such as Creature is applied at the entity root, its local additions are merged at that root. Consequently, Creature's `this.speed` becomes the entity's `self.speed`; the Creature definition name does not become a path segment.
 
-The precise canonical encoding of `this` and path rebasing must be proven with compiler tests before publication support is added.
+The implemented compiler rebases `this` at the current mount and `self` at the root composition, with compiler and evaluator tests covering both local and cross-mount access.
 
 ## 7. Structural addition semantics
 
@@ -836,7 +848,7 @@ extend Speed with Fly as fly
 Canonical form:
 
 ```text
-require self.speed
+# self.speed is already guaranteed by another prerequisite or addition
 add trait:fly at self.speed.fly
 ```
 
@@ -1016,7 +1028,7 @@ Winged extends the holder's Speed with Fly as "fly".
 Expanded meaning:
 
 ```text
-Winged requires self.speed.
+Winged's existing contract guarantees self.speed.
 Winged adds Fly at self.speed.fly.
 ```
 
@@ -1118,218 +1130,158 @@ POST /api/rule-sets/:ruleSetId/definitions/:definitionId/migration
 
 The apply request requires `expectedUpdatedAt`, so a migration cannot overwrite a newer draft.
 
-## 11. Open decisions
+## 11. Resolved and open decisions
 
-The following questions are intentionally not resolved by this document:
+Implementation has resolved several questions that were open in the original design:
 
-1. **Local modifier scope:** When a nested trait declares `this.rate`, does `this` always refer to its mounted trait instance, and how is that reference represented after compilation?
-2. **Modifier storage:** Which parts of the base value and contribution ledger are persisted as runtime state versus recomputed from the compiled composition?
-3. **Stacking:** How do additive, multiplicative, replacement, minimum, maximum, and conditional modifiers combine?
-4. **Suppression:** Does suppression target a path, a trait identity, a particular source contribution, or a selector?
-5. **Replacement:** What compatibility rules allow one trait to replace another at an existing path?
-6. **Multiple instances:** May the same trait be mounted more than once under different keys, and how are individual instances addressed?
-7. **Parameters:** How does a grant configure fields or parameters on the trait it adds without creating a new definition?
-8. **Collections:** When should repeated children be represented as named trait grants versus typed collections?
-9. **Selectors:** Should a future modifier support paths such as `self.speed.*.rate`, trait-identity selectors, or semantic tags?
-10. **Optional paths:** How should evaluation behave when a conditional or suppressed addition makes a previously valid path unavailable?
-11. **Negative composition precedence:** What deterministic policies govern replaces and suppresses when several releases contribute competing rules?
+- `this` is the contributing mounted trait instance and `self` is its root composition;
+- the same trait definition may have several mounted instances with stable, opaque instance IDs;
+- local modifiers materialize before cross-mount modifiers, and implemented operations use deterministic source ordering;
+- repeated trait children use typed collections with explicit counts and instance ordinals; and
+- exact repeated-mount access requires an explicit `all` or one-based `ordinal` selector, depending on whether the consumer returns many values or one scalar; and
+- compatible singular contributions retain a deterministic primary `sourceTraitId` plus every contributor in `sourceTraitIds`.
 
-The recursive completion and local/nested add milestones do not require speculative answers to all of these questions.
+The following decisions remain open or only partially resolved:
 
-## 12. Current implementation findings
+1. **Units:** The shared shape now preserves requiredness, defaults, numeric bounds, and enum choices. The canonical unit representation and conversion rules remain undecided.
+2. **Modifier storage:** Which base values and contribution-ledger entries are persisted versus recomputed from the compiled artifact remains a runtime persistence decision.
+3. **Advanced stacking:** Additive, multiplicative, and set operations are deterministic. Minimum, maximum, conditional, suppression, and replacement precedence are not designed.
+4. **Suppression and replacement:** Their target forms, compatibility rules, reversibility, and cross-release conflict behavior remain undefined.
+5. **Parameters:** A grant cannot yet configure fields on the trait instance it adds without creating another definition or supplying runtime instance values.
+6. **Broader selectors:** Wildcards, trait-identity selectors, semantic tags, and paths beyond one repeated segment followed by one direct field remain deferred.
+7. **Optional paths:** Runtime behavior for conditional or suppressed structure remains undefined.
 
-The grants authoring implementation is concentrated in:
+These decisions do not block the implemented exact-path recursive-composition slice.
 
-- `apps/frontend/components/guided-trait-grants-editor.tsx`;
-- `apps/frontend/components/rule-set-child-create-forms.tsx`; and
-- the rule definition resource types under `apps/frontend/lib`.
+## 12. Current implementation assessment
 
-Before this work, the relevant behavior was:
+This assessment was performed against the repository on 2026-07-25. It traces source, API, UI, and automated-test evidence; it does not treat a design statement as evidence of completion.
 
-- modifier paths are stored as ordered string segments and serialized as a dotted `field`;
-- path roots include `self`, `target`, and `owner`;
-- first-level completion is derived primarily from prerequisite trait definitions and named sibling trait grants;
-- trait grants are treated as navigable intermediates;
-- `grantGrantsFrom` deliberately excludes trait-valued grants from terminal property choices;
-- path completion after the first trait segment inspects only that matched definition's immediate non-trait grants;
-- terminal resolution searches the immediately identified trait rather than recursively walking mounted grants; and
-- a generic fallback aggregates terminal property names from all definitions, which can suggest a field without preserving its actual reachable path.
+Primary implementation surfaces are:
 
-As a result, a definition shaped like:
+- `packages/common/src/trait-shape.ts` — shared bounded recursive shape resolver;
+- `apps/frontend/components/guided-trait-grants-editor.tsx` — grants, modifier-path, nested-addition, collection, and shape-preview authoring;
+- `apps/frontend/lib/resolution-trait-paths.ts` and `guided-resolution-editor.tsx` — subject-contract-aware resolution path authoring;
+- `apps/backend/src/rules/traits/trait-composition.compiler.ts` — authoritative `trait-composition-artifact/1` compiler;
+- `apps/backend/src/rules/traits/trait-migration.ts` and the catalog/controller migration endpoints — `trait/1` preview and apply;
+- `apps/backend/src/rules/releases/rule-release.compiler.ts` — immutable publication and cross-metamodel validation; and
+- `apps/backend/src/rules/resolution` — activation, mounted instances, value modifiers, selectors, and path-addressed evaluation.
 
-```text
-self → speed → walk → rate
-```
+Status meanings:
 
-cannot be reliably completed when `Speed` grants `Walk` and `Walk` grants `rate`.
+- **Complete** — the design outcome is present in source and covered by automated tests.
+- **Core complete** — the executable semantic path is present, but one or more stated UX, schema, provenance, or test details remain.
+- **Partial** — a usable subset exists, but the design's canonical semantics are not yet fully represented.
+- **Deferred** — intentionally not implemented.
 
-The frontend now includes a framework-independent recursive resolver and guided authoring support that:
+| Design area | Status | Evidence and remaining gap |
+| --- | --- | --- |
+| Recursive shape resolver | Complete | The shared package recursively expands `trait/1` and `trait/2`, rebases `this`/`self`, intersects unresolved `any` prerequisites, validates typed collections, detects cycles and conflicts, and enforces depth/node budgets. Frontend resolver tests cover deep `Creature → Speed → Walk → rate`, collisions, cycles, collections, nested additions, and prerequisite modes. |
+| Recursive modifier completion | Phase B interaction coverage substantially complete | The grants editor walks arbitrary branch depth, filters terminal choices by operation, and no longer accepts free-form segments. Its index searches complete paths, breadcrumbs, placement keys, labels, stable IDs, types, and contributor labels, including direct collection-element fields. It reports invalid-structure, unmatched-search, and incompatible-branch empty states. Rendered tests now cover full-path keyboard selection, operation filtering, typed value controls, repeated selectors, ARIA listbox state, and empty-result announcements. Segment-by-segment pointer traversal and live browser layout verification remain. |
+| Terminal schema propagation | Core complete | Terminal kind, data type, requiredness, default, numeric bounds, enum choices, source trait, and collection contracts are shared and compiler-validated. Units remain for Phase C. |
+| Effective-shape preview | Phase B core complete | The editor renders prerequisite and draft-effective trees side by side, plus deterministic added/changed/removed semantic rows for nested additions and field-contract edits. Rendered component coverage verifies the nested-addition comparison and accessible change structure. Live browser and assistive-technology verification remain. |
+| Nested additions / `extends` | Complete for the initial contract | Guided authoring writes explicit `at` destinations, limits the parent picker to branches already guaranteed by prerequisites or additions, says “extends Parent with Trait as key,” updates the live shape, and receives backend collision/destination validation. `extends` deliberately does not infer a structural requirement. |
+| Authoritative backend compilation | Complete | NestJS validates source shape, exact modifier paths and amounts, collection contracts, cycles, conflicts, and budgets through the shared resolver, then emits a deterministic `trait-composition-artifact/1`. Catalog mutation gates and release compilation reject invalid source independently of the browser. |
+| Immutable publication | Complete | `rule-release/1` includes the source snapshot and compiled artifacts under a content hash. Publication rechecks catalog revisions and aborts concurrent changes. Deterministic reordering, invalid-path, normalized-die, complete-roll-trait, and concurrency cases are tested. |
+| `trait/1` compatibility and `trait/2` migration | Complete | Mixed catalogs compile; new guided source defaults to `trait/2`; preview normalizes placement and prerequisites and compares effective node meaning; apply requires `expectedUpdatedAt`, preserves stable identity, snapshots the old source, and leaves releases immutable. Both API and frontend review UI exist. |
+| Typed collections and counted traits | Complete for the initial slice | Acceptance by recursive prerequisite closure, positive literal counts, deterministic activation edges, per-entry mounted instances, and ordinal/all selectors are implemented. Expression counts and nested element paths remain deferred. |
+| Runtime activation and mounted instances | Complete for the documented initial slice | High-level roots expand through additions and deterministic prerequisites; ambiguous `any` choices require explicit instance-aware selections. Independent value bags, generated child IDs, activation chains, and provenance are implemented and exercised by backend tests. |
+| Exact value modifiers and path expressions | Core complete | Local and cross-mount `self`/`this` modifiers, deterministic ordering, before/after traces, ambiguity rejection, `trait-instance-field`, `trait-path-field`, and one-level repeated selectors execute. Compatible singular shape contributions retain all source IDs. Unit compatibility and deeper repeated paths remain. |
+| Semantic roll-result effects | Complete for the three initial operations | `add-dice`, `replace-result`, and `increase-result` retain die identity, origin, replacement links, priorities, purpose subtotals, activation source, and applicability. This is resolution behavior built on composition, not structural replacement/suppression. |
+| Structural suppression, replacement, wildcard selectors, and conditional structure | Deferred | No canonical algebra, authoring UI, compiler contract, or evaluator behavior exists. |
 
-- expands named traits and their prerequisites to arbitrary depth within explicit budgets;
-- drives modifier completion from paths that actually exist in the effective shape;
-- distinguishes trait branches, terminal fields, and typed repeatable trait collections;
-- validates collection compatibility through recursive prerequisite closure;
-- accepts positive whole-number contributions into inherited or locally declared collections;
-- authors nested additions using `extends` language and an explicit destination path;
-- reports cycles, missing references, path conflicts, invalid destinations, type mismatches, and invalid counts; and
-- previews effective structure, collection contents, and source provenance.
+The broader metamodel split remains:
 
-The resolver now lives in the shared framework-free package used by both Next.js and NestJS. NestJS wraps it with the versioned `trait-composition-artifact/1` compiler, validates exact modifier targets and amounts, and rejects invalid `trait/1` create, update, import, and snapshot-restore operations before persistence.
-
-Release publication persists the compiled trait artifact inside a canonical immutable `rule-release/1` manifest. The release also contains the exact source snapshot, dependency lock, engine-compatibility declaration, validation summary, compiler version, and SHA-256 content hash. Publication re-reads the catalog after compilation and aborts if a module or definition changed during the operation.
-
-There is also a broader metamodel split:
-
-- guided creature-capability definitions use closed semantic contracts such as `movement.walk.rate` and `perception.visual.maximumRange`;
+- guided creature-capability definitions use closed semantic contracts such as `movement.walk.rate` and `perception.visual.maximumRange`; and
 - the general grants editor emits an open-ended `trait/2` graph while the compiler retains `trait/1` compatibility.
 
-The implementation should reconcile these approaches around typed recursive paths rather than allowing browser-only grants semantics and backend capability semantics to drift independently.
+Future work should continue converging both approaches on shared typed recursive paths rather than introducing browser-only grants semantics.
 
-## 13. Implementation plan
+## 13. Phased remaining work
 
-Current implementation snapshot:
+Original Phases 0, 1, 5, and 6 are complete. Phases 2 and 3 are core-complete, Phase 4 is partial, and Phase 7 is partial. Remaining work should proceed in the following order.
 
-- Phases 0–6 are implemented, including recursive paths, preview, nested additions, shared compilation, publication validation, runtime trait instances, counted reusable traits, resolution path authoring, and non-destructive `trait/1` → `trait/2` migration.
-- Phase 7 is partially implemented: exact local/cross-mount modifiers, deterministic stacking, repeated ordinals, provenance, and ambiguity rejection are complete; units, suppression, replacement, and broader selectors remain.
+### Phase A: Close the guided-authoring contract
 
-### Phase 0: Characterize and lock the decisions
+Progress in the first implementation slice:
 
-1. Add executable fixtures for:
-   - Creature adding Speed and Senses;
-   - Speed adding Walk and Run;
-   - Walk exposing a numeric or movement-rate terminal;
-   - Winged adding Fly beneath Speed;
-   - a modifier targeting `self.speed.walk.rate`;
-   - direct and indirect grant cycles; and
-   - two incompatible additions at the same path.
-2. Decide the canonical `trait/2` names only after the fixtures express the desired outcomes.
-3. Document whether the first shipped implementation treats `extends` purely as UI language.
-4. Preserve the decisions in this document as acceptance criteria for implementation review.
+- `extends` is formally a nested add into an already-guaranteed parent branch;
+- the guided sentence now says “extends Parent with Trait as key”;
+- terminal requiredness, defaults, numeric bounds, and enum choices flow through the shared resolver and compiler validation;
+- trait value modifiers accept only the implemented `self` and `this` roots;
+- free-form modifier path segments are no longer accepted; and
+- the picker distinguishes invalid structure, unmatched search, and branches without compatible terminals;
+- complete-path search covers labels, placement keys, stable IDs, breadcrumbs, types, contributing IDs and labels, and direct repeated-collection fields; and
+- compatible singular contributions expose every source deterministically while retaining the backward-compatible primary source.
 
-Deliverable: reviewed fixtures and a versioned canonical schema proposal.
+Implementation status: semantic work complete. Focused pure tests cover the search index, operation filtering, repeated paths, terminal schemas, and multi-contributor provenance. Phase B subsequently added a Happy DOM rendered-component harness for the interaction contract.
 
-### Phase 1: Extract a shared recursive trait-shape resolver
+Deliverable: the guided editor expresses exactly the canonical contract that publication enforces, and every offered scope/path is meaningful.
 
-1. Move path discovery out of React component-local helpers into an application-owned, framework-independent module.
-2. Define resolver inputs:
-   - definitions indexed by stable identity;
-   - starting requirements or applied traits;
-   - current draft contributions;
-   - root scope;
-   - expansion budgets; and
-   - optional expected terminal type or modifier operation.
-3. Define resolver output as a typed tree or graph containing:
-   - path segments;
-   - branch versus terminal classification;
-   - terminal value schema;
-   - contributing definition identity;
-   - mount provenance;
-   - availability status; and
-   - diagnostics.
-4. Recursively follow trait grants at every depth.
-5. Rebase local `this` additions at each mount location.
-6. Detect missing references, invalid child placement, cycles, depth limits, and node-budget exhaustion.
-7. Make traversal deterministic by stable identity and placement key.
+### Remaining Phase B: Finish preview UX and UI verification
 
-Deliverable: a pure resolver with unit tests independent of React and Payload.
+Completed in the first Phase B slice:
 
-The resolver should ultimately be shared with or implemented behind the NestJS compiler boundary. The browser must not become the sole authority for composition semantics.
+- a real prerequisite-versus-draft effective-shape comparison with added, changed, and removed semantic rows;
+- responsive comparison layout using the established authoring surfaces and controls;
+- removal of the grants editor's remaining inline layout declarations;
+- a Happy DOM rendered-component harness using the real React component;
+- rendered coverage for full-path keyboard selection, operation filtering, number/text/Boolean/enum controls, repeated mount selectors, ARIA combobox/listbox state, and nested-addition diffs; and
+- a catalog-service acceptance fixture that authors the Creature/Speed/Walk/Fly/Winged/Boots definitions through backend validation and publishes the resulting immutable trait artifact.
 
-### Phase 2: Replace modifier completion with recursive completion
+Remaining:
 
-1. Replace `buildSegmentOptions`, `resolveNamedTraitGrantDef`, and `resolveTerminalGrant` behavior with queries against the typed recursive shape.
-2. Allow any number of branch selections before reaching a terminal.
-3. Keep branches visible when they contain compatible terminal descendants.
-4. Remove the generic all-definitions terminal fallback from the primary completion path.
-5. Filter terminal options by modifier operation and typed value compatibility.
-6. Show full breadcrumbs, field types, units, and contributing trait labels.
-7. Add explicit empty states:
-   - no structure is guaranteed;
-   - this branch has no compatible terminal fields;
-   - a referenced trait is missing; or
-   - recursive expansion is invalid.
-8. Preserve keyboard navigation and searchable selection.
+1. Extend rendered component tests for:
+   - arbitrary-depth mouse and keyboard selection;
+   - focus restoration after Escape and outside-pointer dismissal;
+   - accessible tree state and diagnostics with an assistive-technology audit; and
+   - segment-by-segment pointer traversal in addition to complete-path search.
+2. Verify the grants editor in a live authenticated authoring page at desktop and narrow widths.
+3. Add an HTTP/browser-level acceptance scenario that connects the rendered authoring flow to the catalog publish endpoint. The component and catalog-service halves are covered independently, but not yet in one browser-driven test.
 
-Deliverable: `self.speed.walk.rate` and similarly deep paths can be authored without manual segment entry.
+Deliverable: recursive composition is demonstrably usable and visually consistent, not only correct at resolver and compiler level.
 
-### Phase 3: Add effective-shape preview
+### Remaining Phase C: Add unit-aware value semantics
 
-1. Add a read-only tree preview to the trait grants editor.
-2. Show:
-   - local fields;
-   - recursively added traits;
-   - complete mounted paths;
-   - source trait for each node;
-   - draft additions not yet persisted; and
-   - conflicts or cycles inline.
-3. Add a diff view for traits that extend an existing required structure.
-4. Use the frontend's established dashboard, card, field, and action classes rather than introducing ad hoc page styling.
-5. Test the nearest analogous production authoring flows for responsive layout and keyboard accessibility.
+1. Define canonical unit identity, dimensions, display units, and conversion/normalization rules.
+2. Add units to authored numeric grants and the shared terminal schema.
+3. Validate modifier amount dimensions and normalize compatible units in the compiler.
+4. Preserve authored and normalized amounts in evaluator provenance.
+5. Add guided unit controls and incompatible-unit diagnostics.
+6. Test additive compatibility, multiplicative/divisive policy, conversion, and publication/runtime agreement.
 
-Deliverable: the GM can see the structure a trait produces before saving it.
+Deliverable: examples such as “+10 feet per turn” are executable typed rules rather than untyped numbers.
 
-### Phase 4: Author nested additions
+### Remaining Phase D: Design negative and advanced composition
 
-1. Extend the trait-grant sentence so the GM can choose:
-   - add locally; or
-   - add to an existing path on the holder.
-2. Present nested addition in natural language:
+1. Specify suppression and structural replacement targets, precedence, reversibility, and provenance before adding source syntax.
+2. Define cross-release conflict rules and semantic diff behavior.
+3. Implement compiler diagnostics and evaluator traces before guided controls.
+4. Add minimum, maximum, and conditional value modifiers only with deterministic stacking rules.
+5. Define optional-path behavior when a contribution becomes inactive.
 
-   ```text
-   Winged extends Self › Speed with Fly as "fly".
-   ```
+Deliverable: negative and advanced operations remain deterministic, attributable, and explainable.
 
-3. Compile `extends` to a nested add plus a structural requirement.
-4. Validate that the destination exists and is a trait branch.
-5. Detect path collisions before save.
-6. Preview the effective-shape diff immediately.
-7. Continue to use stable references internally even when the UI shows labels.
+### Remaining Phase E: Expand selectors only from proven use cases
 
-Deliverable: Winged can add Fly at `self.speed.fly` through guided authoring.
+1. Extend repeated selection beyond one repeated segment plus one direct field when a concrete rule requires it.
+2. Decide scalar versus collection result typing for deeper expression selectors.
+3. Evaluate trait-identity, semantic-tag, or wildcard selectors against explicit matching and ambiguity rules.
+4. Keep exact paths as the default authoring and evaluation model.
 
-### Phase 5: Backend validation and compilation
-
-Implementation status: complete. The shared resolver, deterministic compiler, source hash, diagnostics, authoring validation endpoint, catalog mutation gates, immutable release artifact, publication API, concurrency check, and GM-facing publish flow are implemented.
-
-1. Add the versioned recursive trait schema to the authoritative rule metamodel.
-2. Validate recursive grants, destinations, types, cycles, collision rules, and expansion budgets in NestJS or a shared compiler package.
-3. Normalize syntactic sugar such as local additions and `extends`.
-4. Produce an immutable compiled trait-shape artifact with stable hashes.
-5. Include source provenance for every mounted node and modifier target.
-6. Reject invalid drafts at publication even if a browser accepted them.
-7. Expose descriptors needed by the frontend rather than duplicating semantic rules in React.
-8. Add deterministic compiler and evaluator traces.
-
-Deliverable: browser and server agree on the same recursive effective shape.
-
-### Phase 6: Compatibility and migration
-
-Implementation status: complete. The compiler reads mixed `trait/1` and `trait/2` catalogs, new guided grants emit explicit `trait/2` placements, migration previews canonical source and effective-path changes, apply preserves stable identity and snapshots the old source, and published releases remain immutable.
-
-1. Read existing `trait/1` local trait grants as additions at `this.<key>`.
-2. Provide an explicit `trait/1` to `trait/2` source migration.
-3. Preserve stable trait references and placement keys.
-4. Diagnose missing or blank keys rather than inventing unstable placement from display names.
-5. Produce a semantic diff showing path changes before a rule-set release is upgraded.
-6. Keep published releases immutable; migration creates a new draft or release.
-7. Add round-trip tests for old source, migrated source, and compiled shape.
-
-Deliverable: existing authored traits remain understandable and can be upgraded without silent path changes.
-
-### Phase 7: Modifier composition follow-up
-
-Implementation status: exact local and cross-mount value modifiers, `self`/`this` anchoring, deterministic stacking, before/after provenance, and ambiguity rejection are implemented. Remaining work:
-
-1. Add unit-aware modifier validation.
-2. Design suppression and replacement as deterministic, attributable operations.
-3. Extend repeated selection beyond one direct collection-element field when a concrete use case requires it.
-4. Consider broader trait or wildcard selectors only after exact-path behavior is proven.
-
-Deliverable: modifiers remain explainable and reversible across composed traits.
+Deliverable: broader selection adds expressiveness without weakening exact-path safety.
 
 ## 14. Test plan
 
+Current verification on 2026-07-25:
+
+- `pnpm --filter @world-building/frontend test` passes 39 tests, including four Happy DOM rendered-component cases for complete-path keyboard selection, typed modifier controls, operation filtering, repeated selectors, ARIA state, and the effective-shape diff.
+- `pnpm --filter @world-building/backend test:rules` passes 56 tests after a clean backend build, including a catalog-validation-to-publication acceptance fixture for Creature/Speed/Walk/Fly/Winged/Boots.
+- These suites now prove the principal rendered grants-editor interactions and the backend author/publish boundary independently. They do not yet prove responsive layout in a live browser or one browser-driven flow spanning both boundaries.
+
 ### 14.1 Resolver unit tests
+
+Status: core cases, terminal-schema propagation, and compatible multi-source provenance are implemented and passing. Explicit depth-budget and node-budget cases remain to be added.
 
 - expands zero, one, and many nested trait levels;
 - rebases local grants under each mount;
@@ -1346,17 +1298,16 @@ Deliverable: modifiers remain explainable and reversible across composed traits.
 
 ### 14.2 Authoring UI tests
 
-- selecting Self, Speed, Walk, and Rate completes the full path;
-- searching "walk" returns the full reachable breadcrumb;
-- selecting a branch advances rather than prematurely closing the picker;
-- an unresolved branch displays a useful diagnostic instead of a blank list;
-- enum, Boolean, text, and numeric terminals render the appropriate value control;
-- changing the operation invalidates or filters incompatible terminals;
-- adding Fly beneath Speed updates the preview immediately;
-- keyboard-only navigation can traverse arbitrary depth; and
-- accessible labels describe both branch and terminal options.
+Status: principal component interactions are implemented and passing in Happy DOM. Live-browser visual verification and the following interaction edges remain:
+
+- segment-by-segment pointer selection advances through Self, Speed, Walk, and Rate;
+- Escape and outside-pointer dismissal restore focus predictably;
+- the recursive preview tree is audited with a screen reader; and
+- desktop and narrow-width layouts are verified in the authenticated production page.
 
 ### 14.3 Compiler tests
+
+Status: the listed canonicalization, application, provenance, collision, cycle, migration, and framework-independent compilation behaviors are covered across the frontend and backend suites. Unit-aware compilation and a dedicated end-to-end public-boundary fixture remain.
 
 - local additions normalize to explicit mounted additions;
 - nested additions require a valid destination branch;
@@ -1369,7 +1320,7 @@ Deliverable: modifiers remain explainable and reversible across composed traits.
 
 ### 14.4 Acceptance scenario
 
-The milestone is accepted when a GM can:
+The resolver/compiler behavior is covered across unit tests. A rendered component fixture proves path selection and nested preview behavior, and a catalog-service fixture authors and publishes the complete contract. The milestone is not fully closed until one browser-driven HTTP integration test proves the combined flow that a GM can:
 
 1. define Walk with a typed `rate`;
 2. define Speed that adds Walk as `walk`;
@@ -1403,11 +1354,12 @@ The accepted direction is:
 - keep **trait** as the primary reusable abstraction;
 - permit traits to add fields and other traits recursively without a fixed depth;
 - use **adds** as the precise compositional verb;
-- use **extends** as GM-friendly language for a nested add, initially compiled to `requires` plus `adds`;
+- use **extends** as GM-friendly language for a nested add into a parent branch already guaranteed by prerequisites or earlier additions;
 - allow a high-level trait such as Creature to establish the foundational shape of a compendium entry;
 - derive runtime paths from explicit named placement, not definition IDs or catalog organization;
 - drive completions from the recursively expanded structure guaranteed by requirements and current draft additions;
 - support exact, typed modifier targets such as `self.speed.walk.rate`;
 - preserve provenance and reject ambiguous collisions;
-- defer replacement, suppression, wildcard selection, and detailed local-modifier semantics until the recursive structural model is proven; and
+- evaluate exact local and cross-mount modifiers with deterministic ordering and before/after provenance;
+- defer replacement, suppression, wildcard selection, and conditional structure until their deterministic semantics are designed; and
 - make the backend compiler, not the React editor, authoritative for published composition semantics.

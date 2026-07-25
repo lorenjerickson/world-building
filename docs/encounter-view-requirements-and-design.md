@@ -1,3 +1,11 @@
+---
+title: "Encounter View: Business Requirements and Technical Design"
+created: "2026-01-01"
+last_updated: "2026-07-25"
+completion_status: in-progress
+disposition: draft
+---
+
 # Encounter View: Business Requirements and Technical Design
 
 | Field | Value |
@@ -534,7 +542,9 @@ Implementing these records is a Payload model change and therefore requires a ch
 | `EncounterEvent` | existing session ordering fields plus encounter instance, cycle, visibility classification, command ID |
 | `EncounterSnapshot` | instanceId, through sequence/cycle, resumable projection, map revision checksum, createdAt |
 
-These are mutable runtime/coordination records and must not be stored in Payload. Use checked-in TypeORM migrations with `synchronize: false` when implemented.
+These are mutable runtime/coordination records and must not be stored in
+Payload. Model them in Prisma and ship every schema change as a checked-in
+Prisma migration applied with `prisma migrate deploy`.
 
 ## 18. API and realtime contracts
 

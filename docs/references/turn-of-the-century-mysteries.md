@@ -1,3 +1,11 @@
+---
+title: "Turn-of-the-Century Mysteries"
+created: "2026-01-01"
+last_updated: "2026-07-25"
+completion_status: unknown
+disposition: unknown
+---
+
 During the late Victorian and Edwardian eras, rapid scientific progress coexisted with a deep public obsession with the occult, spiritualism, and gothic dread. Several real-world events, disappearances, and phenomena from this period captured the public imagination as genuinely unsettling or unexplained.
 ## 1900: The Flannan Isles Disappearance
 
