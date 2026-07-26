@@ -73,18 +73,64 @@ function validateExpression(value: unknown, path: string, diagnostics: Resolutio
       add(diagnostics, 'RULE_EXPRESSION_TRAIT_PATH_INVALID', `${path}.path`, "Trait paths must begin with 'self' and contain valid named segments.");
       valid = false;
     }
-    if (repeated.length > 1 || (repeated.length === 1 && !segments.at(-2)?.endsWith('[]'))) {
-      add(diagnostics, 'RULE_EXPRESSION_TRAIT_PATH_INVALID', `${path}.path`, 'Trait-path expressions support at most one [] segment followed by one direct field.');
-      valid = false;
-    }
-    if (repeated.length && (!record(value.mountSelector)
-      || value.mountSelector.mode !== 'ordinal'
-      || !Number.isInteger(value.mountSelector.ordinal)
-      || Number(value.mountSelector.ordinal) < 1)) {
-      add(diagnostics, 'RULE_EXPRESSION_TRAIT_PATH_SELECTOR_REQUIRED', `${path}.mountSelector`, 'Repeated trait paths require a positive ordinal selector.');
-      valid = false;
-    } else if (!repeated.length && value.mountSelector !== undefined) {
-      add(diagnostics, 'RULE_EXPRESSION_TRAIT_PATH_SELECTOR_UNUSED', `${path}.mountSelector`, 'Ordinal selectors require a repeated [] path segment.');
+    const validateSelector = (selector: unknown, selectorPath: string): boolean => {
+      if (!record(selector)) {
+        add(diagnostics, 'RULE_EXPRESSION_TRAIT_PATH_SELECTOR_INVALID', selectorPath, 'A scalar path selector must be an object.');
+        return false;
+      }
+      if (selector.mode === 'ordinal') {
+        if (!Number.isInteger(selector.ordinal) || Number(selector.ordinal) < 1) {
+          add(diagnostics, 'RULE_EXPRESSION_TRAIT_PATH_SELECTOR_INVALID', `${selectorPath}.ordinal`, 'Ordinal selectors require a positive whole number.');
+          return false;
+        }
+        return true;
+      }
+      if (selector.mode === 'trait') {
+        if (typeof selector.traitId !== 'string' || !selector.traitId.trim()) {
+          add(diagnostics, 'RULE_EXPRESSION_TRAIT_PATH_SELECTOR_INVALID', `${selectorPath}.traitId`, 'Trait selectors require a stable trait identity.');
+          return false;
+        }
+        return true;
+      }
+      if (selector.mode === 'tag') {
+        if (typeof selector.tag !== 'string' || !selector.tag.trim()) {
+          add(diagnostics, 'RULE_EXPRESSION_TRAIT_PATH_SELECTOR_INVALID', `${selectorPath}.tag`, 'Semantic-tag selectors require a non-empty tag.');
+          return false;
+        }
+        return true;
+      }
+      if (selector.mode === 'all' || selector.mode === 'wildcard') {
+        add(diagnostics, 'RULE_EXPRESSION_TRAIT_PATH_SELECTOR_COLLECTION_RESULT_INVALID', `${selectorPath}.mode`, 'Scalar trait fields must select one collection entry; use a collection-valued operation for all entries.');
+        return false;
+      }
+      add(diagnostics, 'RULE_EXPRESSION_TRAIT_PATH_SELECTOR_INVALID', `${selectorPath}.mode`, 'Scalar paths support ordinal, trait-identity, or semantic-tag selectors; wildcard results are collections.');
+      return false;
+    };
+    if (repeated.length) {
+      if (value.mountSelector !== undefined && value.mountSelectors !== undefined) {
+        add(diagnostics, 'RULE_EXPRESSION_TRAIT_PATH_SELECTOR_AMBIGUOUS', `${path}.mountSelectors`, 'Use either mountSelector or mountSelectors, not both.');
+        valid = false;
+      } else if (value.mountSelector !== undefined) {
+        if (repeated.length !== 1 || !validateSelector(value.mountSelector, `${path}.mountSelector`)) valid = false;
+      } else if (!Array.isArray(value.mountSelectors) || value.mountSelectors.length !== repeated.length) {
+        add(
+          diagnostics,
+          repeated.length === 1
+            ? 'RULE_EXPRESSION_TRAIT_PATH_SELECTOR_REQUIRED'
+            : 'RULE_EXPRESSION_TRAIT_PATH_SELECTORS_REQUIRED',
+          repeated.length === 1 ? `${path}.mountSelector` : `${path}.mountSelectors`,
+          repeated.length === 1
+            ? 'A repeated trait path requires one scalar mount selector.'
+            : `A scalar path with ${repeated.length} repeated segments requires ${repeated.length} ordered selectors.`,
+        );
+        valid = false;
+      } else {
+        value.mountSelectors.forEach((selector, index) => {
+          if (!validateSelector(selector, `${path}.mountSelectors[${index}]`)) valid = false;
+        });
+      }
+    } else if (value.mountSelector !== undefined || value.mountSelectors !== undefined) {
+      add(diagnostics, 'RULE_EXPRESSION_TRAIT_PATH_SELECTOR_UNUSED', `${path}.mountSelectors`, 'Selectors require a repeated [] path segment.');
       valid = false;
     }
     return valid;

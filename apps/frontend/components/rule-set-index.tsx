@@ -2,14 +2,13 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { RuleSetCreateForm } from './rule-set-create-form';
+import { AppBreadcrumbs } from './app-breadcrumbs';
 import { DeleteArtifactButton } from './delete-artifact-button';
 import { deleteRuleSet, listRuleSets, RuleSetApiError, RuleSetResource } from '@/lib/rule-sets';
 
 export function RuleSetIndex() {
   const [ruleSets, setRuleSets] = useState<RuleSetResource[]>([]);
   const [loading, setLoading] = useState(true);
-  const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string>();
 
   useEffect(() => {
@@ -26,15 +25,11 @@ export function RuleSetIndex() {
 
   return (
     <main className="dashboard-container">
+      <AppBreadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Rule sets' }]} />
       <header className="dashboard-header">
         <div className="header-left"><span className="eyebrow">Gameplay foundations</span><h2>Your rule sets</h2></div>
-        <div className="section-actions"><Link href="/dashboard" className="secondary-action">Back to dashboard</Link><button className="primary-action" onClick={() => setCreating((value) => !value)}>{creating ? 'Close creator' : 'New rule set'}</button></div>
+        <div className="section-actions"><Link href="/rule-sets/new" className="primary-action">New rule set</Link></div>
       </header>
-      {creating && <section className="card-surface rule-set-index-creator"><RuleSetCreateForm onCancel={() => setCreating(false)} onCreated={(created) => {
-        setRuleSets((items) => [created, ...items]);
-        setCreating(false);
-        setError(undefined);
-      }} /></section>}
       {error && <p className="rule-set-notice error" role="alert">{error}</p>}
       <section className="rule-set-card-grid" aria-busy={loading}>
         {loading ? <div className="card-surface recent-empty"><p>Loading your rule sets…</p></div> : ruleSets.map((ruleSet) => (

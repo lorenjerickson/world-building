@@ -17,30 +17,39 @@ export class RuleDefinitionSnapshotService {
     actorId: string;
     reason: 'autosave' | 'manual' | 'restore' | 'import';
   }): Promise<void> {
-    await this.prisma.ruleDefinitionSnapshot.create({
-      data: {
-        actorId: input.actorId,
-        body: input.body as any,
-        definitionExternalId: input.definitionExternalId,
-        definitionId: input.definitionId,
-        name: input.name,
-        reason: input.reason,
-        ruleSetId: input.ruleSetId,
-      },
-    });
+    await this.prisma.$transaction(async (transaction) => {
+      // Definition IDs are globally stable Payload IDs. The transaction-scoped
+      // lock serializes capture/prune operations for one definition so
+      // concurrent autosaves cannot exceed the retention limit.
+      await transaction.$queryRaw`
+        SELECT true AS "locked"
+        FROM pg_advisory_xact_lock(${BigInt(input.definitionId)})
+      `;
 
-    const oldest = await this.prisma.ruleDefinitionSnapshot.findMany({
-      where: { definitionId: input.definitionId },
-      orderBy: { createdAt: 'desc' },
-      skip: MAX_SNAPSHOTS_PER_DEFINITION,
-      take: 1000,
-      select: { id: true },
-    });
-    if (oldest.length > 0) {
-      await this.prisma.ruleDefinitionSnapshot.deleteMany({
-        where: { id: { in: oldest.map((s) => s.id) } },
+      await transaction.ruleDefinitionSnapshot.create({
+        data: {
+          actorId: input.actorId,
+          body: input.body as any,
+          definitionExternalId: input.definitionExternalId,
+          definitionId: input.definitionId,
+          name: input.name,
+          reason: input.reason,
+          ruleSetId: input.ruleSetId,
+        },
       });
-    }
+
+      const oldest = await transaction.ruleDefinitionSnapshot.findMany({
+        where: { definitionId: input.definitionId },
+        orderBy: { createdAt: 'desc' },
+        skip: MAX_SNAPSHOTS_PER_DEFINITION,
+        select: { id: true },
+      });
+      if (oldest.length > 0) {
+        await transaction.ruleDefinitionSnapshot.deleteMany({
+          where: { id: { in: oldest.map((snapshot) => snapshot.id) } },
+        });
+      }
+    });
   }
 
   async list(ruleSetId: number, definitionId: number): Promise<RuleDefinitionSnapshotResource[]> {

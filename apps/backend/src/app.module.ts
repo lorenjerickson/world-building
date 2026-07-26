@@ -10,6 +10,7 @@ import { CmsModule } from './cms/cms.module';
 import { RulesModule } from './rules/rules.module';
 import { EncountersModule } from './encounters/encounters.module';
 import { RealtimeModule } from './realtime/realtime.module';
+import { SearchModule } from './search/search.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { RealtimeModule } from './realtime/realtime.module';
     RulesModule,
     EncountersModule,
     RealtimeModule,
+    SearchModule,
   ],
   controllers: [AppController, UploadsController, CharacterArtController],
   providers: [AppService],

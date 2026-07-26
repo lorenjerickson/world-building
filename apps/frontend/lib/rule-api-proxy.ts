@@ -98,3 +98,7 @@ export function proxyRuleAuthoringApi(request: Request, segments: string[] = [])
 export function proxyEncounterApi(request: Request, segments: string[] = []): Promise<NextResponse> {
   return proxyAuthenticatedRuleApi(request, 'encounters', segments);
 }
+
+export function proxySearchApi(request: Request, segments: string[] = []): Promise<NextResponse> {
+  return proxyAuthenticatedRuleApi(request, 'search', segments);
+}

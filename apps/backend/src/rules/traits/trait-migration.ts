@@ -1,4 +1,8 @@
-import { buildTraitShape, type TraitShapeNode } from '@world-building/common';
+import {
+  buildTraitShape,
+  selectTraitDefinitionScope,
+  type TraitShapeNode,
+} from '@world-building/common';
 import {
   LEGACY_TRAIT_COMPOSITION_METAMODEL_VERSION,
   TRAIT_COMPOSITION_METAMODEL_VERSION,
@@ -150,13 +154,23 @@ export function previewTraitDefinitionMigration(
   catalogDefinitions: TraitCompositionSourceDefinition[],
 ): TraitMigrationPreview {
   const migration = migrateTraitBody(definition.body);
-  if (!migration.valid || !migration.migratedBody) return migration;
+  const migrationDiagnostics = migration.diagnostics.map((diagnostic) => ({
+    ...diagnostic,
+    definitionExternalId: definition.externalId,
+    definitionName: definition.name,
+  }));
+  if (!migration.valid || !migration.migratedBody) {
+    return { ...migration, diagnostics: migrationDiagnostics };
+  }
   const sourceDefinitions = catalogDefinitions.map((candidate) => structuredClone(candidate));
   const migratedDefinitions = sourceDefinitions.map((candidate) =>
     candidate.externalId === definition.externalId
       ? { ...candidate, body: migration.migratedBody! }
       : candidate);
-  const compilation = compileTraitCompositions(migratedDefinitions);
+  const compilation = compileTraitCompositions(selectTraitDefinitionScope(
+    migratedDefinitions,
+    [definition.externalId],
+  ));
   const pathChanges = comparePaths(
     semanticPaths(definition, sourceDefinitions),
     semanticPaths(
@@ -164,7 +178,7 @@ export function previewTraitDefinitionMigration(
       migratedDefinitions,
     ),
   );
-  const diagnostics = [...migration.diagnostics, ...compilation.diagnostics];
+  const diagnostics = [...migrationDiagnostics, ...compilation.diagnostics];
   if (pathChanges.length) {
     diagnostics.push({
       code: 'RULE_TRAIT_MIGRATION_SEMANTIC_CHANGE',

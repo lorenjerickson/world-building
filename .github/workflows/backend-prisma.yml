@@ -1,0 +1,68 @@
+name: Backend Prisma release verification
+
+on:
+  pull_request:
+    paths:
+      - "apps/backend/**"
+      - "packages/common/**"
+      - "docker-compose.yml"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "turbo.json"
+      - ".github/workflows/backend-prisma.yml"
+  push:
+    branches: [main]
+    paths:
+      - "apps/backend/**"
+      - "packages/common/**"
+      - "docker-compose.yml"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "turbo.json"
+      - ".github/workflows/backend-prisma.yml"
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: worldbuilder
+          POSTGRES_PASSWORD: backend-ci-database-password
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U worldbuilder -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PRISMA_RELEASE_DATABASE_URL: postgresql://worldbuilder:backend-ci-database-password@127.0.0.1:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.13.1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Prepare non-secret Compose configuration
+        run: |
+          cp apps/backend/.env.example apps/backend/.env
+          cp apps/frontend/.env.local.example apps/frontend/.env.local
+          cp apps/cms/.env.example apps/cms/.env
+
+      - name: Run backend Prisma release verification
+        run: pnpm verify:backend-release

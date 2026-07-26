@@ -14,6 +14,10 @@
     "lib/resolution-expression.test.ts",
     "lib/resolution-trait-paths.ts",
     "lib/resolution-trait-paths.test.ts",
+    "lib/trait-modifier-paths.ts",
+    "lib/trait-modifier-paths.test.ts",
+    "lib/trait-shape-diff.ts",
+    "lib/trait-shape-diff.test.ts",
     "lib/trait-shape.ts",
     "lib/trait-shape.test.ts"
   ]

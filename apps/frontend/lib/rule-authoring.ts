@@ -3,6 +3,9 @@ export type AuthoringDiagnostic = {
   message: string;
   path: string;
   severity: 'error' | 'warning';
+  definitionExternalId?: string;
+  definitionName?: string;
+  grantIndex?: number;
 };
 
 export type RuleAuthoringValidation = {

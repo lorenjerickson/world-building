@@ -1,8 +1,10 @@
 export {
   buildTraitShape,
   resolveTraitShapeTerminal,
+  selectTraitDefinitionScope,
   traitSatisfiesCollection,
   traitShapeChildren,
+  traitShapeTerminalPaths,
 } from '@world-building/common/trait-shape';
 export type {
   BuildTraitShapeInput,
@@ -12,4 +14,5 @@ export type {
   TraitShapeDiagnostic,
   TraitShapeGrant,
   TraitShapeNode,
+  TraitShapeTerminalPath,
 } from '@world-building/common/trait-shape';

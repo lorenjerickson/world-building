@@ -1,3 +1,5 @@
+import type { CanonicalUnitId } from './units';
+
 export type TraitGrantDataType =
   | 'text'
   | 'number'
@@ -7,6 +9,8 @@ export type TraitGrantDataType =
   | 'extends'
   | 'trait-collection'
   | 'modifier'
+  | 'suppression'
+  | 'replacement'
   | 'slot'
   | 'slot-affinity';
 
@@ -14,6 +18,11 @@ export type TraitShapeGrant = {
   key?: string;
   label?: string;
   dataType: TraitGrantDataType;
+  required?: boolean;
+  min?: number;
+  max?: number;
+  unit?: CanonicalUnitId;
+  default?: string | number | boolean;
   ref?: string;
   allowedValues?: string[];
   acceptedTraits?: string[];
@@ -37,14 +46,21 @@ export type TraitShapeNode =
     label: string;
     traitId: string;
     sourceTraitId?: string;
+    sourceTraitIds?: string[];
   }
   | {
     kind: 'terminal';
     path: string[];
     label: string;
-    dataType: Exclude<TraitGrantDataType, 'trait' | 'trait-collection'>;
+    dataType: Exclude<TraitGrantDataType, 'trait' | 'extends' | 'trait-collection'>;
+    required?: boolean;
+    min?: number;
+    max?: number;
+    unit?: CanonicalUnitId;
+    default?: string | number | boolean;
     allowedValues?: string[];
     sourceTraitId?: string;
+    sourceTraitIds?: string[];
   }
   | {
     kind: 'collection';
@@ -58,6 +74,7 @@ export type TraitShapeNode =
       sourceTraitId?: string;
     }>;
     sourceTraitId?: string;
+    sourceTraitIds?: string[];
   };
 
 export type TraitShapeDiagnostic = {
@@ -77,6 +94,12 @@ export type TraitShapeDiagnostic = {
 export type TraitShape = {
   nodes: TraitShapeNode[];
   diagnostics: TraitShapeDiagnostic[];
+};
+
+export type TraitShapeTerminalPath = {
+  path: string[];
+  terminal: Extract<TraitShapeNode, { kind: 'terminal' }>;
+  repeatedCollectionPaths: string[][];
 };
 
 export type BuildTraitShapeInput = {
@@ -101,16 +124,91 @@ function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+function referencedTraitIds(definition: TraitShapeDefinition): string[] {
+  const references: string[] = [];
+  const prerequisites = definition.body.prerequisites;
+  if (Array.isArray(prerequisites)) {
+    references.push(...prerequisites.filter((value): value is string => typeof value === 'string'));
+  } else if (record(prerequisites) && Array.isArray(prerequisites.ids)) {
+    references.push(...prerequisites.ids.filter((value): value is string => typeof value === 'string'));
+  }
+  if (Array.isArray(definition.body.grants)) {
+    for (const value of definition.body.grants) {
+      if (!record(value)) continue;
+      if (typeof value.ref === 'string'
+        && ['trait', 'extends', 'replacement'].includes(String(value.dataType))) {
+        references.push(value.ref);
+      }
+      if (typeof value.requiresTraitId === 'string') references.push(value.requiresTraitId);
+      if (Array.isArray(value.acceptedTraits)) {
+        references.push(...value.acceptedTraits.filter((traitId): traitId is string =>
+          typeof traitId === 'string'));
+      }
+    }
+  }
+  return [...new Set(references.filter(Boolean))];
+}
+
+/**
+ * Selects the smallest catalog slice needed to validate one or more traits.
+ * With dependents enabled, consumers of the changed roots are included before
+ * their own dependencies are expanded. Unrelated invalid drafts stay outside
+ * incremental authoring while whole-catalog publication remains authoritative.
+ */
+export function selectTraitDefinitionScope<T extends TraitShapeDefinition>(
+  definitions: T[],
+  rootTraitIds: string[],
+  includeDependents = false,
+): T[] {
+  const definitionsById = new Map(definitions.map((definition) => [definition.externalId, definition]));
+  const referencesById = new Map(definitions.map((definition) => [
+    definition.externalId,
+    referencedTraitIds(definition),
+  ]));
+  const affected = new Set(rootTraitIds.filter((traitId) => definitionsById.has(traitId)));
+  if (includeDependents) {
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const definition of definitions) {
+        if (affected.has(definition.externalId)) continue;
+        if ((referencesById.get(definition.externalId) ?? []).some((traitId) => affected.has(traitId))) {
+          affected.add(definition.externalId);
+          changed = true;
+        }
+      }
+    }
+  }
+  const required = new Set(affected);
+  const queue = [...affected];
+  while (queue.length) {
+    const traitId = queue.shift()!;
+    for (const reference of referencesById.get(traitId) ?? []) {
+      if (!definitionsById.has(reference) || required.has(reference)) continue;
+      required.add(reference);
+      queue.push(reference);
+    }
+  }
+  return definitions.filter((definition) => required.has(definition.externalId));
+}
+
 function grantsFromBody(body: Record<string, unknown>): TraitShapeGrant[] {
   if (!['trait/1', 'trait/2'].includes(String(body.metamodelVersion)) || !Array.isArray(body.grants)) return [];
   return body.grants.filter(record).flatMap((grant) => {
     if (typeof grant.dataType !== 'string') return [];
     const dataType = grant.dataType as TraitGrantDataType;
-    if (!['text', 'number', 'boolean', 'enum', 'trait', 'extends', 'trait-collection', 'modifier', 'slot', 'slot-affinity'].includes(dataType)) return [];
+    if (!['text', 'number', 'boolean', 'enum', 'trait', 'extends', 'trait-collection', 'modifier', 'suppression', 'replacement', 'slot', 'slot-affinity'].includes(dataType)) return [];
     return [{
       dataType,
       ...(typeof grant.key === 'string' ? { key: grant.key } : {}),
       ...(typeof grant.label === 'string' ? { label: grant.label } : {}),
+      ...(typeof grant.required === 'boolean' ? { required: grant.required } : {}),
+      ...(typeof grant.min === 'number' ? { min: grant.min } : {}),
+      ...(typeof grant.max === 'number' ? { max: grant.max } : {}),
+      ...(typeof grant.unit === 'string' ? { unit: grant.unit as CanonicalUnitId } : {}),
+      ...(['string', 'number', 'boolean'].includes(typeof grant.default)
+        ? { default: grant.default as string | number | boolean }
+        : {}),
       ...(typeof grant.ref === 'string' ? { ref: grant.ref } : {}),
       ...(typeof grant.into === 'string' ? { into: grant.into } : {}),
       ...(typeof grant.at === 'string' ? { at: grant.at } : {}),
@@ -141,7 +239,30 @@ function sameNode(left: TraitShapeNode, right: TraitShapeNode): boolean {
   return left.kind === 'terminal'
     && right.kind === 'terminal'
     && left.dataType === right.dataType
+    && (left.required ?? false) === (right.required ?? false)
+    && left.min === right.min
+    && left.max === right.max
+    && left.unit === right.unit
+    && left.default === right.default
     && JSON.stringify(left.allowedValues ?? []) === JSON.stringify(right.allowedValues ?? []);
+}
+
+function sourceTraitIds(node: TraitShapeNode): string[] {
+  return [...new Set([
+    ...(node.sourceTraitIds ?? []),
+    ...(node.sourceTraitId ? [node.sourceTraitId] : []),
+  ])].sort();
+}
+
+function mergeNodeSources(target: TraitShapeNode, contribution: TraitShapeNode): void {
+  const sources = [...new Set([
+    ...sourceTraitIds(target),
+    ...sourceTraitIds(contribution),
+  ])].sort();
+  if (!sources.length) return;
+  target.sourceTraitId = sources[0];
+  if (sources.length > 1) target.sourceTraitIds = sources;
+  else delete target.sourceTraitIds;
 }
 
 function addNode(shape: MutableShape, node: TraitShapeNode, maximumNodes: number): boolean {
@@ -149,6 +270,7 @@ function addNode(shape: MutableShape, node: TraitShapeNode, maximumNodes: number
   const existing = shape.nodesByPath.get(key);
   if (existing) {
     if (existing.kind === 'collection' && node.kind === 'collection' && sameNode(existing, node)) {
+      mergeNodeSources(existing, node);
       for (const entry of node.entries) {
         const matching = existing.entries.find((candidate) =>
           candidate.traitId === entry.traitId
@@ -158,7 +280,9 @@ function addNode(shape: MutableShape, node: TraitShapeNode, maximumNodes: number
       }
       return true;
     }
-    if (!sameNode(existing, node)) {
+    if (sameNode(existing, node)) {
+      mergeNodeSources(existing, node);
+    } else {
       shape.diagnostics.push({
         code: 'path-conflict',
         path: node.path,
@@ -225,6 +349,71 @@ export function traitSatisfiesCollection(
   return acceptsMode === 'all'
     ? acceptedTraitIds.every((acceptedId) => closure.has(acceptedId))
     : acceptedTraitIds.some((acceptedId) => closure.has(acceptedId));
+}
+
+/**
+ * Enumerates every terminal reachable through a guaranteed shape, including
+ * terminals nested through multiple accepted trait collections. Each
+ * collection segment is marked with [] and reported as an ordered prefix so
+ * authored selectors can map one-to-one to repeated mounts.
+ */
+export function traitShapeTerminalPaths(
+  shape: TraitShape,
+  definitions: TraitShapeDefinition[],
+  maximumRepeatedDepth = 8,
+): TraitShapeTerminalPath[] {
+  const results: TraitShapeTerminalPath[] = shape.nodes
+    .filter((node): node is Extract<TraitShapeNode, { kind: 'terminal' }> =>
+      node.kind === 'terminal')
+    .map((terminal) => ({
+      path: [...terminal.path],
+      terminal,
+      repeatedCollectionPaths: [],
+    }));
+  const visitCollections = (
+    currentShape: TraitShape,
+    prefix: string[],
+    repeatedPrefixes: string[][],
+    depth: number,
+  ): void => {
+    if (depth >= maximumRepeatedDepth) return;
+    for (const collection of currentShape.nodes) {
+      if (collection.kind !== 'collection' || !collection.acceptedTraitIds.length) continue;
+      const repeatedPath = [
+        ...prefix,
+        ...collection.path.slice(0, -1),
+        `${collection.path.at(-1)!}[]`,
+      ];
+      const elementShape = buildTraitShape({
+        definitions,
+        prerequisiteIds: collection.acceptedTraitIds,
+        prerequisiteMode: collection.acceptsMode,
+      });
+      const nextRepeatedPrefixes = [...repeatedPrefixes, repeatedPath];
+      for (const terminal of elementShape.nodes) {
+        if (terminal.kind !== 'terminal') continue;
+        results.push({
+          path: [...repeatedPath, ...terminal.path],
+          terminal,
+          repeatedCollectionPaths: nextRepeatedPrefixes.map((path) => [...path]),
+        });
+      }
+      visitCollections(
+        elementShape,
+        repeatedPath,
+        nextRepeatedPrefixes,
+        depth + 1,
+      );
+    }
+  };
+  visitCollections(shape, [], [], 0);
+  const unique = new Map<string, TraitShapeTerminalPath>();
+  for (const result of results) {
+    const key = result.path.join('.');
+    if (!unique.has(key)) unique.set(key, result);
+  }
+  return [...unique.values()].sort((left, right) =>
+    left.path.join('.').localeCompare(right.path.join('.')));
 }
 
 function normalizedCollectionPath(into: string, mountPath: string[]): string[] {
@@ -404,12 +593,20 @@ function expandGrants(
     }
 
     if (grant.dataType !== 'trait') {
-      if (grant.dataType === 'modifier') continue;
+      if (grant.dataType === 'modifier'
+        || grant.dataType === 'suppression'
+        || grant.dataType === 'replacement'
+        || grant.dataType === 'extends') continue;
       addNode(shape, {
         kind: 'terminal',
         path,
         label: grant.label?.trim() || segment,
         dataType: grant.dataType,
+        ...(grant.required !== undefined ? { required: grant.required } : {}),
+        ...(grant.min !== undefined ? { min: grant.min } : {}),
+        ...(grant.max !== undefined ? { max: grant.max } : {}),
+        ...(grant.unit !== undefined ? { unit: grant.unit } : {}),
+        ...(grant.default !== undefined ? { default: grant.default } : {}),
         allowedValues: grant.allowedValues,
         sourceTraitId,
       }, maximumNodes);
@@ -597,8 +794,17 @@ function intersectShapes(shapes: MutableShape[]): MutableShape {
     nodesByPath: new Map([...shapes[0].nodesByPath].map(([key, node]) => [
       key,
       node.kind === 'collection'
-        ? { ...node, acceptedTraitIds: [...node.acceptedTraitIds], entries: node.entries.map((entry) => ({ ...entry })) }
-        : { ...node, path: [...node.path] },
+        ? {
+          ...node,
+          acceptedTraitIds: [...node.acceptedTraitIds],
+          entries: node.entries.map((entry) => ({ ...entry })),
+          ...(node.sourceTraitIds ? { sourceTraitIds: [...node.sourceTraitIds] } : {}),
+        }
+        : {
+          ...node,
+          path: [...node.path],
+          ...(node.sourceTraitIds ? { sourceTraitIds: [...node.sourceTraitIds] } : {}),
+        },
     ])),
     diagnostics: shapes.flatMap((shape) => shape.diagnostics),
   };
@@ -609,6 +815,9 @@ function intersectShapes(shapes: MutableShape[]): MutableShape {
     })) {
       result.nodesByPath.delete(key);
       continue;
+    }
+    for (const candidate of candidates) {
+      if (candidate) mergeNodeSources(node, candidate);
     }
     if (node.kind === 'collection') {
       node.entries = node.entries.flatMap((entry) => {

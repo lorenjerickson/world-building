@@ -7,9 +7,10 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "test": "pnpm --filter @world-building/common build && tsc -p tsconfig.test.json && node --test .next/trait-tests/*.test.js"
+    "test": "pnpm --filter @world-building/common build && tsc -p tsconfig.test.json && tsc -p tsconfig.component-test.json && node --test .next/trait-tests/*.test.js .next/trait-component-tests/components/*.test.js"
   },
   "dependencies": {
+    "@3d-dice/dice-box": "^1.1.4",
     "@auth0/nextjs-auth0": "^3.8.0",
     "@mdxeditor/editor": "^4.0.4",
     "@react-three/drei": "^10.7.7",
@@ -29,6 +30,7 @@
     "daisyui": "^4.7.2",
     "eslint": "9.39.4",
     "eslint-config-next": "16.2.10",
+    "happy-dom": "20.11.0",
     "postcss": "^8.4.31",
     "tailwindcss": "^3.4.1",
     "typescript": "6.0.2"

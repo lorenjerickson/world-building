@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import type { WorldAsset } from "@/components/world-view";
 import { DeleteArtifactButton } from "@/components/delete-artifact-button";
 import { CampaignArtifact, deleteCampaignArtifact, deleteWorldArtifact, loadCampaignArtifacts } from "@/lib/artifact-deletion";
+import { AppBreadcrumbs } from "@/components/app-breadcrumbs";
 
 export function ActivityIndex({ type }: { type: "worlds" | "campaigns" | "sessions" }) {
   const [worlds, setWorlds] = useState<WorldAsset[]>([]);
@@ -19,6 +20,7 @@ export function ActivityIndex({ type }: { type: "worlds" | "campaigns" | "sessio
     : "No game sessions have been recorded.";
 
   return <main className="dashboard-container">
+    <AppBreadcrumbs items={[{ label: "Dashboard", href: "/dashboard" }, { label: `All ${type}` }]} />
     <header className="dashboard-header"><div className="header-left"><span className="eyebrow">Chronicle index</span><h2>All {type}</h2></div><Link href="/dashboard" className="secondary-action">Back to dashboard</Link></header>
     <section className="card-surface"><div className="list-stack">
       {type === "worlds" && worlds.map((world) => <article className="list-item artifact-list-item" key={world.id}><Link href={`/world/${encodeURIComponent(world.id)}`}><strong>{world.name}</strong><span className="subtext">{world.description}</span></Link><div className="artifact-list-actions"><Link className="text-link" href={`/world/${encodeURIComponent(world.id)}`}>Open →</Link><DeleteArtifactButton artifactName={world.name} artifactType="world" onDelete={async () => { await deleteWorldArtifact(world); setWorlds((items) => items.filter((item) => item.id !== world.id)); setCampaigns(loadCampaignArtifacts()); }} /></div></article>)}

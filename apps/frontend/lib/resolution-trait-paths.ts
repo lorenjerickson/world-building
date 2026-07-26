@@ -1,5 +1,6 @@
 import {
   buildTraitShape,
+  traitShapeTerminalPaths,
   type TraitShapeDefinition,
   type TraitShapeNode,
 } from './trait-shape';
@@ -19,6 +20,7 @@ export type GuidedTraitPathOption = {
   dataType: string;
   explanation: string;
   provenance: GuidedTraitPathProvenance[];
+  repeatedCollectionPaths: string[][];
 };
 
 export type GuidedTraitPathResult = {
@@ -145,12 +147,17 @@ function optionsFromNodes(
       candidate.kind === kind
       && candidate.path.length === path.length
       && candidate.path.every((segment, index) => segment === path[index]));
+  const contributors = (node: TraitShapeNode): string[] => [...new Set([
+    ...(node.sourceTraitIds ?? []),
+    ...(node.sourceTraitId ? [node.sourceTraitId] : []),
+  ])].sort();
   const provenanceFor = (
     node: TraitShapeNode,
-    additionalContributorTraitId?: string,
+    additionalContributorTraitIds: string[] = [],
   ): GuidedTraitPathProvenance[] => rootTraitIds.flatMap((rootTraitId) => {
     const rootShape = rootShapes.get(rootTraitId);
-    if (!rootShape || !nodeAt(rootShape.nodes, node.path, node.kind)) return [];
+    const rootNode = rootShape ? nodeAt(rootShape.nodes, node.path, node.kind) : undefined;
+    if (!rootShape || !rootNode) return [];
     const traitChain = [
       rootTraitId,
       ...rootShape.nodes
@@ -160,8 +167,8 @@ function optionsFromNodes(
           && candidate.path.every((segment, index) => segment === node.path[index]))
         .sort((left, right) => left.path.length - right.path.length)
         .map((candidate) => candidate.traitId),
-      node.sourceTraitId,
-      additionalContributorTraitId,
+      ...contributors(rootNode),
+      ...additionalContributorTraitIds,
     ].filter((traitId): traitId is string => !!traitId)
       .filter((traitId, index, values) => values.indexOf(traitId) === index);
     const checkIds = contract?.checkSources
@@ -188,6 +195,7 @@ function optionsFromNodes(
     path: string,
     dataType: string,
     provenance: GuidedTraitPathProvenance[],
+    repeatedCollectionPaths: string[][] = [],
   ) => {
     const existing = options.get(path);
     const merged = [...(existing?.provenance ?? []), ...provenance].filter((item, index, values) =>
@@ -210,25 +218,49 @@ function optionsFromNodes(
       label: `${path} — ${dataType}${explanations[0] ? ` — ${explanations[0]}` : ''}`,
       explanation: explanations.join('; '),
       provenance: merged,
+      repeatedCollectionPaths,
     });
   };
-  for (const node of nodes) {
-    if (node.kind === 'terminal') {
-      const path = `self.${node.path.join('.')}`;
-      addOption(path, node.dataType, provenanceFor(node));
-    }
-    if (node.kind === 'collection' && node.acceptedTraitIds.length) {
-      const elementShape = buildTraitShape({
-        definitions,
-        prerequisiteIds: node.acceptedTraitIds,
-        prerequisiteMode: node.acceptsMode,
+  const terminalPaths = traitShapeTerminalPaths({ nodes, diagnostics: [] }, definitions);
+  for (const terminalPath of terminalPaths) {
+    const provenance = terminalPath.repeatedCollectionPaths.length === 0
+      ? provenanceFor(terminalPath.terminal)
+      : rootTraitIds.flatMap((rootTraitId): GuidedTraitPathProvenance[] => {
+        const rootShape = rootShapes.get(rootTraitId);
+        if (!rootShape) return [];
+        const matching = traitShapeTerminalPaths(rootShape, definitions).find((candidate) =>
+          candidate.path.join('\0') === terminalPath.path.join('\0'));
+        if (!matching) return [];
+        const traitChain = [
+          rootTraitId,
+          ...contributors(matching.terminal),
+        ].filter((traitId, index, values) => values.indexOf(traitId) === index);
+        const checkIds = contract?.checkSources
+          .filter((source) => source.traitIds.includes(rootTraitId))
+          .map((source) => source.checkId)
+          .sort() ?? [];
+        const contractKind = !contract
+          ? 'catalog'
+          : contract.directTraitIds.includes(rootTraitId)
+            ? 'direct'
+            : checkIds.length
+              ? 'inherited'
+              : 'direct';
+        return [{
+          rootTraitId,
+          rootLabel: definitionsById.get(rootTraitId)?.name ?? rootTraitId,
+          traitChain,
+          traitChainLabels: traitChain.map((traitId) => definitionsById.get(traitId)?.name ?? traitId),
+          contractKind,
+          checkIds,
+        }];
       });
-      for (const terminal of elementShape.nodes) {
-        if (terminal.kind !== 'terminal' || terminal.path.length !== 1) continue;
-        const path = `self.${node.path.join('.')}[].${terminal.path[0]}`;
-        addOption(path, terminal.dataType, provenanceFor(node, terminal.sourceTraitId));
-      }
-    }
+    addOption(
+      `self.${terminalPath.path.join('.')}`,
+      terminalPath.terminal.dataType,
+      provenance,
+      terminalPath.repeatedCollectionPaths.map((path) => ['self', ...path]),
+    );
   }
 }
 

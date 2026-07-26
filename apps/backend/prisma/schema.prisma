@@ -8,223 +8,258 @@ datasource db {
 }
 
 model World {
-  id               String   @id @default(uuid()) @db.Uuid
-  prompt           String
-  generatedContent String   @map("generated_content") @db.Text
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  prompt           String   @db.VarChar
+  generatedContent String   @db.Text
   metadata         Json?
-  createdAt        DateTime @default(now()) @map("created_at")
+  createdAt        DateTime @default(now()) @db.Timestamptz(6)
 
   @@map("worlds")
 }
 
-model RuleSetComposition {
-  id                  String   @id @default(uuid()) @db.Uuid
-  workspaceExternalId String   @map("workspace_external_id")
-  manifest            Json
-  compositionHash     String   @map("composition_hash")
-  engineVersion       String   @map("engine_version")
-  compilerVersion     String   @map("compiler_version")
-  validationSummary   Json?    @map("validation_summary")
-  createdBy           String   @map("created_by")
-  createdAt           DateTime @default(now()) @map("created_at")
+model SearchDocument {
+  id             String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  actorId        String                   @db.VarChar
+  recordType     String                   @db.VarChar
+  recordId       String                   @db.VarChar
+  title          String                   @db.VarChar
+  summary        String                   @db.Text
+  href           String                   @db.VarChar
+  searchableText String                   @db.Text
+  searchVector   Unsupported("tsvector")?
+  updatedAt      DateTime                 @default(now()) @updatedAt @db.Timestamptz(6)
 
-  @@unique([workspaceExternalId, compositionHash])
-  @@index([workspaceExternalId])
-  @@index([compositionHash])
+  @@unique([actorId, recordType, recordId], map: "UQ_search_document_actor_record")
+  @@index([actorId], map: "IDX_search_document_actor")
+  @@map("search_documents")
+}
+
+model RuleSetComposition {
+  id                  String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceExternalId String                     @db.VarChar
+  manifest            Json
+  compositionHash     String                     @db.VarChar
+  engineVersion       String                     @db.VarChar
+  compilerVersion     String                     @db.VarChar
+  validationSummary   Json?
+  createdBy           String                     @db.VarChar
+  createdAt           DateTime                   @default(now()) @db.Timestamptz(6)
+  members             RuleSetCompositionMember[]
+  bindings            RuleSetBinding[]
+
+  @@unique([workspaceExternalId, compositionHash], map: "UQ_rule_set_composition_workspace_hash")
+  @@index([workspaceExternalId], map: "IDX_rule_set_composition_workspace")
+  @@index([compositionHash], map: "IDX_rule_set_composition_hash")
   @@map("rule_set_compositions")
 }
 
 model RuleSetCompositionMember {
-  id             String @id @default(uuid()) @db.Uuid
-  compositionId String @map("composition_id") @db.Uuid
-  ruleSetId      Int    @map("rule_set_id")
-  releaseId      Int    @map("release_id")
-  releaseHash    String @map("release_hash")
-  namespaceAlias String @map("namespace_alias")
-  sortOrder      Int    @map("sort_order")
-  policy         Json   @default("{}")
+  id             String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  compositionId  String             @db.Uuid
+  ruleSetId      Int
+  releaseId      Int
+  releaseHash    String             @db.VarChar
+  namespaceAlias String             @db.VarChar
+  sortOrder      Int
+  policy         Json               @default("{}")
+  composition    RuleSetComposition @relation(fields: [compositionId], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
-  @@unique([compositionId, namespaceAlias])
-  @@unique([compositionId, sortOrder])
+  @@unique([compositionId, namespaceAlias], map: "UQ_rule_set_member_namespace")
+  @@unique([compositionId, sortOrder], map: "UQ_rule_set_member_order")
   @@map("rule_set_composition_members")
 }
 
 model RuleSetBinding {
-  id                  String   @id @default(uuid()) @db.Uuid
-  workspaceExternalId String   @map("workspace_external_id")
-  scopeType           String   @map("scope_type")
-  scopeId             String   @map("scope_id")
-  gameplayProfileName String   @map("gameplay_profile_name")
-  compositionId       String   @map("composition_id") @db.Uuid
-  compositionHash     String   @map("composition_hash")
-  active              Boolean  @default(false)
-  stateVersion        BigInt   @default(1) @map("state_version")
-  status              String   @default("active")
-  createdAt           DateTime @default(now()) @map("created_at")
-  updatedAt           DateTime @updatedAt @map("updated_at")
+  id                  String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceExternalId String                @db.VarChar
+  scopeType           String                @db.VarChar
+  scopeId             String                @db.VarChar
+  gameplayProfileName String                @db.VarChar
+  compositionId       String                @db.Uuid
+  compositionHash     String                @db.VarChar
+  active              Boolean               @default(false)
+  stateVersion        BigInt                @default(1)
+  status              String                @default("active") @db.VarChar
+  createdAt           DateTime              @default(now()) @db.Timestamptz(6)
+  updatedAt           DateTime              @default(now()) @updatedAt @db.Timestamptz(6)
+  composition         RuleSetComposition    @relation(fields: [compositionId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  instances           RuleInstance[]
+  effects             RuleEffect[]
+  executions          RuleExecution[]
+  events              RuleEvent[]
+  artifactContexts    ArtifactRuleContext[]
 
-  @@unique([scopeType, scopeId, gameplayProfileName])
-  @@index([workspaceExternalId])
+  @@unique([scopeType, scopeId, gameplayProfileName], map: "UQ_rule_set_binding_profile")
+  @@index([workspaceExternalId], map: "IDX_rule_set_binding_workspace")
   @@map("rule_set_bindings")
 }
 
 model RuleInstance {
-  id           String   @id @default(uuid()) @db.Uuid
-  bindingId    String   @map("binding_id") @db.Uuid
-  typeId       String   @map("type_id")
+  id           String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  bindingId    String         @db.Uuid
+  typeId       String         @db.VarChar
   state        Json
-  stateVersion BigInt   @default(1) @map("state_version")
-  createdBy    String   @map("created_by")
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
+  stateVersion BigInt         @default(1)
+  createdBy    String         @db.VarChar
+  createdAt    DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime       @default(now()) @updatedAt @db.Timestamptz(6)
+  binding      RuleSetBinding @relation(fields: [bindingId], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
-  @@index([bindingId, typeId])
+  @@index([bindingId, typeId], map: "IDX_rule_instance_binding_type")
   @@map("rule_instances")
 }
 
 model RuleEffect {
-  id           String    @id @default(uuid()) @db.Uuid
-  bindingId    String    @map("binding_id") @db.Uuid
-  targetId     String    @map("target_id")
-  definitionId String    @map("definition_id")
-  sourceRef    Json      @map("source_ref")
+  id           String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  bindingId    String         @db.Uuid
+  targetId     String         @db.VarChar
+  definitionId String         @db.VarChar
+  sourceRef    Json
   state        Json
-  expiresAt    DateTime? @map("expires_at") @db.Timestamptz
-  stateVersion BigInt    @default(1) @map("state_version")
-  createdAt    DateTime  @default(now()) @map("created_at")
-  updatedAt    DateTime  @updatedAt @map("updated_at")
+  expiresAt    DateTime?      @db.Timestamptz(6)
+  stateVersion BigInt         @default(1)
+  createdAt    DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime       @default(now()) @updatedAt @db.Timestamptz(6)
+  binding      RuleSetBinding @relation(fields: [bindingId], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
-  @@index([bindingId, targetId])
-  @@index([bindingId, expiresAt])
+  @@index([bindingId, targetId], map: "IDX_rule_effect_binding_target")
+  @@index([bindingId, expiresAt], map: "IDX_rule_effect_binding_expiry")
   @@map("rule_effects")
 }
 
 model RuleExecution {
-  id             String   @id @default(uuid()) @db.Uuid
-  bindingId      String   @map("binding_id") @db.Uuid
-  operationId    String   @map("operation_id")
-  actorId        String   @map("actor_id")
-  idempotencyKey String   @map("idempotency_key")
+  id             String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  bindingId      String             @db.Uuid
+  operationId    String             @db.VarChar
+  actorId        String             @db.VarChar
+  idempotencyKey String             @db.VarChar
   input          Json
   result         Json?
-  traceRef       String?  @map("trace_ref")
-  status         String   @default("pending")
-  createdAt      DateTime @default(now()) @map("created_at")
-  updatedAt      DateTime @updatedAt @map("updated_at")
+  traceRef       String?            @db.VarChar
+  status         String             @default("pending") @db.VarChar
+  createdAt      DateTime           @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime           @default(now()) @updatedAt @db.Timestamptz(6)
+  binding        RuleSetBinding     @relation(fields: [bindingId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  continuations  RuleContinuation[]
 
-  @@unique([bindingId, actorId, idempotencyKey])
+  @@unique([bindingId, actorId, idempotencyKey], map: "UQ_rule_execution_idempotency")
   @@map("rule_executions")
 }
 
 model RuleEvent {
-  id            String   @id @default(uuid()) @db.Uuid
-  bindingId     String   @map("binding_id") @db.Uuid
+  id            String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  bindingId     String         @db.Uuid
   sequence      BigInt
-  eventTypeId   String   @map("event_type_id")
-  visibility    String   @default("public")
+  eventTypeId   String         @db.VarChar
+  visibility    String         @default("public") @db.VarChar
   payload       Json
-  causationId   String?  @map("causation_id") @db.Uuid
-  correlationId String?  @map("correlation_id") @db.Uuid
-  createdAt     DateTime @default(now()) @map("created_at")
+  causationId   String?        @db.Uuid
+  correlationId String?        @db.Uuid
+  createdAt     DateTime       @default(now()) @db.Timestamptz(6)
+  binding       RuleSetBinding @relation(fields: [bindingId], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
-  @@unique([bindingId, sequence])
+  @@unique([bindingId, sequence], map: "UQ_rule_event_sequence")
   @@map("rule_events")
 }
 
 model RuleContinuation {
-  id                   String   @id @default(uuid()) @db.Uuid
-  executionId          String   @map("execution_id") @db.Uuid
-  stepId               String   @map("step_id")
+  id                   String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  executionId          String        @db.Uuid
+  stepId               String        @db.VarChar
   state                Json
-  authorizedResponders Json     @map("authorized_responders")
-  expiresAt            DateTime @map("expires_at") @db.Timestamptz
-  status               String   @default("pending")
-  stateVersion         BigInt   @default(1) @map("state_version")
-  createdAt            DateTime @default(now()) @map("created_at")
-  updatedAt            DateTime @updatedAt @map("updated_at")
+  authorizedResponders Json
+  expiresAt            DateTime      @db.Timestamptz(6)
+  status               String        @default("pending") @db.VarChar
+  stateVersion         BigInt        @default(1)
+  createdAt            DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt            DateTime      @default(now()) @updatedAt @db.Timestamptz(6)
+  execution            RuleExecution @relation(fields: [executionId], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
-  @@index([executionId])
-  @@index([status, expiresAt])
+  @@index([executionId], map: "IDX_rule_continuation_execution")
+  @@index([status, expiresAt], map: "IDX_rule_continuation_status_expiry")
   @@map("rule_continuations")
 }
 
 model RuleArtifact {
-  id                        String   @id @default(uuid()) @db.Uuid
-  artifactHash              String   @unique @map("artifact_hash")
-  releaseOrCompositionHash String   @map("release_or_composition_hash")
-  engineVersion             String   @map("engine_version")
-  artifactLocation          String   @map("artifact_location")
-  validationSummary         Json     @map("validation_summary")
-  compiledAt                DateTime @default(now()) @map("compiled_at")
+  id                       String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  artifactHash             String   @unique @db.VarChar
+  releaseOrCompositionHash String   @db.VarChar
+  engineVersion            String   @db.VarChar
+  artifactLocation         String   @db.VarChar
+  validationSummary        Json
+  compiledAt               DateTime @default(now()) @db.Timestamptz(6)
 
-  @@unique([releaseOrCompositionHash, engineVersion])
+  @@unique([releaseOrCompositionHash, engineVersion], map: "UQ_rule_artifact_source_engine")
   @@map("rule_artifacts")
 }
 
 model ArtifactRuleContext {
-  id                  String   @id @default(uuid()) @db.Uuid
-  artifactId          String   @map("artifact_id")
-  generationJobId     String   @map("generation_job_id")
-  bindingId           String?  @map("binding_id") @db.Uuid
-  compositionHash     String   @map("composition_hash")
-  policyHash          String   @map("policy_hash")
-  applicableReleases  Json     @map("applicable_releases")
+  id                  String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  artifactId          String          @db.VarChar
+  generationJobId     String          @db.VarChar
+  bindingId           String?         @db.Uuid
+  compositionHash     String          @db.VarChar
+  policyHash          String          @db.VarChar
+  applicableReleases  Json
   context             Json
-  applicabilityStatus String   @default("applicable") @map("applicability_status")
-  validationSummary   Json     @map("validation_summary")
-  createdAt           DateTime @default(now()) @map("created_at")
-  updatedAt           DateTime @updatedAt @map("updated_at")
+  applicabilityStatus String          @default("applicable") @db.VarChar
+  validationSummary   Json
+  createdAt           DateTime        @default(now()) @db.Timestamptz(6)
+  updatedAt           DateTime        @default(now()) @updatedAt @db.Timestamptz(6)
+  binding             RuleSetBinding? @relation(fields: [bindingId], references: [id], onDelete: SetNull, onUpdate: NoAction)
 
-  @@index([artifactId, compositionHash])
-  @@index([generationJobId])
+  @@index([artifactId, compositionHash], map: "IDX_artifact_rule_context_artifact_composition")
+  @@index([generationJobId], map: "IDX_artifact_rule_context_job")
   @@map("artifact_rule_contexts")
 }
 
 model RuleAuthoringSession {
-  id              String   @id @default(uuid()) @db.Uuid
-  ruleSetId       Int      @map("rule_set_id")
-  draftId         String   @map("draft_id")
-  actorId         String   @map("actor_id")
-  baseRevision    String   @map("base_revision")
-  status          String   @default("active")
-  modelMetadata   Json     @map("model_metadata")
-  retentionPolicy Json     @map("retention_policy")
-  createdAt       DateTime @default(now()) @map("created_at")
-  updatedAt       DateTime @updatedAt @map("updated_at")
+  id              String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ruleSetId       Int
+  draftId         String                  @db.VarChar
+  actorId         String                  @db.VarChar
+  baseRevision    String                  @db.VarChar
+  status          String                  @default("active") @db.VarChar
+  modelMetadata   Json
+  retentionPolicy Json
+  createdAt       DateTime                @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime                @default(now()) @updatedAt @db.Timestamptz(6)
+  proposals       RuleAuthoringProposal[]
 
-  @@index([ruleSetId, draftId, actorId])
+  @@index([ruleSetId, draftId, actorId], map: "IDX_rule_authoring_session_context")
   @@map("rule_authoring_sessions")
 }
 
 model RuleAuthoringProposal {
-  id                String   @id @default(uuid()) @db.Uuid
-  sessionId         String   @map("session_id") @db.Uuid
-  baseRevision      String   @map("base_revision")
-  proposalHash      String   @map("proposal_hash")
+  id                String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sessionId         String               @db.Uuid
+  baseRevision      String               @db.VarChar
+  proposalHash      String               @db.VarChar
   patch             Json
   assumptions       Json
-  validationSummary Json     @map("validation_summary")
-  status            String   @default("proposed")
-  decisionBy        String?  @map("decision_by")
-  createdAt         DateTime @default(now()) @map("created_at")
-  updatedAt         DateTime @updatedAt @map("updated_at")
+  validationSummary Json
+  status            String               @default("proposed") @db.VarChar
+  decisionBy        String?              @db.VarChar
+  createdAt         DateTime             @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime             @default(now()) @updatedAt @db.Timestamptz(6)
+  session           RuleAuthoringSession @relation(fields: [sessionId], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
-  @@unique([sessionId, proposalHash])
+  @@unique([sessionId, proposalHash], map: "UQ_rule_authoring_proposal_hash")
   @@map("rule_authoring_proposals")
 }
 
 model RuleDefinitionSnapshot {
-  id                   String   @id @default(uuid()) @db.Uuid
-  ruleSetId            Int      @map("rule_set_id")
-  definitionId         Int      @map("definition_id")
-  definitionExternalId String   @map("definition_external_id")
-  name                 String
+  id                   String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ruleSetId            Int
+  definitionId         Int
+  definitionExternalId String   @db.VarChar
+  name                 String   @db.VarChar
   body                 Json
-  reason               String   @default("autosave")
-  actorId             String   @map("actor_id")
-  createdAt            DateTime @default(now()) @map("created_at")
+  reason               String   @default("autosave") @db.VarChar
+  actorId              String   @db.VarChar
+  createdAt            DateTime @default(now()) @db.Timestamptz(6)
 
-  @@index([ruleSetId, definitionId, createdAt])
-  @@index([definitionId])
+  @@index([definitionId], map: "IDX_rule_def_snapshot_definition")
+  @@index([ruleSetId, definitionId, createdAt(sort: Desc)], map: "IDX_rule_def_snapshot_ruleset_def_time")
   @@map("rule_definition_snapshots")
 }

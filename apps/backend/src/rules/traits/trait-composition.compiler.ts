@@ -1,9 +1,16 @@
 import { createHash } from 'crypto';
 import {
   buildTraitShape,
+  convertUnitValue,
+  isCanonicalUnitId,
   resolveTraitShapeTerminal,
+  traitSatisfiesCollection,
+  traitShapeTerminalPaths,
+  unitsAreCompatible,
+  type CanonicalUnitId,
   type TraitGrantDataType,
   type TraitShape,
+  type TraitShapeNode,
 } from '@world-building/common';
 import {
   TRAIT_COMPOSITION_ARTIFACT_VERSION,
@@ -11,7 +18,10 @@ import {
   LEGACY_TRAIT_COMPOSITION_METAMODEL_VERSION,
   type CompiledTraitActivationEdge,
   type CompiledTraitActivationChoice,
+  type CompiledTraitContract,
   type CompiledTraitModifier,
+  type CompiledTraitMountSelector,
+  type CompiledTraitStructuralDirective,
   type TraitCompositionCompilationResult,
   type TraitCompositionDiagnostic,
   type TraitCompositionSourceDefinition,
@@ -25,10 +35,12 @@ const DATA_TYPES: TraitGrantDataType[] = [
   'trait',
   'trait-collection',
   'modifier',
+  'suppression',
+  'replacement',
   'slot',
   'slot-affinity',
 ];
-const MODIFIER_OPERATIONS = ['increases', 'decreases', 'multiplies', 'divides', 'sets'] as const;
+const MODIFIER_OPERATIONS = ['increases', 'decreases', 'multiplies', 'divides', 'sets', 'at-least', 'at-most'] as const;
 const MAXIMUM_DEFINITIONS = 2_000;
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -51,6 +63,30 @@ function diagnostic(
   severity: 'error' | 'warning' = 'error',
 ): void {
   diagnostics.push({ code, path, message, severity });
+}
+
+function definitionPath(
+  definition: TraitCompositionSourceDefinition,
+  index: number,
+): string {
+  const label = definition.name?.trim() || definition.externalId?.trim() || `#${index + 1}`;
+  return `definitions[${JSON.stringify(label)}]`;
+}
+
+function contextualizeDiagnostics(
+  diagnostics: TraitCompositionDiagnostic[],
+  definitions: TraitCompositionSourceDefinition[],
+): void {
+  for (const item of diagnostics) {
+    const match = definitions
+      .map((definition, index) => ({ definition, prefix: definitionPath(definition, index) }))
+      .find(({ prefix }) => item.path === prefix || item.path.startsWith(`${prefix}.`));
+    if (!match) continue;
+    item.definitionExternalId = match.definition.externalId;
+    item.definitionName = match.definition.name;
+    const grantMatch = item.path.match(/\.body\.grants\[(\d+)\]/);
+    if (grantMatch) item.grantIndex = Number(grantMatch[1]);
+  }
 }
 
 function validateStringArray(
@@ -85,6 +121,120 @@ function validatePrerequisites(
   validateStringArray(body.prerequisites.ids, `${path}.ids`, diagnostics);
 }
 
+function validateMountSelector(
+  value: unknown,
+  path: string,
+  diagnostics: TraitCompositionDiagnostic[],
+  allowAll: boolean,
+): boolean {
+  if (!record(value)) {
+    diagnostic(diagnostics, 'RULE_TRAIT_SELECTOR_INVALID', path, 'A mount selector must be an object.');
+    return false;
+  }
+  if (value.mode === 'all' || value.mode === 'wildcard') {
+    if (!allowAll) {
+      diagnostic(diagnostics, 'RULE_TRAIT_SELECTOR_COLLECTION_RESULT_INVALID', `${path}.mode`, 'Scalar paths cannot select all collection entries.');
+      return false;
+    }
+    return true;
+  }
+  if (value.mode === 'ordinal') {
+    if (!Number.isInteger(value.ordinal) || Number(value.ordinal) < 1) {
+      diagnostic(diagnostics, 'RULE_TRAIT_SELECTOR_INVALID', `${path}.ordinal`, 'Ordinal selectors require a positive whole number.');
+      return false;
+    }
+    return true;
+  }
+  if (value.mode === 'trait') {
+    if (typeof value.traitId !== 'string' || !value.traitId.trim()) {
+      diagnostic(diagnostics, 'RULE_TRAIT_SELECTOR_INVALID', `${path}.traitId`, 'Trait selectors require a stable trait identity.');
+      return false;
+    }
+    return true;
+  }
+  if (value.mode === 'tag') {
+    if (typeof value.tag !== 'string' || !value.tag.trim()) {
+      diagnostic(diagnostics, 'RULE_TRAIT_SELECTOR_INVALID', `${path}.tag`, 'Semantic-tag selectors require a non-empty tag.');
+      return false;
+    }
+    return true;
+  }
+  diagnostic(diagnostics, 'RULE_TRAIT_SELECTOR_INVALID', `${path}.mode`, "Selector mode must be 'all', 'wildcard', 'ordinal', 'trait', or 'tag'.");
+  return false;
+}
+
+function validateRepeatedMountSelectors(
+  grant: Record<string, unknown>,
+  authoredPath: unknown,
+  path: string,
+  diagnostics: TraitCompositionDiagnostic[],
+  label: string,
+): void {
+  const repeatedCount = typeof authoredPath === 'string'
+    ? authoredPath.split('.').filter((segment) => segment.trim().endsWith('[]')).length
+    : 0;
+  if (!repeatedCount) {
+    if (grant.mountSelector !== undefined || grant.mountSelectors !== undefined) {
+      diagnostic(diagnostics, `RULE_TRAIT_${label}_SELECTOR_UNUSED`, `${path}.mountSelectors`, 'Mount selectors require a repeated [] path segment.');
+    }
+    return;
+  }
+  if (grant.mountSelector !== undefined && grant.mountSelectors !== undefined) {
+    diagnostic(diagnostics, `RULE_TRAIT_${label}_SELECTOR_AMBIGUOUS`, `${path}.mountSelectors`, 'Use either the legacy single mountSelector or the ordered mountSelectors list, not both.');
+    return;
+  }
+  if (grant.mountSelector !== undefined) {
+    if (repeatedCount !== 1) {
+      diagnostic(diagnostics, `RULE_TRAIT_${label}_SELECTORS_REQUIRED`, `${path}.mountSelectors`, `A path with ${repeatedCount} repeated segments requires ${repeatedCount} ordered selectors.`);
+      return;
+    }
+    validateMountSelector(grant.mountSelector, `${path}.mountSelector`, diagnostics, true);
+    return;
+  }
+  if (!Array.isArray(grant.mountSelectors) || grant.mountSelectors.length !== repeatedCount) {
+    diagnostic(
+      diagnostics,
+      `RULE_TRAIT_${label}_${repeatedCount === 1 ? 'SELECTOR' : 'SELECTORS'}_REQUIRED`,
+      repeatedCount === 1 ? `${path}.mountSelector` : `${path}.mountSelectors`,
+      repeatedCount === 1
+        ? 'A repeated path requires one mount selector.'
+        : `A path with ${repeatedCount} repeated segments requires ${repeatedCount} ordered selectors.`,
+    );
+    return;
+  }
+  grant.mountSelectors.forEach((selector, index) =>
+    validateMountSelector(selector, `${path}.mountSelectors[${index}]`, diagnostics, true));
+}
+
+function compiledMountSelector(value: unknown): CompiledTraitMountSelector | undefined {
+  if (!record(value)) return undefined;
+  if (value.mode === 'all' || value.mode === 'wildcard') return { mode: 'all' };
+  if (value.mode === 'ordinal') return { mode: 'ordinal', ordinal: Number(value.ordinal) };
+  if (value.mode === 'trait') return { mode: 'trait', traitId: String(value.traitId) };
+  if (value.mode === 'tag') return { mode: 'tag', tag: String(value.tag) };
+  return undefined;
+}
+
+function compiledMountSelectors(value: Record<string, unknown>): {
+  mountSelector?: CompiledTraitMountSelector;
+  mountSelectors?: CompiledTraitMountSelector[];
+} {
+  const legacy = compiledMountSelector(value.mountSelector);
+  if (legacy) return { mountSelector: legacy };
+  if (!Array.isArray(value.mountSelectors)) return {};
+  const selectors = value.mountSelectors.map(compiledMountSelector)
+    .filter((selector): selector is CompiledTraitMountSelector => selector !== undefined);
+  return selectors.length === value.mountSelectors.length ? { mountSelectors: selectors } : {};
+}
+
+function mountSelectorKey(selector: CompiledTraitMountSelector | undefined): string {
+  if (!selector) return '';
+  if (selector.mode === 'ordinal') return `ordinal:${selector.ordinal}`;
+  if (selector.mode === 'trait') return `trait:${selector.traitId}`;
+  if (selector.mode === 'tag') return `tag:${selector.tag}`;
+  return 'all';
+}
+
 function validateGrant(
   grant: unknown,
   path: string,
@@ -106,6 +256,48 @@ function validateGrant(
   }
   if (grant.key !== undefined && typeof grant.key !== 'string') {
     diagnostic(diagnostics, 'RULE_TRAIT_GRANT_KEY_INVALID', `${path}.key`, 'Grant path names must be strings.');
+  }
+  if (grant.unit !== undefined) {
+    if (dataType !== 'number') {
+      diagnostic(diagnostics, 'RULE_TRAIT_FIELD_UNIT_UNSUPPORTED', `${path}.unit`, 'Only numeric fields may declare a unit.');
+    } else if (!isCanonicalUnitId(grant.unit)) {
+      diagnostic(diagnostics, 'RULE_TRAIT_FIELD_UNIT_INVALID', `${path}.unit`, `Unknown canonical unit '${String(grant.unit)}'.`);
+    }
+  }
+  if (grant.required !== undefined && typeof grant.required !== 'boolean') {
+    diagnostic(diagnostics, 'RULE_TRAIT_FIELD_REQUIRED_INVALID', `${path}.required`, 'Field requiredness must be a Boolean.');
+  }
+  if (['text', 'number', 'boolean', 'enum'].includes(dataType)) {
+    if (dataType === 'number') {
+      if (grant.min !== undefined && (typeof grant.min !== 'number' || !Number.isFinite(grant.min))) {
+        diagnostic(diagnostics, 'RULE_TRAIT_FIELD_BOUND_INVALID', `${path}.min`, 'Numeric minimum must be a finite number.');
+      }
+      if (grant.max !== undefined && (typeof grant.max !== 'number' || !Number.isFinite(grant.max))) {
+        diagnostic(diagnostics, 'RULE_TRAIT_FIELD_BOUND_INVALID', `${path}.max`, 'Numeric maximum must be a finite number.');
+      }
+      if (typeof grant.min === 'number' && Number.isFinite(grant.min)
+        && typeof grant.max === 'number' && Number.isFinite(grant.max)
+        && grant.min > grant.max) {
+        diagnostic(diagnostics, 'RULE_TRAIT_FIELD_BOUNDS_INVALID', path, 'Numeric minimum cannot be greater than maximum.');
+      }
+    } else if (grant.min !== undefined || grant.max !== undefined) {
+      diagnostic(diagnostics, 'RULE_TRAIT_FIELD_BOUND_UNSUPPORTED', path, 'Only numeric fields may declare minimum or maximum values.');
+    }
+    if (grant.default !== undefined) {
+      const defaultTypeValid = dataType === 'number'
+        ? typeof grant.default === 'number' && Number.isFinite(grant.default)
+        : dataType === 'boolean'
+          ? typeof grant.default === 'boolean'
+          : typeof grant.default === 'string';
+      if (!defaultTypeValid) {
+        diagnostic(diagnostics, 'RULE_TRAIT_FIELD_DEFAULT_INVALID', `${path}.default`, `Default value must match the ${dataType} field type.`);
+      } else if (dataType === 'number'
+        && typeof grant.default === 'number'
+        && ((typeof grant.min === 'number' && grant.default < grant.min)
+          || (typeof grant.max === 'number' && grant.default > grant.max))) {
+        diagnostic(diagnostics, 'RULE_TRAIT_FIELD_DEFAULT_OUT_OF_RANGE', `${path}.default`, 'Numeric default must fall within the declared bounds.');
+      }
+    }
   }
   if (dataType === 'trait') {
     if (typeof grant.ref !== 'string' || !grant.ref.trim()) {
@@ -137,6 +329,11 @@ function validateGrant(
   }
   if (dataType === 'enum' && grant.allowedValues !== undefined) {
     validateStringArray(grant.allowedValues, `${path}.allowedValues`, diagnostics);
+    if (typeof grant.default === 'string'
+      && Array.isArray(grant.allowedValues)
+      && !grant.allowedValues.includes(grant.default)) {
+      diagnostic(diagnostics, 'RULE_TRAIT_FIELD_DEFAULT_INVALID', `${path}.default`, 'Enum default must be one of the allowed values.');
+    }
   }
   if (dataType === 'modifier') {
     if (!MODIFIER_OPERATIONS.includes(grant.operation as typeof MODIFIER_OPERATIONS[number])) {
@@ -144,23 +341,56 @@ function validateGrant(
     }
     if (typeof grant.field !== 'string' || !grant.field.trim()) {
       diagnostic(diagnostics, 'RULE_TRAIT_MODIFIER_PATH_REQUIRED', `${path}.field`, 'A modifier requires an exact target path.');
+    } else if (!['self', 'this'].includes(grant.field.split('.')[0]?.trim())) {
+      diagnostic(
+        diagnostics,
+        'RULE_TRAIT_MODIFIER_ROOT_INVALID',
+        `${path}.field`,
+        "Trait value modifiers must use an explicit 'self' or 'this' root.",
+      );
     }
     if (!('amount' in grant)) {
       diagnostic(diagnostics, 'RULE_TRAIT_MODIFIER_AMOUNT_REQUIRED', `${path}.amount`, 'A modifier amount is required.');
     }
-    const repeatedPath = typeof grant.field === 'string' && grant.field.split('.').some((segment) => segment.endsWith('[]'));
-    if (repeatedPath && !record(grant.mountSelector)) {
-      diagnostic(diagnostics, 'RULE_TRAIT_MODIFIER_SELECTOR_REQUIRED', `${path}.mountSelector`, 'A repeated mount path requires an all or ordinal selector.');
-    } else if (!repeatedPath && grant.mountSelector !== undefined) {
-      diagnostic(diagnostics, 'RULE_TRAIT_MODIFIER_SELECTOR_UNUSED', `${path}.mountSelector`, 'Mount selectors require a repeated [] path segment.');
-    } else if (record(grant.mountSelector)) {
-      if (grant.mountSelector.mode !== 'all' && grant.mountSelector.mode !== 'ordinal') {
-        diagnostic(diagnostics, 'RULE_TRAIT_MODIFIER_SELECTOR_INVALID', `${path}.mountSelector.mode`, "Mount selector mode must be 'all' or 'ordinal'.");
+    if (grant.priority !== undefined
+      && (!Number.isInteger(grant.priority) || Number(grant.priority) < -1_000 || Number(grant.priority) > 1_000)) {
+      diagnostic(diagnostics, 'RULE_TRAIT_MODIFIER_PRIORITY_INVALID', `${path}.priority`, 'Modifier priority must be a whole number from -1000 through 1000.');
+    }
+    if (grant.when !== undefined) {
+      if (!record(grant.when)) {
+        diagnostic(diagnostics, 'RULE_TRAIT_MODIFIER_CONDITION_INVALID', `${path}.when`, 'Modifier condition must be an object.');
+      } else {
+        if (!['equals', 'gte', 'lte'].includes(String(grant.when.operator))) {
+          diagnostic(diagnostics, 'RULE_TRAIT_MODIFIER_CONDITION_OPERATOR_INVALID', `${path}.when.operator`, "Condition operator must be 'equals', 'gte', or 'lte'.");
+        }
+        if (!('value' in grant.when)) {
+          diagnostic(diagnostics, 'RULE_TRAIT_MODIFIER_CONDITION_VALUE_REQUIRED', `${path}.when.value`, 'Modifier condition requires a comparison value.');
+        }
       }
-      if (grant.mountSelector.mode === 'ordinal'
-        && (!Number.isInteger(grant.mountSelector.ordinal) || Number(grant.mountSelector.ordinal) < 1)) {
-        diagnostic(diagnostics, 'RULE_TRAIT_MODIFIER_SELECTOR_INVALID', `${path}.mountSelector.ordinal`, 'Ordinal mount selectors require a positive whole number.');
+    }
+    validateRepeatedMountSelectors(grant, grant.field, path, diagnostics, 'MODIFIER');
+  }
+  if (dataType === 'suppression' || dataType === 'replacement') {
+    if (typeof grant.target !== 'string' || !grant.target.trim()) {
+      diagnostic(diagnostics, 'RULE_TRAIT_STRUCTURAL_TARGET_REQUIRED', `${path}.target`, 'Structural directives require an exact target path.');
+    } else {
+      const segments = grant.target.split('.').map((segment) => segment.trim()).filter(Boolean);
+      if (!['self', 'this'].includes(segments[0] ?? '')) {
+        diagnostic(diagnostics, 'RULE_TRAIT_STRUCTURAL_ROOT_INVALID', `${path}.target`, "Structural targets must use an explicit 'self' or 'this' root.");
       }
+      if (segments.length < 2) {
+        diagnostic(diagnostics, 'RULE_TRAIT_STRUCTURAL_ROOT_TARGET_INVALID', `${path}.target`, 'Structural directives cannot target the composition root.');
+      }
+    }
+    validateRepeatedMountSelectors(grant, grant.target, path, diagnostics, 'STRUCTURAL');
+    if (!Number.isInteger(grant.priority) || Number(grant.priority) < -1_000 || Number(grant.priority) > 1_000) {
+      diagnostic(diagnostics, 'RULE_TRAIT_STRUCTURAL_PRIORITY_INVALID', `${path}.priority`, 'Structural directive priority must be a whole number from -1000 through 1000.');
+    }
+    if (dataType === 'replacement' && (typeof grant.ref !== 'string' || !grant.ref.trim())) {
+      diagnostic(diagnostics, 'RULE_TRAIT_REPLACEMENT_REFERENCE_REQUIRED', `${path}.ref`, 'Replacement directives require a replacement trait.');
+    }
+    if (dataType === 'suppression' && grant.ref !== undefined) {
+      diagnostic(diagnostics, 'RULE_TRAIT_SUPPRESSION_REFERENCE_INVALID', `${path}.ref`, 'Suppression directives cannot declare a replacement trait.');
     }
   }
 }
@@ -170,7 +400,7 @@ function validateDefinitionShape(
   index: number,
   diagnostics: TraitCompositionDiagnostic[],
 ): void {
-  const path = `definitions[${index}]`;
+  const path = definitionPath(definition, index);
   if (typeof definition.externalId !== 'string' || !definition.externalId.trim()) {
     diagnostic(diagnostics, 'RULE_TRAIT_ID_REQUIRED', `${path}.externalId`, 'A stable trait ID is required.');
   }
@@ -239,23 +469,12 @@ function resolveModifierTerminal(
   path: string[],
   inputs: TraitCompositionSourceDefinition[],
 ): ReturnType<typeof resolveTraitShapeTerminal> {
-  const repeatedIndex = path.findIndex((segment) => segment.endsWith('[]'));
-  if (repeatedIndex < 0) return resolveTraitShapeTerminal(shape, path);
-  if (path.filter((segment) => segment.endsWith('[]')).length !== 1) return undefined;
-  const collectionPath = [
-    ...path.slice(0, repeatedIndex),
-    path[repeatedIndex].replace(/\[\]$/, ''),
-  ];
-  const collection = shape.nodes.find((node) =>
-    node.kind === 'collection' && node.path.join('.') === collectionPath.join('.'));
-  if (!collection || collection.kind !== 'collection' || !collection.acceptedTraitIds.length) return undefined;
-  if (path.slice(repeatedIndex + 1).length !== 1) return undefined;
-  const elementShape = buildTraitShape({
-    definitions: inputs,
-    prerequisiteIds: collection.acceptedTraitIds,
-    prerequisiteMode: collection.acceptsMode,
-  });
-  return resolveTraitShapeTerminal(elementShape, path.slice(repeatedIndex + 1));
+  if (!path.some((segment) => segment.endsWith('[]'))) {
+    return resolveTraitShapeTerminal(shape, path);
+  }
+  return traitShapeTerminalPaths(shape, inputs)
+    .find((candidate) => candidate.path.join('.') === path.join('.'))
+    ?.terminal;
 }
 
 function compileActivationEdges(inputs: TraitCompositionSourceDefinition[]): CompiledTraitActivationEdge[] {
@@ -330,6 +549,276 @@ function compileActivationChoices(inputs: TraitCompositionSourceDefinition[]): C
   }).sort((left, right) => left.traitId.localeCompare(right.traitId));
 }
 
+function compileStructuralDirectives(
+  inputs: TraitCompositionSourceDefinition[],
+  diagnostics: TraitCompositionDiagnostic[],
+): CompiledTraitStructuralDirective[] {
+  const knownTraitIds = new Set(inputs.map((definition) => definition.externalId));
+  const directives: CompiledTraitStructuralDirective[] = [];
+  inputs.forEach((definition, definitionIndex) => {
+    if (!Array.isArray(definition.body.grants)) return;
+    const shape = buildTraitShape({
+      definitions: inputs,
+      prerequisiteIds: [definition.externalId],
+      prerequisiteMode: 'all',
+    });
+    definition.body.grants.forEach((value, grantIndex) => {
+      if (!record(value)
+        || (value.dataType !== 'suppression' && value.dataType !== 'replacement')
+        || typeof value.target !== 'string'
+        || !Number.isInteger(value.priority)) return;
+      const path = normalizedModifierPath(value.target);
+      const repeatedIndex = path.findIndex((segment) => segment.endsWith('[]'));
+      const targetPath = repeatedIndex < 0
+        ? path
+        : path.map((segment) => segment.replace(/\[\]$/, ''));
+      const target = shape.nodes.find((node) => node.path.join('.') === targetPath.join('.'));
+      const diagnosticPath = `${definitionPath(definition, definitionIndex)}.body.grants[${grantIndex}]`;
+      const validTarget = repeatedIndex < 0
+        ? target?.kind === 'branch'
+        : repeatedIndex === path.length - 1 && target?.kind === 'collection';
+      if (!validTarget) {
+        diagnostic(
+          diagnostics,
+          'RULE_TRAIT_STRUCTURAL_TARGET_INVALID',
+          `${diagnosticPath}.target`,
+          `Structural target '${value.target}' must resolve to a guaranteed trait branch or selected collection entry.`,
+        );
+        return;
+      }
+      if (value.dataType === 'replacement'
+        && (typeof value.ref !== 'string' || !knownTraitIds.has(value.ref))) {
+        diagnostic(
+          diagnostics,
+          'RULE_TRAIT_REPLACEMENT_REFERENCE_MISSING',
+          `${diagnosticPath}.ref`,
+          `Replacement trait '${String(value.ref)}' is not in the compilation set.`,
+        );
+        return;
+      }
+      if (value.dataType === 'replacement'
+        && target?.kind === 'collection'
+        && typeof value.ref === 'string'
+        && !traitSatisfiesCollection(
+          value.ref,
+          target.acceptedTraitIds,
+          target.acceptsMode,
+          inputs,
+        )) {
+        diagnostic(
+          diagnostics,
+          'RULE_TRAIT_REPLACEMENT_COLLECTION_TYPE_MISMATCH',
+          `${diagnosticPath}.ref`,
+          `Replacement trait '${value.ref}' does not satisfy the collection contract at '${value.target}'.`,
+        );
+        return;
+      }
+      directives.push({
+        sourceTraitId: definition.externalId,
+        kind: value.dataType,
+        anchor: modifierAnchor(value.target),
+        path,
+        priority: Number(value.priority),
+        ...(value.dataType === 'replacement' ? { replacementTraitId: value.ref as string } : {}),
+        ...compiledMountSelectors(value),
+      });
+    });
+  });
+  return directives.sort((left, right) =>
+    left.sourceTraitId.localeCompare(right.sourceTraitId)
+    || left.path.join('.').localeCompare(right.path.join('.'))
+    || left.priority - right.priority
+    || left.kind.localeCompare(right.kind)
+    || [
+      mountSelectorKey(left.mountSelector),
+      ...(left.mountSelectors ?? []).map(mountSelectorKey),
+    ].join('|').localeCompare([
+      mountSelectorKey(right.mountSelector),
+      ...(right.mountSelectors ?? []).map(mountSelectorKey),
+    ].join('|'))
+    || (left.replacementTraitId ?? '').localeCompare(right.replacementTraitId ?? ''));
+}
+
+function cloneTraitNode(node: TraitShapeNode): TraitShapeNode {
+  return node.kind === 'collection'
+    ? {
+      ...node,
+      path: [...node.path],
+      acceptedTraitIds: [...node.acceptedTraitIds],
+      entries: node.entries.map((entry) => ({ ...entry })),
+    }
+    : {
+      ...node,
+      path: [...node.path],
+      ...(node.sourceTraitIds ? { sourceTraitIds: [...node.sourceTraitIds] } : {}),
+      ...(node.kind === 'terminal' && node.allowedValues
+        ? { allowedValues: [...node.allowedValues] }
+        : {}),
+    };
+}
+
+function rewriteGuaranteedContracts(
+  contracts: CompiledTraitContract[],
+  directives: CompiledTraitStructuralDirective[],
+  activationEdges: CompiledTraitActivationEdge[],
+  activationChoices: CompiledTraitActivationChoice[],
+  diagnostics: TraitCompositionDiagnostic[],
+): CompiledTraitContract[] {
+  const contractsById = new Map(contracts.map((contract) => [contract.traitId, contract]));
+  const edgesBySource = new Map<string, CompiledTraitActivationEdge[]>();
+  for (const edge of activationEdges) {
+    const grouped = edgesBySource.get(edge.fromTraitId) ?? [];
+    grouped.push(edge);
+    edgesBySource.set(edge.fromTraitId, grouped);
+  }
+  const choiceTraits = new Set(activationChoices.map((choice) => choice.traitId));
+  const cache = new Map<string, TraitShapeNode[]>();
+  const effectiveNodes = (rootTraitId: string, ancestors: string[] = []): TraitShapeNode[] => {
+    const cached = cache.get(rootTraitId);
+    if (cached) return cached.map(cloneTraitNode);
+    if (ancestors.includes(rootTraitId)) {
+      diagnostic(
+        diagnostics,
+        'RULE_TRAIT_STRUCTURAL_REPLACEMENT_CYCLE',
+        `traits[${JSON.stringify(rootTraitId)}].structuralDirectives`,
+        `Structural replacement cycle detected: ${[...ancestors, rootTraitId].join(' → ')}.`,
+      );
+      return [];
+    }
+    const contract = contractsById.get(rootTraitId);
+    if (!contract) return [];
+    let nodes = contract.nodes.map(cloneTraitNode);
+    const sourceMounts: Array<{ traitId: string; mountPath: string[]; chain: string[] }> = [{
+      traitId: rootTraitId,
+      mountPath: [],
+      chain: [rootTraitId],
+    }];
+    for (let index = 0; index < sourceMounts.length; index += 1) {
+      const current = sourceMounts[index];
+      if (choiceTraits.has(current.traitId)) continue;
+      for (const edge of edgesBySource.get(current.traitId) ?? []) {
+        if (current.chain.includes(edge.toTraitId)) continue;
+        const segments = (edge.path ?? '').split('.').map((segment) => segment.trim()).filter(Boolean);
+        const anchor = segments[0];
+        const relative = (anchor === 'self' || anchor === 'this' ? segments.slice(1) : segments)
+          .map((segment) => segment.replace(/\[\]$/, ''));
+        const mountPath = edge.kind === 'requires'
+          ? current.mountPath
+          : anchor === 'self'
+            ? relative
+            : [...current.mountPath, ...relative];
+        sourceMounts.push({
+          traitId: edge.toTraitId,
+          mountPath,
+          chain: [...current.chain, edge.toTraitId],
+        });
+      }
+    }
+    const applications = sourceMounts.flatMap((source) =>
+      directives
+        .filter((directive) => directive.sourceTraitId === source.traitId)
+        .map((directive) => ({
+          directive,
+          targetPath: [
+            ...(directive.anchor === 'this' ? source.mountPath : []),
+            ...directive.path.map((segment) => segment.replace(/\[\]$/, '')),
+          ],
+        })))
+      .sort((left, right) =>
+        left.targetPath.length - right.targetPath.length
+        || left.targetPath.join('.').localeCompare(right.targetPath.join('.'))
+        || right.directive.priority - left.directive.priority);
+    const grouped = new Map<string, typeof applications>();
+    for (const application of applications) {
+      const key = application.targetPath.join('\0');
+      const candidates = grouped.get(key) ?? [];
+      candidates.push(application);
+      grouped.set(key, candidates);
+    }
+    for (const candidates of grouped.values()) {
+      const targetPath = candidates[0].targetPath;
+      const priority = Math.max(...candidates.map(({ directive }) => directive.priority));
+      const winners = candidates.filter(({ directive }) => directive.priority === priority);
+      const kinds = new Set(winners.map(({ directive }) => directive.kind));
+      const replacements = new Set(winners.map(({ directive }) => directive.replacementTraitId ?? ''));
+      if (kinds.size !== 1
+        || (winners[0].directive.kind === 'replacement' && replacements.size !== 1)) {
+        diagnostic(
+          diagnostics,
+          'RULE_TRAIT_STRUCTURAL_DIRECTIVE_CONFLICT',
+          `traits[${JSON.stringify(rootTraitId)}].${targetPath.join('.')}`,
+          `Equal-priority structural directives conflict at '${targetPath.join('.')}'.`,
+        );
+        continue;
+      }
+      const winner = winners[0].directive;
+      const targetIndex = nodes.findIndex((node) => node.path.join('\0') === targetPath.join('\0'));
+      if (targetIndex < 0) continue;
+      const target = nodes[targetIndex];
+      const collectionSelector = winner.mountSelectors?.at(-1) ?? winner.mountSelector;
+      if (collectionSelector && target.kind === 'collection') {
+        const expandedEntries = target.entries.flatMap((entry) =>
+          Array.from({ length: entry.count }, () => ({ ...entry, count: 1 })));
+        const selected = collectionSelector.mode === 'all'
+          ? expandedEntries.map((_, index) => index)
+          : collectionSelector.mode === 'ordinal'
+            ? [collectionSelector.ordinal - 1].filter((index) => index < expandedEntries.length)
+            : collectionSelector.mode === 'trait'
+              ? expandedEntries.flatMap((entry, index) =>
+                entry.traitId === collectionSelector.traitId ? [index] : [])
+              : expandedEntries.flatMap((entry, index) =>
+                contractsById.get(entry.traitId)?.tags.includes(collectionSelector.tag) ? [index] : []);
+        for (const index of selected) {
+          if (winner.kind === 'suppression') {
+            expandedEntries[index] = { ...expandedEntries[index], count: 0 };
+          } else {
+            expandedEntries[index] = {
+              traitId: winner.replacementTraitId!,
+              count: 1,
+              sourceTraitId: winner.replacementTraitId!,
+            };
+          }
+        }
+        const rebuilt = new Map<string, (typeof target.entries)[number]>();
+        for (const entry of expandedEntries.filter((entry) => entry.count > 0)) {
+          const key = `${entry.traitId}\0${entry.sourceTraitId ?? ''}`;
+          const existing = rebuilt.get(key);
+          if (existing) existing.count += 1;
+          else rebuilt.set(key, { ...entry });
+        }
+        nodes[targetIndex] = { ...target, entries: [...rebuilt.values()] };
+        continue;
+      }
+      if (target.kind !== 'branch') continue;
+      nodes = nodes.filter((node) =>
+        !targetPath.every((segment, index) => node.path[index] === segment));
+      if (winner.kind === 'replacement') {
+        const replacementTraitId = winner.replacementTraitId!;
+        const replacement = contractsById.get(replacementTraitId);
+        if (!replacement) continue;
+        nodes.push({
+          kind: 'branch',
+          path: targetPath,
+          label: replacement.name,
+          traitId: replacementTraitId,
+          sourceTraitId: replacementTraitId,
+        });
+        nodes.push(...effectiveNodes(replacementTraitId, [...ancestors, rootTraitId]).map((node) => ({
+          ...cloneTraitNode(node),
+          path: [...targetPath, ...node.path],
+        })));
+      }
+    }
+    nodes.sort((left, right) => left.path.join('.').localeCompare(right.path.join('.')));
+    cache.set(rootTraitId, nodes.map(cloneTraitNode));
+    return nodes;
+  };
+  return contracts.map((contract) => ({
+    ...contract,
+    nodes: effectiveNodes(contract.traitId),
+  }));
+}
+
 function compileModifiers(
   definition: TraitCompositionSourceDefinition,
   definitionIndex: number,
@@ -345,7 +834,7 @@ function compileModifiers(
       || !('amount' in value)) return [];
     const path = normalizedModifierPath(value.field);
     const terminal = resolveModifierTerminal(shape, path, inputs);
-    const diagnosticPath = `definitions[${definitionIndex}].body.grants[${grantIndex}]`;
+    const diagnosticPath = `${definitionPath(definition, definitionIndex)}.body.grants[${grantIndex}]`;
     if (!terminal) {
       diagnostic(
         diagnostics,
@@ -365,12 +854,18 @@ function compileModifiers(
       );
       return [];
     }
-    const amount = value.amount;
+    const authoredAmount = value.amount;
+    const numericAmount = record(authoredAmount)
+      && typeof authoredAmount.value === 'number'
+      && Number.isFinite(authoredAmount.value)
+      && isCanonicalUnitId(authoredAmount.unit)
+      ? { value: authoredAmount.value, unit: authoredAmount.unit }
+      : null;
     const amountIsValid = terminal.dataType === 'number'
-      ? typeof amount === 'number' && Number.isFinite(amount)
+      ? (typeof authoredAmount === 'number' && Number.isFinite(authoredAmount)) || numericAmount !== null
       : terminal.dataType === 'boolean'
-        ? typeof amount === 'boolean'
-        : typeof amount === 'string';
+        ? typeof authoredAmount === 'boolean'
+        : typeof authoredAmount === 'string';
     if (!amountIsValid) {
       diagnostic(
         diagnostics,
@@ -379,6 +874,80 @@ function compileModifiers(
         `Modifier amount must match the ${terminal.dataType} target '${value.field}'.`,
       );
       return [];
+    }
+    const targetUnit: CanonicalUnitId = terminal.unit ?? '1';
+    const expectsScalar = operation === 'multiplies' || operation === 'divides';
+    const sourceUnit = numericAmount?.unit ?? (expectsScalar ? '1' : targetUnit);
+    if (terminal.dataType === 'number' && (
+      expectsScalar
+        ? sourceUnit !== '1'
+        : !unitsAreCompatible(sourceUnit, targetUnit)
+    )) {
+      diagnostic(
+        diagnostics,
+        'RULE_TRAIT_MODIFIER_UNIT_INCOMPATIBLE',
+        `${diagnosticPath}.amount`,
+        expectsScalar
+          ? `${operation} requires a dimensionless amount.`
+          : `Unit '${sourceUnit}' is incompatible with target unit '${targetUnit}'.`,
+      );
+      return [];
+    }
+    const amount = terminal.dataType === 'number'
+      ? expectsScalar
+        ? numericAmount?.value ?? authoredAmount as number
+        : convertUnitValue(numericAmount?.value ?? authoredAmount as number, sourceUnit, targetUnit)!
+      : authoredAmount;
+    let compiledCondition: CompiledTraitModifier['condition'];
+    if (record(value.when)
+      && ['equals', 'gte', 'lte'].includes(String(value.when.operator))
+      && 'value' in value.when) {
+      const authoredCondition = value.when.value;
+      const numericCondition = record(authoredCondition)
+        && typeof authoredCondition.value === 'number'
+        && Number.isFinite(authoredCondition.value)
+        && isCanonicalUnitId(authoredCondition.unit)
+        ? { value: authoredCondition.value, unit: authoredCondition.unit }
+        : null;
+      const conditionValueValid = terminal.dataType === 'number'
+        ? (typeof authoredCondition === 'number' && Number.isFinite(authoredCondition)) || numericCondition !== null
+        : terminal.dataType === 'boolean'
+          ? typeof authoredCondition === 'boolean'
+          : typeof authoredCondition === 'string';
+      const conditionSourceUnit = numericCondition?.unit ?? targetUnit;
+      if (!conditionValueValid
+        || (terminal.dataType === 'number' && !unitsAreCompatible(conditionSourceUnit, targetUnit))
+        || (terminal.dataType !== 'number' && value.when.operator !== 'equals')
+        || (terminal.dataType === 'enum' && terminal.allowedValues?.length
+          && !terminal.allowedValues.includes(String(authoredCondition)))) {
+        diagnostic(
+          diagnostics,
+          'RULE_TRAIT_MODIFIER_CONDITION_VALUE_INVALID',
+          `${diagnosticPath}.when.value`,
+          `Condition value must be compatible with the ${terminal.dataType} target '${value.field}'.`,
+        );
+        return [];
+      }
+      const conditionValue = terminal.dataType === 'number'
+        ? convertUnitValue(
+          numericCondition?.value ?? authoredCondition as number,
+          conditionSourceUnit,
+          targetUnit,
+        )!
+        : authoredCondition as string | boolean;
+      compiledCondition = {
+        operator: value.when.operator as 'equals' | 'gte' | 'lte',
+        value: conditionValue,
+        ...(terminal.dataType === 'number'
+          ? {
+            authoredValue: {
+              value: numericCondition?.value ?? authoredCondition as number,
+              unit: conditionSourceUnit,
+            },
+            normalizedValue: { value: conditionValue as number, unit: targetUnit },
+          }
+          : {}),
+      };
     }
     if (operation === 'divides' && amount === 0) {
       diagnostic(
@@ -405,11 +974,22 @@ function compileModifiers(
       operation,
       path,
       amount: amount as string | number | boolean,
-      ...(record(value.mountSelector) && value.mountSelector.mode === 'all'
-        ? { mountSelector: { mode: 'all' as const } }
-        : record(value.mountSelector) && value.mountSelector.mode === 'ordinal'
-          ? { mountSelector: { mode: 'ordinal' as const, ordinal: Number(value.mountSelector.ordinal) } }
-          : {}),
+      ...(typeof value.priority === 'number' && value.priority !== 0 ? { priority: value.priority } : {}),
+      ...(compiledCondition ? { condition: compiledCondition } : {}),
+      ...(terminal.dataType === 'number'
+        ? {
+          authoredAmount: {
+            value: numericAmount?.value ?? authoredAmount as number,
+            unit: sourceUnit,
+          },
+          normalizedAmount: {
+            value: amount as number,
+            unit: expectsScalar ? '1' as const : targetUnit,
+          },
+          targetUnit,
+        }
+        : {}),
+      ...compiledMountSelectors(value),
     }];
   });
 }
@@ -433,14 +1013,17 @@ export function compileTraitCompositions(inputs: TraitCompositionSourceDefinitio
       diagnostic(
         diagnostics,
         'RULE_TRAIT_ID_DUPLICATE',
-        `definitions[${index}].externalId`,
-        `Trait ID '${definition.externalId}' duplicates definitions[${existingIndex}].`,
+        `${definitionPath(definition, index)}.externalId`,
+        `Trait ID '${definition.externalId}' duplicates ${definitionPath(inputs[existingIndex], existingIndex)}.`,
       );
     } else {
       definitionIndexById.set(definition.externalId, index);
     }
   });
-  if (diagnostics.some((item) => item.severity === 'error')) return { valid: false, diagnostics };
+  if (diagnostics.some((item) => item.severity === 'error')) {
+    contextualizeDiagnostics(diagnostics, inputs);
+    return { valid: false, diagnostics };
+  }
 
   const contracts = inputs.map((definition, index) => {
     const shape = buildTraitShape({
@@ -452,7 +1035,7 @@ export function compileTraitCompositions(inputs: TraitCompositionSourceDefinitio
       diagnostic(
         diagnostics,
         `RULE_TRAIT_${item.code.replace(/-/g, '_').toUpperCase()}`,
-        `definitions[${index}].effectiveShape.${item.path.length ? `self.${item.path.join('.')}` : 'self'}`,
+        `${definitionPath(definition, index)}.effectiveShape.${item.path.length ? `self.${item.path.join('.')}` : 'self'}`,
         item.message,
       );
     }
@@ -461,6 +1044,7 @@ export function compileTraitCompositions(inputs: TraitCompositionSourceDefinitio
       name: definition.name,
       nodes: shape.nodes,
       modifiers: compileModifiers(definition, index, shape, inputs, diagnostics),
+      tags: [...new Set(definition.tags ?? [])].sort(),
     };
   });
 
@@ -476,7 +1060,7 @@ export function compileTraitCompositions(inputs: TraitCompositionSourceDefinitio
           diagnostic(
             diagnostics,
             'RULE_TRAIT_REFERENCE_MISSING',
-            `definitions[${definitionIndex}].body.grants[${grantIndex}].acceptedTraits[${acceptedIndex}]`,
+            `${definitionPath(definition, definitionIndex)}.body.grants[${grantIndex}].acceptedTraits[${acceptedIndex}]`,
             `Accepted base trait '${traitId}' is not in the compilation set.`,
           );
         }
@@ -484,9 +1068,20 @@ export function compileTraitCompositions(inputs: TraitCompositionSourceDefinitio
     });
   });
 
+  const structuralDirectives = compileStructuralDirectives(inputs, diagnostics);
+  const activationEdges = compileActivationEdges(inputs);
+  const activationChoices = compileActivationChoices(inputs);
+  const rewrittenContracts = rewriteGuaranteedContracts(
+    contracts,
+    structuralDirectives,
+    activationEdges,
+    activationChoices,
+    diagnostics,
+  );
+  contextualizeDiagnostics(diagnostics, inputs);
   const valid = !diagnostics.some((item) => item.severity === 'error');
   if (!valid) return { valid, diagnostics };
-  const normalizedContracts = [...contracts].sort((left, right) => left.traitId.localeCompare(right.traitId));
+  const normalizedContracts = [...rewrittenContracts].sort((left, right) => left.traitId.localeCompare(right.traitId));
   return {
     valid: true,
     diagnostics,
@@ -497,8 +1092,9 @@ export function compileTraitCompositions(inputs: TraitCompositionSourceDefinitio
         [...inputs].sort((left, right) => left.externalId.localeCompare(right.externalId)),
       )).digest('hex'),
       traits: normalizedContracts,
-      activationEdges: compileActivationEdges(inputs),
-      activationChoices: compileActivationChoices(inputs),
+      activationEdges,
+      activationChoices,
+      structuralDirectives,
     },
   };
 }

@@ -1,7 +1,12 @@
 'use client';
 
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
-import type { RuleDefinitionResource } from '@/lib/rule-sets';
+import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import type { RuleDefinitionResource } from '../lib/rule-sets';
+import {
+  searchTraitModifierPaths,
+  traitModifierPathOptions,
+  type TraitModifierPathOption,
+} from '../lib/trait-modifier-paths';
 import {
   buildTraitShape,
   resolveTraitShapeTerminal,
@@ -9,13 +14,27 @@ import {
   type TraitShape,
   type TraitShapeGrant,
   type TraitShapeNode,
-} from '@/lib/trait-shape';
+} from '../lib/trait-shape';
+import { diffTraitShapes, type TraitShapeChange } from '../lib/trait-shape-diff';
+import {
+  compatibleUnits,
+  isCanonicalUnitId,
+  UNIT_DEFINITIONS,
+  unitsAreCompatible,
+  type CanonicalUnitId,
+} from '@world-building/common';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-export type GrantDataType = 'text' | 'number' | 'boolean' | 'enum' | 'trait' | 'trait-collection' | 'modifier' | 'slot' | 'slot-affinity';
-export type ModifierOperation = 'increases' | 'decreases' | 'multiplies' | 'divides' | 'sets';
-export type ModifierMountSelectorMode = 'all' | 'ordinal';
+export type GrantDataType = 'text' | 'number' | 'boolean' | 'enum' | 'trait' | 'trait-collection' | 'modifier' | 'suppression' | 'replacement' | 'slot' | 'slot-affinity';
+export type ModifierOperation = 'increases' | 'decreases' | 'multiplies' | 'divides' | 'sets' | 'at-least' | 'at-most';
+export type ModifierMountSelectorMode = 'all' | 'ordinal' | 'trait' | 'tag';
+type MountSelectorDraft = {
+  mode: ModifierMountSelectorMode;
+  ordinal: string;
+  traitId: string;
+  tag: string;
+};
 
 export interface GrantDraft {
   _id: string;
@@ -27,6 +46,7 @@ export interface GrantDraft {
   min: string;
   max: string;
   defaultNum: string;
+  unit: CanonicalUnitId | '';
   // text | boolean ('true'/'false') | enum default
   defaultStr: string;
   // enum allowed values (comma-separated)
@@ -41,8 +61,21 @@ export interface GrantDraft {
   modifierOperation: ModifierOperation;
   modifierFieldSegments: string[];
   modifierAmount: string;
+  modifierAmountUnit: CanonicalUnitId | '';
+  modifierPriority: string;
+  modifierConditionEnabled: boolean;
+  modifierConditionOperator: 'equals' | 'gte' | 'lte';
+  modifierConditionValue: string;
+  modifierConditionUnit: CanonicalUnitId | '';
   modifierMountSelectorMode: ModifierMountSelectorMode;
   modifierMountOrdinal: string;
+  modifierMountSelectors: MountSelectorDraft[];
+  // structural directive
+  structuralTargetSegments: string[];
+  structuralPriority: string;
+  structuralMountSelectorMode: ModifierMountSelectorMode;
+  structuralMountOrdinal: string;
+  structuralMountSelectors: MountSelectorDraft[];
   // slot
   slotCount: string;
   slotGrantTypes: string[];
@@ -65,6 +98,12 @@ export type TraitGrantsBody = {
   prerequisites?: PrerequisiteSpec;
 };
 
+type AuthoredMountSelector =
+  | { mode: 'all' }
+  | { mode: 'ordinal'; ordinal: number }
+  | { mode: 'trait'; traitId: string }
+  | { mode: 'tag'; tag: string };
+
 type GrantEntry = {
   key?: string;
   label?: string;
@@ -72,6 +111,7 @@ type GrantEntry = {
   required?: boolean;
   min?: number;
   max?: number;
+  unit?: CanonicalUnitId;
   default?: number | string | boolean;
   allowedValues?: string[];
   ref?: string;
@@ -80,12 +120,21 @@ type GrantEntry = {
   // modifier
   operation?: ModifierOperation;
   field?: string;
-  amount?: boolean | number | string;
-  mountSelector?: { mode: 'all' } | { mode: 'ordinal'; ordinal: number };
+  amount?: boolean | number | string | { value: number; unit: CanonicalUnitId };
+  priority?: number;
+  when?: {
+    operator: 'equals' | 'gte' | 'lte';
+    value: boolean | number | string | { value: number; unit: CanonicalUnitId };
+  };
+  mountSelector?: AuthoredMountSelector;
+  mountSelectors?: AuthoredMountSelector[];
+  target?: string;
   // slot
   count?: number;
   /** Type tags on the slot (e.g. ["armor", "hands"]). Replaces the old single slotType string. */
   slotTypes?: string[];
+  /** Legacy trait/1 slot vocabulary. */
+  slotType?: string;
   acceptedTraits?: string[];
   /** Matching mode for acceptedTraits: 'any' (OR) or 'all' (AND). Omitted means 'any'. */
   acceptsMode?: 'any' | 'all';
@@ -95,14 +144,28 @@ type GrantEntry = {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+function fieldLabel(fieldKey: string): string {
+  return fieldKey
+    .replace(/_\d+$/, '')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/_/g, ' ')
+    .replace(/^./, (character) => character.toUpperCase());
+}
+
 export function newGrant(dataType: GrantDataType): GrantDraft {
   return {
     _id: crypto.randomUUID(),
     key: '', label: '', dataType, required: true,
-    min: '', max: '', defaultNum: '', defaultStr: '', allowedValues: '', ref: '',
+    min: '', max: '', defaultNum: '', unit: '1', defaultStr: '', allowedValues: '', ref: '',
     traitPlacement: 'named', traitCount: '1', traitCollection: '', traitParentPath: '',
-    modifierOperation: 'increases', modifierFieldSegments: [], modifierAmount: '',
+    modifierOperation: 'increases', modifierFieldSegments: [], modifierAmount: '', modifierAmountUnit: '',
+    modifierPriority: '0', modifierConditionEnabled: false, modifierConditionOperator: 'equals',
+    modifierConditionValue: '', modifierConditionUnit: '',
     modifierMountSelectorMode: 'all', modifierMountOrdinal: '1',
+    modifierMountSelectors: [],
+    structuralTargetSegments: [], structuralPriority: '0',
+    structuralMountSelectorMode: 'all', structuralMountOrdinal: '1',
+    structuralMountSelectors: [],
     slotCount: '1', slotGrantTypes: [], acceptedTraits: [], acceptedTraitsMode: 'any', slotAffinityTypes: [], slotAffinityMode: 'any',
   };
 }
@@ -112,6 +175,19 @@ function traitShapeGrantsFromDraft(grants: GrantDraft[]): TraitShapeGrant[] {
     key: grant.key,
     label: grant.label,
     dataType: grant.dataType,
+    ...(['text', 'number', 'boolean', 'enum'].includes(grant.dataType)
+      ? { required: grant.required }
+      : {}),
+    ...(grant.dataType === 'number' && grant.min !== '' ? { min: Number(grant.min) } : {}),
+    ...(grant.dataType === 'number' && grant.max !== '' ? { max: Number(grant.max) } : {}),
+    ...(grant.dataType === 'number' && grant.defaultNum !== '' ? { default: Number(grant.defaultNum) } : {}),
+    ...(grant.dataType === 'number' && grant.unit ? { unit: grant.unit } : {}),
+    ...((grant.dataType === 'text' || grant.dataType === 'enum') && grant.defaultStr !== ''
+      ? { default: grant.defaultStr }
+      : {}),
+    ...(grant.dataType === 'boolean' && (grant.defaultStr === 'true' || grant.defaultStr === 'false')
+      ? { default: grant.defaultStr === 'true' }
+      : {}),
     ref: grant.ref,
     acceptedTraits: grant.acceptedTraits,
     acceptsMode: grant.acceptedTraitsMode,
@@ -128,6 +204,42 @@ function traitShapeGrantsFromDraft(grants: GrantDraft[]): TraitShapeGrant[] {
       ? { allowedValues: grant.allowedValues.split(',').map((value) => value.trim()).filter(Boolean) }
       : {}),
   }));
+}
+
+function authoredMountSelector(draft: MountSelectorDraft): AuthoredMountSelector {
+  if (draft.mode === 'ordinal') return { mode: 'ordinal', ordinal: Number(draft.ordinal) };
+  if (draft.mode === 'trait') return { mode: 'trait', traitId: draft.traitId.trim() };
+  if (draft.mode === 'tag') return { mode: 'tag', tag: draft.tag.trim() };
+  return { mode: 'all' };
+}
+
+function mountSelectorDraft(selector?: AuthoredMountSelector): MountSelectorDraft {
+  return {
+    mode: selector?.mode ?? 'all',
+    ordinal: selector?.mode === 'ordinal' ? String(selector.ordinal) : '1',
+    traitId: selector?.mode === 'trait' ? selector.traitId : '',
+    tag: selector?.mode === 'tag' ? selector.tag : '',
+  };
+}
+
+function writeRepeatedSelectors(
+  entry: GrantEntry,
+  repeatedCount: number,
+  selectors: MountSelectorDraft[],
+  legacyMode: ModifierMountSelectorMode,
+  legacyOrdinal: string,
+): void {
+  if (!repeatedCount) return;
+  const drafts = Array.from({ length: repeatedCount }, (_, index) =>
+    selectors[index] ?? {
+      mode: index === 0 ? legacyMode : 'all',
+      ordinal: index === 0 ? legacyOrdinal : '1',
+      traitId: '',
+      tag: '',
+    });
+  const authored = drafts.map(authoredMountSelector);
+  if (repeatedCount === 1) entry.mountSelector = authored[0];
+  else entry.mountSelectors = authored;
 }
 
 export function buildGrantsBody(
@@ -148,11 +260,15 @@ export function buildGrantsBody(
       const entry: GrantEntry = { dataType: g.dataType };
       if (g.key.trim() && (g.dataType !== 'trait' || metamodelVersion === 'trait/1' && g.traitPlacement === 'named')) entry.key = g.key.trim();
       if (g.label.trim()) entry.label = g.label.trim();
-      if (g.dataType !== 'trait' && g.required) entry.required = true;
+      if (g.dataType !== 'trait'
+        && g.dataType !== 'suppression'
+        && g.dataType !== 'replacement'
+        && g.required) entry.required = true;
       if (g.dataType === 'number') {
         if (g.min !== '') entry.min = Number(g.min);
         if (g.max !== '') entry.max = Number(g.max);
         if (g.defaultNum !== '') entry.default = Number(g.defaultNum);
+        if (g.unit) entry.unit = g.unit;
       } else if (g.dataType === 'text' || g.dataType === 'enum') {
         if (g.defaultStr.trim()) entry.default = g.defaultStr.trim();
         if (g.dataType === 'enum') {
@@ -189,11 +305,13 @@ export function buildGrantsBody(
         entry.operation = g.modifierOperation;
         const segs = g.modifierFieldSegments.filter((s) => s.trim());
         if (segs.length > 0) entry.field = segs.join('.');
-        if (segs.some((segment) => segment.endsWith('[]'))) {
-          entry.mountSelector = g.modifierMountSelectorMode === 'ordinal'
-            ? { mode: 'ordinal', ordinal: Number(g.modifierMountOrdinal) }
-            : { mode: 'all' };
-        }
+        writeRepeatedSelectors(
+          entry,
+          segs.filter((segment) => segment.endsWith('[]')).length,
+          g.modifierMountSelectors,
+          g.modifierMountSelectorMode,
+          g.modifierMountOrdinal,
+        );
         if (g.modifierAmount !== '') {
           const resolved = resolveTerminalGrant(g.modifierFieldSegments, traitShape, traitDefinitions);
           const tt = resolved?.dataType ?? null;
@@ -203,9 +321,47 @@ export function buildGrantsBody(
             entry.amount = g.modifierAmount;
           } else {
             const n = Number(g.modifierAmount);
-            entry.amount = isNaN(n) ? g.modifierAmount : n;
+            entry.amount = isNaN(n)
+              ? g.modifierAmount
+              : g.modifierAmountUnit
+                ? { value: n, unit: g.modifierAmountUnit }
+                : n;
           }
         }
+        if (g.modifierPriority !== '' && Number(g.modifierPriority) !== 0) {
+          entry.priority = Number(g.modifierPriority);
+        }
+        if (g.modifierConditionEnabled && g.modifierConditionValue !== '') {
+          const resolved = resolveTerminalGrant(g.modifierFieldSegments, traitShape, traitDefinitions);
+          const tt = resolved?.dataType ?? null;
+          let conditionValue: NonNullable<GrantEntry['when']>['value'];
+          if (tt === 'boolean') {
+            conditionValue = g.modifierConditionValue === 'true';
+          } else if (tt === 'text' || tt === 'enum') {
+            conditionValue = g.modifierConditionValue;
+          } else {
+            const numericValue = Number(g.modifierConditionValue);
+            conditionValue = g.modifierConditionUnit
+              ? { value: numericValue, unit: g.modifierConditionUnit }
+              : numericValue;
+          }
+          entry.when = {
+            operator: g.modifierConditionOperator,
+            value: conditionValue,
+          };
+        }
+      } else if (g.dataType === 'suppression' || g.dataType === 'replacement') {
+        const segments = g.structuralTargetSegments.filter((segment) => segment.trim());
+        if (segments.length > 0) entry.target = segments.join('.');
+        writeRepeatedSelectors(
+          entry,
+          segments.filter((segment) => segment.endsWith('[]')).length,
+          g.structuralMountSelectors,
+          g.structuralMountSelectorMode,
+          g.structuralMountOrdinal,
+        );
+        entry.priority = Number(g.structuralPriority);
+        if (g.dataType === 'replacement' && g.ref) entry.ref = g.ref;
       } else if (g.dataType === 'slot') {
         const tags = g.slotGrantTypes.filter(Boolean);
         if (tags.length > 0) entry.slotTypes = tags;
@@ -257,6 +413,7 @@ export function grantsDraftFromBody(body: Record<string, unknown>): GrantDraft[]
     min: g.min != null ? String(g.min) : '',
     max: g.max != null ? String(g.max) : '',
     defaultNum: g.default != null && g.dataType === 'number' ? String(g.default) : '',
+    unit: g.dataType === 'number' && isCanonicalUnitId(g.unit) ? g.unit : '',
     defaultStr: g.default != null && g.dataType !== 'number' && g.dataType !== 'trait'
       ? String(g.default) : '',
     allowedValues: Array.isArray(g.allowedValues) ? g.allowedValues.join(', ') : '',
@@ -274,13 +431,37 @@ export function grantsDraftFromBody(body: Record<string, unknown>): GrantDraft[]
     key: g.at ? g.at.split('.').at(-1) ?? '' : g.key ?? '',
     modifierOperation: (g.operation ?? 'increases') as ModifierOperation,
     modifierFieldSegments: g.field ? g.field.split('.') : [],
-    modifierAmount: g.amount != null ? String(g.amount) : '',
+    modifierAmount: g.amount != null
+      ? typeof g.amount === 'object' ? String(g.amount.value) : String(g.amount)
+      : '',
+    modifierAmountUnit: typeof g.amount === 'object' && isCanonicalUnitId(g.amount.unit)
+      ? g.amount.unit
+      : '',
+    modifierPriority: g.priority != null ? String(g.priority) : '0',
+    modifierConditionEnabled: g.when != null,
+    modifierConditionOperator: g.when?.operator ?? 'equals',
+    modifierConditionValue: g.when != null
+      ? typeof g.when.value === 'object' ? String(g.when.value.value) : String(g.when.value)
+      : '',
+    modifierConditionUnit: g.when != null
+      && typeof g.when.value === 'object'
+      && isCanonicalUnitId(g.when.value.unit)
+      ? g.when.value.unit
+      : '',
     modifierMountSelectorMode: g.mountSelector?.mode === 'ordinal' ? 'ordinal' : 'all',
     modifierMountOrdinal: g.mountSelector?.mode === 'ordinal' ? String(g.mountSelector.ordinal) : '1',
+    modifierMountSelectors: (g.mountSelectors ?? (g.mountSelector ? [g.mountSelector] : []))
+      .map(mountSelectorDraft),
+    structuralTargetSegments: g.target ? g.target.split('.') : [],
+    structuralPriority: g.priority != null ? String(g.priority) : '0',
+    structuralMountSelectorMode: g.mountSelector?.mode === 'ordinal' ? 'ordinal' : 'all',
+    structuralMountOrdinal: g.mountSelector?.mode === 'ordinal' ? String(g.mountSelector.ordinal) : '1',
+    structuralMountSelectors: (g.mountSelectors ?? (g.mountSelector ? [g.mountSelector] : []))
+      .map(mountSelectorDraft),
     slotCount: g.count != null ? String(g.count) : '1',
     // slotTypes is now an array for slot grants; accept legacy single-string slotType too
     slotGrantTypes: g.dataType === 'slot'
-      ? (Array.isArray(g.slotTypes) ? g.slotTypes : (typeof (g as any).slotType === 'string' && (g as any).slotType ? [(g as any).slotType] : []))
+      ? (Array.isArray(g.slotTypes) ? g.slotTypes : (g.slotType ? [g.slotType] : []))
       : [],
     acceptedTraits: Array.isArray(g.acceptedTraits) ? g.acceptedTraits : [],
     acceptedTraitsMode: g.acceptsMode === 'all' ? 'all' : 'any',
@@ -294,12 +475,14 @@ export function grantsDraftFromBody(body: Record<string, unknown>): GrantDraft[]
 function getTabFields(dataType: GrantDataType): string[] {
   switch (dataType) {
     case 'text':    return ['key', 'dataType', 'defaultStr', 'label'];
-    case 'number':  return ['key', 'dataType', 'label', 'min', 'max', 'defaultNum'];
+    case 'number':  return ['key', 'dataType', 'label', 'unit', 'min', 'max', 'defaultNum'];
     case 'boolean': return ['key', 'dataType', 'defaultStr', 'label'];
     case 'enum':    return ['key', 'dataType', 'allowedValues', 'defaultStr', 'label'];
     case 'trait':         return ['dataType', 'traitCount', 'ref', 'key'];
     case 'trait-collection': return ['dataType', 'key'];
-    case 'modifier':      return ['dataType', 'modifierOperation', 'modifierPath', 'modifierMountSelector', 'modifierMountOrdinal', 'modifierAmount'];
+    case 'modifier':      return ['dataType', 'modifierOperation', 'modifierPath', 'modifierMountSelector', 'modifierMountOrdinal', 'modifierAmount', 'modifierAmountUnit', 'modifierPriority', 'modifierConditionOperator', 'modifierConditionValue', 'modifierConditionUnit'];
+    case 'suppression':   return ['dataType', 'structuralTarget', 'structuralMountSelector', 'structuralMountOrdinal', 'structuralPriority'];
+    case 'replacement':   return ['dataType', 'structuralTarget', 'structuralMountSelector', 'structuralMountOrdinal', 'ref', 'structuralPriority'];
     case 'slot':          return ['dataType'];
     case 'slot-affinity': return ['dataType'];
   }
@@ -308,8 +491,7 @@ function getTabFields(dataType: GrantDataType): string[] {
 // ── Field path options ────────────────────────────────────────────────────────
 
 function numericCompatible(op: ModifierOperation, dataType: GrantDataType): boolean {
-  if (op === 'increases' || op === 'decreases' || op === 'multiplies' || op === 'divides') return dataType === 'number';
-  return true; // 'sets' works with any type
+  return op === 'sets' || dataType === 'number';
 }
 
 function branchHasCompatibleTerminal(
@@ -363,7 +545,7 @@ function collectionHasCompatibleTerminal(
 /**
  * Build ComboOption[] for a single segment of a modifier field path.
  *
- * depth 0  — self / target / owner
+ * depth 0  — self / this
  * depth 1+ — recursively composed branches and terminal fields
  */
 function buildSegmentOptions(
@@ -377,8 +559,6 @@ function buildSegmentOptions(
     return [
       { value: 'self',   label: 'self'   },
       { value: 'this',   label: 'this'   },
-      { value: 'target', label: 'target' },
-      { value: 'owner',  label: 'owner'  },
     ];
   }
 
@@ -432,6 +612,8 @@ const DATA_TYPE_OPTIONS: ComboOption[] = [
   { value: 'trait',    label: 'trait',       hint: 'trait reference' },
   { value: 'trait-collection', label: 'trait collection', hint: 'repeatable typed traits' },
   { value: 'modifier', label: 'modifier',    hint: 'arithmetic change' },
+  { value: 'suppression', label: 'suppression', hint: 'temporarily removes a trait branch' },
+  { value: 'replacement', label: 'replacement', hint: 'swaps a trait branch' },
   { value: 'slot',         label: 'slot',            hint: 'equipment slot' },
   { value: 'slot-affinity', label: 'slot-affinity',  hint: 'slot compatibility' },
 ];
@@ -447,7 +629,21 @@ const MODIFIER_OP_OPTIONS: ComboOption[] = [
   { value: 'multiplies', label: 'multiplies', hint: 'scales field by factor' },
   { value: 'divides',    label: 'divides',    hint: 'divides field by factor' },
   { value: 'sets',       label: 'sets',       hint: 'replaces field value' },
+  { value: 'at-least',   label: 'keeps at least', hint: 'numeric lower bound' },
+  { value: 'at-most',    label: 'keeps at most', hint: 'numeric upper bound' },
 ];
+
+const MODIFIER_CONDITION_OPTIONS: ComboOption[] = [
+  { value: 'equals', label: 'equals' },
+  { value: 'gte', label: 'is at least' },
+  { value: 'lte', label: 'is at most' },
+];
+
+const UNIT_OPTIONS: ComboOption[] = UNIT_DEFINITIONS.map((unit) => ({
+  value: unit.id,
+  label: unit.label,
+  hint: unit.symbol,
+}));
 
 // ── ComboToken — controlled searchable picker ─────────────────────────────────
 
@@ -484,15 +680,15 @@ function ComboToken({
   const [browsePath, setBrowsePath] = useState<string[]>([]);
   const [highlightIdx, setHighlightIdx] = useState(-1);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const dialogId = useId();
+  const listboxId = useId();
 
-  // Reset internal search/path/highlight when closed
-  useEffect(() => {
-    if (!isOpen) { setSearch(''); setBrowsePath([]); setHighlightIdx(-1); }
-  }, [isOpen]);
-
-  // Reset highlight whenever the search or browse context changes
-  useEffect(() => { setHighlightIdx(-1); }, [search, browsePath]);
+  const dismissAndRestoreFocus = useCallback(() => {
+    onDone();
+    queueMicrotask(() => triggerRef.current?.focus());
+  }, [onDone]);
 
   // Scroll highlighted option into view
   useEffect(() => {
@@ -504,11 +700,11 @@ function ComboToken({
   useEffect(() => {
     if (!isOpen) return;
     function handle(e: MouseEvent) {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) onDone();
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) dismissAndRestoreFocus();
     }
     document.addEventListener('mousedown', handle);
     return () => document.removeEventListener('mousedown', handle);
-  }, [isOpen, onDone]);
+  }, [dismissAndRestoreFocus, isOpen]);
 
   function handleSelect(v: string) { onSelect(v); onDone(); onTabNext?.(); }
 
@@ -573,26 +769,51 @@ function ComboToken({
   return (
     <div className="combo-token-wrap" ref={wrapRef}>
       <button
+        ref={triggerRef}
         type="button"
         className={`grant-token${(!value || isUnresolvedRef) ? ' grant-token-empty' : ''}`}
-        onClick={() => isOpen ? onDone() : onEdit(fieldKey)}
+        aria-controls={isOpen ? dialogId : undefined}
+        aria-expanded={isOpen}
+        aria-haspopup="dialog"
+        aria-label={`${fieldLabel(fieldKey)}: ${currentLabel ?? 'not selected'}`}
+        onClick={() => {
+          if (isOpen) {
+            onDone();
+          } else {
+            setSearch('');
+            setBrowsePath([]);
+            setHighlightIdx(-1);
+            onEdit(fieldKey);
+          }
+        }}
       >
         {currentLabel ?? placeholder}
       </button>
 
       {isOpen && (
-        <div className="combo-dropdown" role="dialog">
+        <div className="combo-dropdown" id={dialogId} role="dialog" aria-label={`Choose ${fieldLabel(fieldKey).toLowerCase()}`}>
           <div className="combo-search-wrap">
-            {/* eslint-disable-next-line jsx-a11y/no-autofocus */}
             <input
               autoFocus
               type="text"
               className="combo-search"
+              role="combobox"
+              aria-activedescendant={highlightIdx >= 0 ? `${listboxId}-option-${highlightIdx}` : undefined}
+              aria-autocomplete="list"
+              aria-controls={listboxId}
+              aria-expanded="true"
+              aria-label={`Search ${fieldLabel(fieldKey).toLowerCase()} options`}
               placeholder="Search…"
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                setHighlightIdx(-1);
+              }}
               onKeyDown={(e) => {
-                if (e.key === 'Escape') { onDone(); }
+                if (e.key === 'Escape') {
+                  e.preventDefault();
+                  dismissAndRestoreFocus();
+                }
                 if (e.key === 'ArrowDown') { e.preventDefault(); setHighlightIdx((i) => Math.min(i + 1, listItems.length - 1)); }
                 if (e.key === 'ArrowUp') { e.preventDefault(); setHighlightIdx((i) => Math.max(i - 1, -1)); }
                 if (e.key === 'Enter') {
@@ -618,7 +839,14 @@ function ComboToken({
                       handleSelect(listItems[0].value); return;
                     }
                   }
-                  e.shiftKey ? (onTabPrev ? onTabPrev() : onDone()) : (onTabNext ? onTabNext() : onDone());
+                  if (e.shiftKey) {
+                    if (onTabPrev) onTabPrev();
+                    else onDone();
+                  } else if (onTabNext) {
+                    onTabNext();
+                  } else {
+                    onDone();
+                  }
                 }
               }}
             />
@@ -626,12 +854,18 @@ function ComboToken({
 
           {hierarchical && !isSearching && browsePath.length > 0 && (
             <div className="combo-breadcrumb">
-              <button type="button" className="combo-crumb" onClick={() => setBrowsePath([])}>root</button>
+              <button type="button" className="combo-crumb" onClick={() => {
+                setBrowsePath([]);
+                setHighlightIdx(-1);
+              }}>root</button>
               {browsePath.map((seg, i) => (
-                <span key={seg + i} style={{ display: 'contents' }}>
+                <span key={seg + i} className="combo-crumb-group">
                   <span className="combo-crumb-sep"> / </span>
                   <button type="button" className="combo-crumb"
-                    onClick={() => setBrowsePath(browsePath.slice(0, i + 1))}>
+                    onClick={() => {
+                      setBrowsePath(browsePath.slice(0, i + 1));
+                      setHighlightIdx(-1);
+                    }}>
                     {seg}
                   </button>
                 </span>
@@ -639,21 +873,23 @@ function ComboToken({
             </div>
           )}
 
-          <div className="combo-list" role="listbox" ref={listRef}>
+          <div className="combo-list" id={listboxId} role="listbox" aria-label={`${fieldLabel(fieldKey)} options`} ref={listRef}>
             {searchIsNew && (
-              <button type="button" className="combo-option combo-option-create"
+              <button type="button" className="combo-option combo-option-create" role="option" aria-selected="false"
                 onClick={() => handleSelect(trimmedSearch)}>
-                Create <strong>"{trimmedSearch}"</strong>
+                Create <strong>&quot;{trimmedSearch}&quot;</strong>
               </button>
             )}
-            {listItems.length === 0 && !searchIsNew && <div className="combo-empty">No matches</div>}
+            {listItems.length === 0 && !searchIsNew && <div className="combo-empty" role="status">No matches</div>}
             {listItems.map((item, idx) => {
               const isHighlighted = idx === highlightIdx;
               if (item.kind === 'group') {
                 return (
-                  <button key={item.fullPath} type="button"
+                  <button key={item.fullPath} id={`${listboxId}-option-${idx}`} type="button"
                     className={`combo-option is-group${isHighlighted ? ' is-highlighted' : ''}`}
                     data-highlighted={isHighlighted || undefined}
+                    role="option"
+                    aria-selected="false"
                     onClick={() => { setBrowsePath(item.fullPath.split('.')); setHighlightIdx(-1); }}>
                     <span className="combo-option-label">{item.segment}</span>
                     <span className="combo-option-arrow">›</span>
@@ -661,9 +897,11 @@ function ComboToken({
                 );
               }
               return (
-                <button key={item.value} type="button"
+                <button key={item.value} id={`${listboxId}-option-${idx}`} type="button"
                   className={`combo-option${item.value === value ? ' is-selected' : ''}${isHighlighted ? ' is-highlighted' : ''}`}
                   data-highlighted={isHighlighted || undefined}
+                  role="option"
+                  aria-selected={item.value === value}
                   onClick={() => handleSelect(item.value)}>
                   <span className="combo-option-label">{item.label}</span>
                   {item.hint && <span className="combo-option-hint">{item.hint}</span>}
@@ -695,9 +933,9 @@ function Token({
   if (editingField === fieldKey) {
     return (
       <input
-        // eslint-disable-next-line jsx-a11y/no-autofocus
         autoFocus
         type={inputType}
+        aria-label={fieldLabel(fieldKey)}
         value={value}
         placeholder={placeholder}
         className={`grant-token-input grant-token-input-${size}`}
@@ -713,7 +951,14 @@ function Token({
           if (e.key === 'Tab') {
             e.preventDefault();
             tabbing.current = true;
-            e.shiftKey ? (onTabPrev ? onTabPrev() : onDone()) : (onTabNext ? onTabNext() : onDone());
+            if (e.shiftKey) {
+              if (onTabPrev) onTabPrev();
+              else onDone();
+            } else if (onTabNext) {
+              onTabNext();
+            } else {
+              onDone();
+            }
           }
         }}
       />
@@ -722,6 +967,7 @@ function Token({
   return (
     <button type="button"
       className={`grant-token${!value.trim() ? ' grant-token-empty' : ''}`}
+      aria-label={`${fieldLabel(fieldKey)}: ${value.trim() || 'not set'}`}
       title={`Click to edit ${placeholder}`}
       onClick={() => onEdit(fieldKey)}>
       {value.trim() || placeholder}
@@ -750,7 +996,7 @@ function extractSlotTypes(
         // New format: slotTypes array
         if (Array.isArray(g.slotTypes)) { for (const t of g.slotTypes) { if (t?.trim()) seen.add(t.trim()); } }
         // Legacy format: single slotType string
-        else if (typeof (g as any).slotType === 'string' && (g as any).slotType.trim()) { seen.add((g as any).slotType.trim()); }
+        else if (g.slotType?.trim()) { seen.add(g.slotType.trim()); }
       }
     }
   }
@@ -763,7 +1009,11 @@ function extractSlotTypes(
 
 // ── Terminal property resolution ──────────────────────────────────────────────
 
-type ResolvedGrant = { dataType: GrantDataType; allowedValues?: string[] };
+type ResolvedGrant = {
+  dataType: GrantDataType;
+  allowedValues?: string[];
+  unit?: CanonicalUnitId;
+};
 
 /**
  * Given a complete modifier path (segments), resolve the terminal property's
@@ -785,13 +1035,13 @@ function resolveTerminalGrant(
       : undefined
     : resolveTraitShapeTerminal(shape, segments.slice(1));
   return terminal
-    ? { dataType: terminal.dataType, allowedValues: terminal.allowedValues }
+    ? { dataType: terminal.dataType, allowedValues: terminal.allowedValues, unit: terminal.unit }
     : null;
 }
 
 // ── ModifierPathEditor — single popup for the whole segment path ──────────────
 
-const ACTOR_RELATIVE_ROOTS = new Set(['self', 'this', 'owner']);
+const ACTOR_RELATIVE_ROOTS = new Set(['self', 'this']);
 
 function ModifierPathEditor({
   segments, shape, traitDefinitions, operation, isTerminalResolved, fieldKey, editingField, onEdit, onDone, onTabNext, onTabPrev, onChange,
@@ -816,16 +1066,16 @@ function ModifierPathEditor({
   const [search, setSearch] = useState('');
   const [highlightIdx, setHighlightIdx] = useState(-1);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const pathListRef = useRef<HTMLDivElement>(null);
+  const dialogId = useId();
+  const listboxId = useId();
 
-  // Reset on close
-  useEffect(() => {
-    if (!isOpen) { setActiveIdx(0); setSearch(''); setHighlightIdx(-1); }
-  }, [isOpen]);
-
-  // Reset highlight when search or active segment changes
-  useEffect(() => { setHighlightIdx(-1); }, [search, activeIdx]);
+  const dismissAndRestoreFocus = useCallback(() => {
+    onDone();
+    queueMicrotask(() => triggerRef.current?.focus());
+  }, [onDone]);
 
   // Scroll highlighted option into view
   useEffect(() => {
@@ -842,11 +1092,11 @@ function ModifierPathEditor({
   useEffect(() => {
     if (!isOpen) return;
     function handle(e: MouseEvent) {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) onDone();
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) dismissAndRestoreFocus();
     }
     document.addEventListener('mousedown', handle);
     return () => document.removeEventListener('mousedown', handle);
-  }, [isOpen, onDone]);
+  }, [dismissAndRestoreFocus, isOpen]);
 
   function pickValue(value: string) {
     const filled = [...segments];
@@ -868,6 +1118,13 @@ function ModifierPathEditor({
     }
   }
 
+  function pickCompletePath(option: TraitModifierPathOption) {
+    onChange(option.segments);
+    setSearch('');
+    onDone();
+    onTabNext?.();
+  }
+
   function addSegment() {
     onChange([...segments, '']);
     setActiveIdx(segments.length);
@@ -883,35 +1140,64 @@ function ModifierPathEditor({
 
   const displayPath = segments.filter(Boolean).join(' › ');
   const options = buildSegmentOptions(activeIdx, segments, operation, shape, traitDefinitions);
+  const indexedPaths = useMemo(
+    () => traitModifierPathOptions(shape, traitDefinitions, operation),
+    [operation, shape, traitDefinitions],
+  );
+  const definitionsById = useMemo(
+    () => new Map(traitDefinitions.map((definition) => [definition.externalId, definition])),
+    [traitDefinitions],
+  );
   const trimmedSearch = search.trim();
-  const filtered = trimmedSearch
-    ? options.filter((o) => o.value.toLowerCase().includes(trimmedSearch.toLowerCase()))
-    : options;
-  const searchIsNew = trimmedSearch.length > 0 &&
-    !options.some((o) => o.value.toLowerCase() === trimmedSearch.toLowerCase());
+  const fullPathResults = trimmedSearch
+    ? searchTraitModifierPaths(indexedPaths, trimmedSearch)
+    : [];
+  const emptyMessage = shape.diagnostics.length > 0
+    ? 'Resolve the trait-structure diagnostics before choosing a path.'
+    : trimmedSearch
+      ? 'No complete modifier path matches this search.'
+      : activeIdx > 0
+        ? 'This branch has no compatible terminal fields.'
+        : 'No trait structure is available.';
+  const listedOptionCount = trimmedSearch ? fullPathResults.length : options.length;
 
   // Always render the wrapper so the dropdown anchors under the token
   return (
     <div className="combo-token-wrap" ref={wrapRef}>
       <button
+        ref={triggerRef}
         type="button"
         className={`grant-token${!displayPath ? ' grant-token-empty' : ''}`}
-        onClick={() => { setActiveIdx(0); onEdit(fieldKey); }}
+        aria-controls={isOpen ? dialogId : undefined}
+        aria-expanded={isOpen}
+        aria-haspopup="dialog"
+        aria-label={`Modifier path: ${displayPath || 'not selected'}`}
+        onClick={() => {
+          setActiveIdx(0);
+          setSearch('');
+          setHighlightIdx(-1);
+          onEdit(fieldKey);
+        }}
       >
         {displayPath || '— path —'}
       </button>
 
       {isOpen && (
-        <div className="combo-dropdown" role="dialog">
+        <div className="combo-dropdown" id={dialogId} role="dialog" aria-label="Choose modifier path">
           {/* Breadcrumb row — reuses grant-token styling for consistency */}
-          <div className="combo-search-wrap" style={{ display: 'flex', alignItems: 'center', gap: '2px', flexWrap: 'wrap' }}>
+          <div className="combo-search-wrap combo-path-segments">
             {segments.map((seg, i) => (
-              <span key={i} style={{ display: 'contents' }}>
-                {i > 0 && <span style={{ opacity: 0.4, padding: '0 1px', userSelect: 'none' }}>.</span>}
+              <span key={i} className="combo-path-segment">
+                {i > 0 && <span className="combo-path-separator" aria-hidden="true">.</span>}
                 <button
                   type="button"
                   className={`grant-token${!seg ? ' grant-token-empty' : ''}${i === activeIdx ? ' is-active' : ''}`}
-                  onClick={() => { setActiveIdx(i); setSearch(''); }}
+                  aria-label={`Edit path segment ${i + 1}: ${seg || 'empty'}`}
+                  onClick={() => {
+                    setActiveIdx(i);
+                    setSearch('');
+                    setHighlightIdx(-1);
+                  }}
                 >
                   {seg || '—'}
                 </button>
@@ -936,22 +1222,45 @@ function ModifierPathEditor({
               ref={searchRef}
               type="text"
               className="combo-search"
-              placeholder={activeIdx === 0 ? 'self, owner, target…' : 'subtrait or property…'}
+              role="combobox"
+              aria-activedescendant={highlightIdx >= 0 ? `${listboxId}-option-${highlightIdx}` : undefined}
+              aria-autocomplete="list"
+              aria-controls={listboxId}
+              aria-expanded="true"
+              aria-label="Search complete modifier paths"
+              placeholder="Search complete path, label, trait, or type…"
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                setHighlightIdx(-1);
+              }}
               onKeyDown={(e) => {
-                if (e.key === 'Escape') { onDone(); }
-                if (e.key === 'ArrowDown') { e.preventDefault(); setHighlightIdx((i) => Math.min(i + 1, filtered.length - 1)); }
+                if (e.key === 'Escape') {
+                  e.preventDefault();
+                  dismissAndRestoreFocus();
+                }
+                if (e.key === 'ArrowDown') { e.preventDefault(); setHighlightIdx((i) => Math.min(i + 1, listedOptionCount - 1)); }
                 if (e.key === 'ArrowUp') { e.preventDefault(); setHighlightIdx((i) => Math.max(i - 1, -1)); }
                 if (e.key === 'Enter') {
                   e.preventDefault();
-                  if (highlightIdx >= 0 && highlightIdx < filtered.length) { pickValue(filtered[highlightIdx].value); }
-                  else if (highlightIdx < 0 && filtered.length === 1) { pickValue(filtered[0].value); }
-                  else if (searchIsNew) { pickValue(trimmedSearch); }
+                  if (trimmedSearch) {
+                    if (highlightIdx >= 0 && highlightIdx < fullPathResults.length) {
+                      pickCompletePath(fullPathResults[highlightIdx]);
+                    } else if (highlightIdx < 0 && fullPathResults.length === 1) {
+                      pickCompletePath(fullPathResults[0]);
+                    }
+                  } else if (highlightIdx >= 0 && highlightIdx < options.length) {
+                    pickValue(options[highlightIdx].value);
+                  } else if (highlightIdx < 0 && options.length === 1) {
+                    pickValue(options[0].value);
+                  }
                 }
                 if (e.key === 'Tab') {
                   e.preventDefault();
-                  if (e.shiftKey) { onTabPrev ? onTabPrev() : onDone(); }
+                  if (e.shiftKey) {
+                    if (onTabPrev) onTabPrev();
+                    else onDone();
+                  }
                   else if (isTerminalResolved && onTabNext) { onTabNext(); }
                   else { onDone(); }
                 }
@@ -960,22 +1269,41 @@ function ModifierPathEditor({
           </div>
 
           {/* Options for the active segment */}
-          <div className="combo-list" role="listbox" ref={pathListRef}>
-            {searchIsNew && (
-              <button type="button" className="combo-option combo-option-create"
-                onClick={() => pickValue(trimmedSearch)}>
-                Use <strong>"{trimmedSearch}"</strong>
-              </button>
-            )}
-            {filtered.length === 0 && !searchIsNew && <div className="combo-empty">No matches</div>}
-            {filtered.map((opt, idx) => {
+          <div className="combo-list" id={listboxId} role="listbox" aria-label="Compatible modifier paths" ref={pathListRef}>
+            {listedOptionCount === 0 && <div className="combo-empty" role="status">{emptyMessage}</div>}
+            {trimmedSearch ? fullPathResults.map((result, idx) => {
+              const isHighlighted = idx === highlightIdx;
+              const sourceLabels = result.sourceTraitIds
+                .map((traitId) => definitionsById.get(traitId)?.name ?? traitId)
+                .join(', ');
+              return (
+                <button
+                  key={result.path}
+                  id={`${listboxId}-option-${idx}`}
+                  type="button"
+                  className={`combo-option${result.path === segments.filter(Boolean).join('.') ? ' is-selected' : ''}${isHighlighted ? ' is-highlighted' : ''}`}
+                  data-highlighted={isHighlighted || undefined}
+                  role="option"
+                  aria-selected={result.path === segments.filter(Boolean).join('.')}
+                  onClick={() => pickCompletePath(result)}
+                >
+                  <span className="combo-option-label">{result.label}</span>
+                  <span className="combo-option-hint">
+                    {sourceLabels ? `from ${sourceLabels}` : result.dataType}
+                  </span>
+                </button>
+              );
+            }) : options.map((opt, idx) => {
               const isHighlighted = idx === highlightIdx;
               return (
               <button
                 key={opt.value}
+                id={`${listboxId}-option-${idx}`}
                 type="button"
                 className={`combo-option${opt.value === segments[activeIdx] ? ' is-selected' : ''}${isHighlighted ? ' is-highlighted' : ''}`}
                 data-highlighted={isHighlighted || undefined}
+                role="option"
+                aria-selected={opt.value === segments[activeIdx]}
                 onClick={() => pickValue(opt.value)}
               >
                 <span className="combo-option-label">{opt.label}</span>
@@ -1006,21 +1334,14 @@ function GrantRow({
   onChange: (patch: Partial<GrantDraft>) => void;
   onRemove: () => void;
 }) {
-  const [editingField, setEditingField] = useState<string | null>(null);
+  const [editingField, setEditingField] = useState<string | null>(() => {
+    if (!autoFocus) return null;
+    const fields = getTabFields(grant.dataType);
+    return fields[0] === 'dataType' ? fields[1] ?? null : fields[0] ?? null;
+  });
 
   function edit(f: string) { setEditingField(f); }
   function done() { setEditingField(null); }
-
-  // Auto-open the first field when a new row is added.
-  // Skip 'dataType' — the user already chose the type by clicking the add button.
-  useEffect(() => {
-    if (autoFocus) {
-      const fields = getTabFields(grant.dataType);
-      const firstField = fields[0] === 'dataType' ? fields[1] : fields[0];
-      if (firstField) edit(firstField);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // intentionally runs once on mount only
 
   function tabFrom(fieldKey: string, direction: 'next' | 'prev' = 'next') {
     // Slot and slot-affinity have dynamic field lists; compute them inline.
@@ -1034,7 +1355,30 @@ function GrantRow({
         ...(repeated ? ['modifierMountSelector'] : []),
         ...(repeated && grant.modifierMountSelectorMode === 'ordinal' ? ['modifierMountOrdinal'] : []),
         'modifierAmount',
+        'modifierAmountUnit',
+        'modifierPriority',
+        ...(grant.modifierConditionEnabled
+          ? ['modifierConditionOperator', 'modifierConditionValue', 'modifierConditionUnit']
+          : []),
       ];
+    } else if (grant.dataType === 'suppression' || grant.dataType === 'replacement') {
+      const repeated = grant.structuralTargetSegments.some((segment) => segment.endsWith('[]'));
+      fields = grant.dataType === 'replacement'
+        ? [
+          'dataType',
+          'structuralTarget',
+          ...(repeated ? ['structuralMountSelector'] : []),
+          ...(repeated && grant.structuralMountSelectorMode === 'ordinal' ? ['structuralMountOrdinal'] : []),
+          'ref',
+          'structuralPriority',
+        ]
+        : [
+          'dataType',
+          'structuralTarget',
+          ...(repeated ? ['structuralMountSelector'] : []),
+          ...(repeated && grant.structuralMountSelectorMode === 'ordinal' ? ['structuralMountOrdinal'] : []),
+          'structuralPriority',
+        ];
     } else if (grant.dataType === 'trait') {
       fields = grant.traitPlacement === 'collection'
         ? ['dataType', 'traitCount', 'ref', 'traitCollection']
@@ -1083,12 +1427,126 @@ function GrantRow({
     };
   });
   const hasHierarchy = traitOptions.some((o) => o.path != null);
+  const changeRepeatedSelector = (
+    field: 'modifierMountSelectors' | 'structuralMountSelectors',
+    index: number,
+    patch: Partial<MountSelectorDraft>,
+  ) => {
+    const selectors = [...grant[field]];
+    const current = selectors[index];
+    selectors[index] = {
+      mode: current?.mode ?? 'all',
+      ordinal: current?.ordinal ?? '1',
+      traitId: current?.traitId ?? '',
+      tag: current?.tag ?? '',
+      ...patch,
+    };
+    onChange({ [field]: selectors } as Partial<GrantDraft>);
+  };
+
+  if (grant.dataType === 'suppression' || grant.dataType === 'replacement') {
+    const structuralPathOptions = traitShape.nodes
+      .filter((node) => node.kind === 'branch' || node.kind === 'collection')
+      .flatMap((node) => (['self', 'this'] as const).map((anchor) => {
+        const path = node.kind === 'collection'
+          ? [...node.path.slice(0, -1), `${node.path.at(-1)!}[]`]
+          : node.path;
+        return {
+          value: [anchor, ...path].join('.'),
+          label: [anchor, ...path].join('.'),
+          hint: node.kind === 'branch'
+            ? `${node.label} · ${node.traitId}`
+            : `${node.label} · collection entries`,
+        };
+      }));
+    const target = grant.structuralTargetSegments.join('.');
+    const repeatedTargets = grant.structuralTargetSegments.filter((segment) => segment.endsWith('[]'));
+    return (
+      <div className="guided-grant-sentence">
+        <ComboToken {...ct('dataType')} value={grant.dataType} placeholder="type"
+          options={DATA_TYPE_OPTIONS} onSelect={(value) => onChange({ dataType: value as GrantDataType })} />
+        {grant.dataType === 'suppression' ? ' removes ' : ' replaces '}
+        <ComboToken {...ct('structuralTarget')} value={target}
+          placeholder="— exact trait branch —" options={structuralPathOptions}
+          onSelect={(value) => onChange({ structuralTargetSegments: value.split('.') })} />
+        {repeatedTargets.map((segment, index) => {
+          const selector = grant.structuralMountSelectors[index]
+            ?? mountSelectorDraft(index === 0 ? (
+              grant.structuralMountSelectorMode === 'ordinal'
+                ? { mode: 'ordinal', ordinal: Number(grant.structuralMountOrdinal) }
+                : { mode: 'all' }
+            ) : undefined);
+          return <Fragment key={`${segment}:${index}`}> for {segment}{' '}
+            <ComboToken {...ct(`structuralMountSelector_${index}`)} value={selector.mode}
+              placeholder="entries"
+              options={[
+                { value: 'all', label: 'all entries' },
+                { value: 'ordinal', label: 'entry number' },
+                { value: 'trait', label: 'specific trait' },
+                { value: 'tag', label: 'semantic tag' },
+              ]}
+              onSelect={(value) => changeRepeatedSelector(
+                'structuralMountSelectors',
+                index,
+                { mode: value as ModifierMountSelectorMode },
+              )} />
+            {selector.mode === 'ordinal' && <> {' #'}
+              <Token {...tok(`structuralMountOrdinal_${index}`)} value={selector.ordinal}
+                placeholder="1" inputType="number"
+                onChange={(value) => changeRepeatedSelector('structuralMountSelectors', index, { ordinal: value })} />
+            </>}
+            {selector.mode === 'trait' && <> {' '}
+              <ComboToken {...ct(`structuralMountTrait_${index}`)} value={selector.traitId}
+                placeholder="— trait —" options={traitOptions}
+                onSelect={(value) => changeRepeatedSelector('structuralMountSelectors', index, { traitId: value })}
+                hierarchical={hasHierarchy} />
+            </>}
+            {selector.mode === 'tag' && <> {' tagged '}
+              <Token {...tok(`structuralMountTag_${index}`)} value={selector.tag}
+                placeholder="movement"
+                onChange={(value) => changeRepeatedSelector('structuralMountSelectors', index, { tag: value })} />
+            </>}
+          </Fragment>;
+        })}
+        {grant.dataType === 'replacement' && <>
+          {' with '}
+          <ComboToken {...ct('ref')} value={grant.ref} placeholder="— replacement trait —"
+            options={traitOptions} onSelect={(value) => onChange({ ref: value })} hierarchical={hasHierarchy} />
+        </>}
+        {' at priority '}
+        <Token {...tok('structuralPriority')} value={grant.structuralPriority}
+          placeholder="0" inputType="number"
+          onChange={(value) => onChange({ structuralPriority: value })} />
+        <button type="button" className="guided-grant-remove" aria-label="Remove" onClick={onRemove}>×</button>
+      </div>
+    );
+  }
 
   // ── Modifier sentence: "[modifier] [op] [path popup] to/by [value]" ──────
   if (grant.dataType === 'modifier') {
     const resolvedTerminal = resolveTerminalGrant(grant.modifierFieldSegments, traitShape, traitDefinitions);
     const terminalType = resolvedTerminal?.dataType ?? null;
-    const repeatedPath = grant.modifierFieldSegments.some((segment) => segment.endsWith('[]'));
+    const targetUnit = resolvedTerminal?.unit ?? '1';
+    const scalarOperation = grant.modifierOperation === 'multiplies' || grant.modifierOperation === 'divides';
+    const modifierUnitOptions = scalarOperation
+      ? UNIT_OPTIONS.filter((option) => option.value === '1')
+      : compatibleUnits(targetUnit).map((unit) => ({
+        value: unit.id,
+        label: unit.label,
+        hint: unit.symbol,
+      }));
+    const selectedModifierUnit = grant.modifierAmountUnit || (scalarOperation ? '1' : targetUnit);
+    const modifierUnitCompatible = terminalType !== 'number'
+      || !grant.modifierAmountUnit
+      || (scalarOperation
+        ? grant.modifierAmountUnit === '1'
+        : unitsAreCompatible(grant.modifierAmountUnit, targetUnit));
+    const conditionUnitOptions = compatibleUnits(targetUnit).map((unit) => ({
+      value: unit.id,
+      label: unit.label,
+      hint: unit.symbol,
+    }));
+    const repeatedPaths = grant.modifierFieldSegments.filter((segment) => segment.endsWith('[]'));
 
     // Only increases/decreases/sets make sense for numbers; everything else is sets-only
     const opOptions = (terminalType === null || terminalType === 'number')
@@ -1121,12 +1579,53 @@ function GrantRow({
       );
     } else if (terminalType === 'number') {
       valueNode = (
-        <Token {...tok('modifierAmount')} value={grant.modifierAmount}
-          placeholder="0" inputType="number"
-          onChange={(v) => onChange({ modifierAmount: v })} />
+        <>
+          <Token {...tok('modifierAmount')} value={grant.modifierAmount}
+            placeholder="0" inputType="number"
+            onChange={(v) => onChange({ modifierAmount: v })} />
+          {' '}
+          <ComboToken {...ct('modifierAmountUnit')} value={selectedModifierUnit}
+            placeholder="unit"
+            options={modifierUnitOptions}
+            onSelect={(value) => onChange({ modifierAmountUnit: value as CanonicalUnitId })} />
+        </>
       );
     }
     // terminalType === null → no value control yet
+
+    let conditionValueNode: React.ReactNode = null;
+    if (terminalType === 'boolean') {
+      conditionValueNode = (
+        <ComboToken {...ct('modifierConditionValue')} value={grant.modifierConditionValue}
+          placeholder="true / false" options={BOOL_OPTIONS}
+          onSelect={(value) => onChange({ modifierConditionValue: value })} />
+      );
+    } else if (terminalType === 'enum' && resolvedTerminal?.allowedValues?.length) {
+      conditionValueNode = (
+        <ComboToken {...ct('modifierConditionValue')} value={grant.modifierConditionValue}
+          placeholder="value"
+          options={resolvedTerminal.allowedValues.map((value) => ({ value, label: value }))}
+          onSelect={(value) => onChange({ modifierConditionValue: value })} />
+      );
+    } else if (terminalType === 'text') {
+      conditionValueNode = (
+        <Token {...tok('modifierConditionValue')} value={grant.modifierConditionValue}
+          placeholder="value" inputType="text"
+          onChange={(value) => onChange({ modifierConditionValue: value })} />
+      );
+    } else if (terminalType === 'number') {
+      conditionValueNode = (
+        <>
+          <Token {...tok('modifierConditionValue')} value={grant.modifierConditionValue}
+            placeholder="0" inputType="number"
+            onChange={(value) => onChange({ modifierConditionValue: value })} />
+          {' '}
+          <ComboToken {...ct('modifierConditionUnit')} value={grant.modifierConditionUnit || targetUnit}
+            placeholder="unit" options={conditionUnitOptions}
+            onSelect={(value) => onChange({ modifierConditionUnit: value as CanonicalUnitId })} />
+        </>
+      );
+    }
 
     return (
       <div className="guided-grant-sentence">
@@ -1134,7 +1633,15 @@ function GrantRow({
           options={DATA_TYPE_OPTIONS} onSelect={(v) => onChange({ dataType: v as GrantDataType })} />
         <ComboToken {...ct('modifierOperation')} value={grant.modifierOperation}
           placeholder="increases" options={opOptions}
-          onSelect={(v) => onChange({ modifierOperation: v as ModifierOperation })} />
+          onSelect={(v) => {
+            const operation = v as ModifierOperation;
+            onChange({
+              modifierOperation: operation,
+              ...(terminalType === 'number'
+                ? { modifierAmountUnit: operation === 'multiplies' || operation === 'divides' ? '1' : targetUnit }
+                : {}),
+            });
+          }} />
         <ModifierPathEditor
           fieldKey="modifierPath"
           segments={grant.modifierFieldSegments}
@@ -1150,29 +1657,100 @@ function GrantRow({
           onChange={(segs) => {
             const resolved = resolveTerminalGrant(segs, traitShape, traitDefinitions);
             const tt = resolved?.dataType ?? null;
-            const patch: Partial<GrantDraft> = { modifierFieldSegments: segs, modifierAmount: '' };
+            const patch: Partial<GrantDraft> = {
+              modifierFieldSegments: segs,
+              modifierAmount: '',
+              modifierAmountUnit: tt === 'number' ? resolved?.unit ?? '1' : '',
+              modifierConditionValue: '',
+              modifierConditionUnit: tt === 'number' ? resolved?.unit ?? '1' : '',
+              modifierConditionOperator: 'equals',
+            };
             // Non-numeric types only support 'sets'
             if (tt !== null && tt !== 'number') patch.modifierOperation = 'sets';
             onChange(patch);
           }}
         />
-        {repeatedPath && terminalType !== null && <> for{' '}
-          <ComboToken {...ct('modifierMountSelector')} value={grant.modifierMountSelectorMode}
-            placeholder="entries"
-            options={[
-              { value: 'all', label: 'all entries' },
-              { value: 'ordinal', label: 'entry number' },
-            ]}
-            onSelect={(value) => onChange({ modifierMountSelectorMode: value as ModifierMountSelectorMode })} />
-          {grant.modifierMountSelectorMode === 'ordinal' && <>
-            {' #'}
-            <Token {...tok('modifierMountOrdinal')} value={grant.modifierMountOrdinal}
-              placeholder="1" inputType="number"
-              onChange={(value) => onChange({ modifierMountOrdinal: value })} />
-          </>}
-        </>}
+        {terminalType !== null && repeatedPaths.map((segment, index) => {
+          const selector = grant.modifierMountSelectors[index]
+            ?? mountSelectorDraft(index === 0 ? (
+              grant.modifierMountSelectorMode === 'ordinal'
+                ? { mode: 'ordinal', ordinal: Number(grant.modifierMountOrdinal) }
+                : { mode: 'all' }
+            ) : undefined);
+          return <Fragment key={`${segment}:${index}`}> for {segment}{' '}
+            <ComboToken {...ct(`modifierMountSelector_${index}`)} value={selector.mode}
+              placeholder="entries"
+              options={[
+                { value: 'all', label: 'all entries' },
+                { value: 'ordinal', label: 'entry number' },
+                { value: 'trait', label: 'specific trait' },
+                { value: 'tag', label: 'semantic tag' },
+              ]}
+              onSelect={(value) => changeRepeatedSelector(
+                'modifierMountSelectors',
+                index,
+                { mode: value as ModifierMountSelectorMode },
+              )} />
+            {selector.mode === 'ordinal' && <> {' #'}
+              <Token {...tok(`modifierMountOrdinal_${index}`)} value={selector.ordinal}
+                placeholder="1" inputType="number"
+                onChange={(value) => changeRepeatedSelector('modifierMountSelectors', index, { ordinal: value })} />
+            </>}
+            {selector.mode === 'trait' && <> {' '}
+              <ComboToken {...ct(`modifierMountTrait_${index}`)} value={selector.traitId}
+                placeholder="— trait —" options={traitOptions}
+                onSelect={(value) => changeRepeatedSelector('modifierMountSelectors', index, { traitId: value })}
+                hierarchical={hasHierarchy} />
+            </>}
+            {selector.mode === 'tag' && <> {' tagged '}
+              <Token {...tok(`modifierMountTag_${index}`)} value={selector.tag}
+                placeholder="movement"
+                onChange={(value) => changeRepeatedSelector('modifierMountSelectors', index, { tag: value })} />
+            </>}
+          </Fragment>;
+        })}
         {terminalType !== null && prep}
         {valueNode}
+        {terminalType !== null && <> at priority{' '}
+          <Token {...tok('modifierPriority')} value={grant.modifierPriority}
+            placeholder="0" inputType="number"
+            onChange={(value) => onChange({ modifierPriority: value })} />
+        </>}
+        {terminalType !== null && (grant.modifierConditionEnabled ? (
+          <> when the base value{' '}
+            <ComboToken {...ct('modifierConditionOperator')} value={grant.modifierConditionOperator}
+              placeholder="equals"
+              options={terminalType === 'number'
+                ? MODIFIER_CONDITION_OPTIONS
+                : MODIFIER_CONDITION_OPTIONS.filter((option) => option.value === 'equals')}
+              onSelect={(value) => onChange({
+                modifierConditionOperator: value as GrantDraft['modifierConditionOperator'],
+              })} />
+            {' '}{conditionValueNode}
+            <button type="button" className="secondary-action compact-action"
+              onClick={() => onChange({
+                modifierConditionEnabled: false,
+                modifierConditionValue: '',
+              })}>
+              remove condition
+            </button>
+          </>
+        ) : (
+          <button type="button" className="secondary-action compact-action"
+            onClick={() => onChange({
+              modifierConditionEnabled: true,
+              modifierConditionUnit: terminalType === 'number' ? targetUnit : '',
+            })}>
+            add condition
+          </button>
+        ))}
+        {!modifierUnitCompatible && (
+          <span className="guided-unit-diagnostic" role="alert">
+            {scalarOperation
+              ? 'Multiply and divide amounts must be unitless.'
+              : `${grant.modifierAmountUnit} cannot modify a ${targetUnit} field.`}
+          </span>
+        )}
         <button type="button" className="guided-grant-remove" aria-label="Remove" onClick={onRemove}>×</button>
       </div>
     );
@@ -1352,51 +1930,15 @@ function GrantRow({
       <div className="guided-grant-sentence">
         <ComboToken {...ct('dataType')} value={grant.dataType} placeholder="type"
           options={DATA_TYPE_OPTIONS} onSelect={(v) => onChange({ dataType: v as GrantDataType })} />
-        {grant.traitPlacement === 'collection' && (
-          <>
-            <Token {...tok('traitCount')} value={grant.traitCount} placeholder="1"
-              inputType="number" onChange={(v) => onChange({ traitCount: v })} />
-            ×
-          </>
-        )}
-        {grant.traitPlacement === 'named' && '→'}
-        <ComboToken {...ct('ref')} value={grant.ref} placeholder="— select trait —"
-          options={traitOptions} onSelect={(v) => onChange({ ref: v })} hierarchical={hasHierarchy} />
-        {grant.traitPlacement === 'named' ? (
-          <>
-            {' as '}
-            <Token {...tok('key')} value={grant.key} placeholder="path name"
-              onChange={(v) => onChange({ key: v })} />
-            <button type="button" className="secondary-action compact-action"
-              disabled={collectionOptions.length === 0}
-              title={collectionOptions.length === 0 ? 'Add a trait collection first.' : 'Add a counted contribution to a trait collection.'}
-              onClick={() => onChange({ traitPlacement: 'collection', key: '' })}>
-              add to collection
-            </button>
-            <button type="button" className="secondary-action compact-action"
-              disabled={nestedParentOptions.length === 0}
-              title={nestedParentOptions.length === 0 ? 'Add or require a trait branch first.' : 'Extend an existing trait branch.'}
-              onClick={() => onChange({ traitPlacement: 'nested', key: '' })}>
-              extend a trait
-            </button>
-          </>
-        ) : grant.traitPlacement === 'collection' ? (
-          <>
-            {' into '}
-            <ComboToken {...ct('traitCollection')} value={grant.traitCollection}
-              placeholder="— collection —" options={collectionOptions}
-              onSelect={(v) => onChange({ traitCollection: v })} />
-            <button type="button" className="secondary-action compact-action"
-              onClick={() => onChange({ traitPlacement: 'named', traitCollection: '', traitCount: '1' })}>
-              use named path
-            </button>
-          </>
-        ) : (
+        {grant.traitPlacement === 'nested' ? (
           <>
             {' extends '}
             <ComboToken {...ct('traitParentPath')} value={grant.traitParentPath}
               placeholder="— parent trait —" options={nestedParentOptions}
               onSelect={(v) => onChange({ traitParentPath: v })} />
+            {' with '}
+            <ComboToken {...ct('ref')} value={grant.ref} placeholder="— select trait —"
+              options={traitOptions} onSelect={(v) => onChange({ ref: v })} hierarchical={hasHierarchy} />
             {' as '}
             <Token {...tok('key')} value={grant.key} placeholder="path name"
               onChange={(v) => onChange({ key: v })} />
@@ -1404,6 +1946,49 @@ function GrantRow({
               onClick={() => onChange({ traitPlacement: 'named', traitParentPath: '' })}>
               use named path
             </button>
+          </>
+        ) : (
+          <>
+            {grant.traitPlacement === 'collection' && (
+              <>
+                <Token {...tok('traitCount')} value={grant.traitCount} placeholder="1"
+                  inputType="number" onChange={(v) => onChange({ traitCount: v })} />
+                ×
+              </>
+            )}
+            {grant.traitPlacement === 'named' && '→'}
+            <ComboToken {...ct('ref')} value={grant.ref} placeholder="— select trait —"
+              options={traitOptions} onSelect={(v) => onChange({ ref: v })} hierarchical={hasHierarchy} />
+            {grant.traitPlacement === 'named' ? (
+              <>
+                {' as '}
+                <Token {...tok('key')} value={grant.key} placeholder="path name"
+                  onChange={(v) => onChange({ key: v })} />
+                <button type="button" className="secondary-action compact-action"
+                  disabled={collectionOptions.length === 0}
+                  title={collectionOptions.length === 0 ? 'Add a trait collection first.' : 'Add a counted contribution to a trait collection.'}
+                  onClick={() => onChange({ traitPlacement: 'collection', key: '' })}>
+                  add to collection
+                </button>
+                <button type="button" className="secondary-action compact-action"
+                  disabled={nestedParentOptions.length === 0}
+                  title={nestedParentOptions.length === 0 ? 'Add or require a trait branch first.' : 'Extend an existing trait branch.'}
+                  onClick={() => onChange({ traitPlacement: 'nested', key: '' })}>
+                  extend a trait
+                </button>
+              </>
+            ) : grant.traitPlacement === 'collection' ? (
+              <>
+                {' into '}
+                <ComboToken {...ct('traitCollection')} value={grant.traitCollection}
+                  placeholder="— collection —" options={collectionOptions}
+                  onSelect={(v) => onChange({ traitCollection: v })} />
+                <button type="button" className="secondary-action compact-action"
+                  onClick={() => onChange({ traitPlacement: 'named', traitCollection: '', traitCount: '1' })}>
+                  use named path
+                </button>
+              </>
+            ) : null}
           </>
         )}
         <button type="button" className="guided-grant-remove" aria-label="Remove" onClick={onRemove}>×</button>
@@ -1447,7 +2032,10 @@ function GrantRow({
       </button>
 
       <ComboToken {...ct('dataType')} value={grant.dataType} placeholder="type"
-        options={DATA_TYPE_OPTIONS} onSelect={(v) => onChange({ dataType: v as GrantDataType })} />
+        options={DATA_TYPE_OPTIONS} onSelect={(v) => onChange({
+          dataType: v as GrantDataType,
+          ...(v === 'number' && !grant.unit ? { unit: '1' as const } : {}),
+        })} />
 
       {' '}field labeled by{' '}
 
@@ -1455,7 +2043,11 @@ function GrantRow({
         size="md" onChange={(v) => onChange({ label: v })} />
 
       {grant.dataType === 'number' && (
-        <> with a range of{' '}
+        <> measured in{' '}
+          <ComboToken {...ct('unit')} value={grant.unit || '1'} placeholder="unit"
+            options={UNIT_OPTIONS}
+            onSelect={(value) => onChange({ unit: value as CanonicalUnitId })} />
+          {' '}with a range of{' '}
           <Token {...tok('min')} value={grant.min} placeholder="min"
             inputType="number" onChange={(v) => onChange({ min: v })} />
           {' '}to{' '}
@@ -1490,21 +2082,29 @@ function TraitShapeTree({
   definitionsById,
   parentPath,
   shape,
+  treeLabel,
 }: {
   currentTraitName: string;
   definitionsById: Map<string, RuleDefinitionResource>;
   parentPath: string[];
   shape: TraitShape;
+  treeLabel?: string;
 }) {
   const children = traitShapeChildren(shape, parentPath);
   if (children.length === 0) return null;
 
   return (
-    <ul className="trait-shape-tree" role={parentPath.length === 0 ? 'tree' : 'group'}>
+    <ul
+      aria-label={parentPath.length === 0 ? treeLabel : undefined}
+      className="trait-shape-tree"
+      role={parentPath.length === 0 ? 'tree' : 'group'}
+    >
       {children.map((node) => {
         const segment = node.path.at(-1)!;
-        const sourceName = node.sourceTraitId
-          ? definitionsById.get(node.sourceTraitId)?.name ?? node.sourceTraitId
+        const sourceIds = node.sourceTraitIds
+          ?? (node.sourceTraitId ? [node.sourceTraitId] : []);
+        const sourceName = sourceIds.length
+          ? sourceIds.map((traitId) => definitionsById.get(traitId)?.name ?? traitId).join(', ')
           : currentTraitName;
         return (
           <li
@@ -1565,13 +2165,49 @@ function TraitShapeTree({
   );
 }
 
+function TraitShapeRoot({
+  currentTraitName,
+  definitionsById,
+  emptyMessage,
+  shape,
+  treeLabel,
+}: {
+  currentTraitName: string;
+  definitionsById: Map<string, RuleDefinitionResource>;
+  emptyMessage: string;
+  shape: TraitShape;
+  treeLabel: string;
+}) {
+  if (shape.nodes.length === 0) {
+    return <div className="trait-shape-empty">{emptyMessage}</div>;
+  }
+  return (
+    <div className="trait-shape-root">
+      <div className="trait-shape-root-label">
+        <span className="trait-shape-root-mark" aria-hidden="true">S</span>
+        <strong>Self</strong>
+        <code>self</code>
+      </div>
+      <TraitShapeTree
+        currentTraitName={currentTraitName}
+        definitionsById={definitionsById}
+        parentPath={[]}
+        shape={shape}
+        treeLabel={treeLabel}
+      />
+    </div>
+  );
+}
+
 function TraitShapePreview({
   currentTraitName,
   definitions,
+  beforeShape,
   shape,
 }: {
   currentTraitName: string;
   definitions: RuleDefinitionResource[];
+  beforeShape: TraitShape;
   shape: TraitShape;
 }) {
   const definitionsById = useMemo(
@@ -1582,9 +2218,13 @@ function TraitShapePreview({
   const collectionCount = shape.nodes.filter((node) => node.kind === 'collection').length;
   const branchCount = shape.nodes.length - terminalCount - collectionCount;
   const previewTitleId = useId();
+  const changes = useMemo(() => diffTraitShapes(beforeShape, shape), [beforeShape, shape]);
+  const addedCount = changes.filter((change) => change.kind === 'added').length;
+  const changedCount = changes.filter((change) => change.kind === 'changed').length;
+  const removedCount = changes.filter((change) => change.kind === 'removed').length;
 
   return (
-    <section className="trait-shape-preview" aria-labelledby={previewTitleId}>
+    <section className="trait-shape-preview" aria-labelledby={previewTitleId} aria-live="polite">
       <div className="trait-shape-preview-heading">
         <div>
           <span className="eyebrow">Effective shape</span>
@@ -1593,34 +2233,170 @@ function TraitShapePreview({
         <span className="badge">{branchCount} traits · {collectionCount} collections · {terminalCount} fields</span>
       </div>
       <p className="subtext">
-        Guaranteed by the selected prerequisites, plus additions from {currentTraitName}.
+        Compare the structure guaranteed by prerequisites with the effective structure after applying the current draft.
       </p>
-      {shape.nodes.length === 0 ? (
-        <div className="trait-shape-empty">
-          Add a prerequisite or a named field or trait to begin building this structure.
+      <div className="trait-shape-diff-summary" aria-label="Draft structure changes">
+        <span><strong>{addedCount}</strong> added</span>
+        <span><strong>{changedCount}</strong> changed</span>
+        <span><strong>{removedCount}</strong> removed</span>
+      </div>
+      {changes.length === 0 ? (
+        <div className="alert trait-shape-no-changes" role="status">
+          The draft does not change the prerequisite structure yet.
         </div>
       ) : (
-        <div className="trait-shape-root">
-          <div className="trait-shape-root-label">
-            <span className="trait-shape-root-mark" aria-hidden="true">S</span>
-            <strong>Self</strong>
-            <code>self</code>
-          </div>
-          <TraitShapeTree
+        <ul className="trait-shape-change-list" aria-label="Effective shape changes">
+          {changes.map((change) => (
+            <TraitShapeChangeRow change={change} key={`${change.kind}-${change.path.join('.')}`} />
+          ))}
+        </ul>
+      )}
+      <div className="trait-shape-comparison">
+        <article className="card-surface-sub trait-shape-comparison-panel">
+          <header>
+            <span className="eyebrow">Before</span>
+            <h6>Prerequisite structure</h6>
+          </header>
+          <TraitShapeRoot
             currentTraitName={currentTraitName}
             definitionsById={definitionsById}
-            parentPath={[]}
-            shape={shape}
+            emptyMessage="No structure is guaranteed by the selected prerequisites."
+            shape={beforeShape}
+            treeLabel="Prerequisite trait structure"
           />
-        </div>
-      )}
+        </article>
+        <article className="card-surface-sub trait-shape-comparison-panel">
+          <header>
+            <span className="eyebrow">After</span>
+            <h6>With this draft</h6>
+          </header>
+          <TraitShapeRoot
+            currentTraitName={currentTraitName}
+            definitionsById={definitionsById}
+            emptyMessage="Add a prerequisite or a named field or trait to begin building this structure."
+            shape={shape}
+            treeLabel="Draft effective trait structure"
+          />
+        </article>
+      </div>
     </section>
+  );
+}
+
+function TraitShapeChangeRow({ change }: { change: TraitShapeChange }) {
+  return (
+    <li className={`trait-shape-change is-${change.kind}`}>
+      <span className="trait-shape-change-kind">{change.kind}</span>
+      <div>
+        <strong>{change.label}</strong>
+        <code>self.{change.path.join('.')}</code>
+        <small>{change.summary}</small>
+      </div>
+    </li>
   );
 }
 
 // ── Editor ────────────────────────────────────────────────────────────────────
 
 const DEFAULT_PREREQS: PrerequisiteSpec = { mode: 'any', ids: [] };
+
+function applyDraftStructuralDirectives(
+  shape: TraitShape,
+  grants: GrantDraft[],
+  definitions: RuleDefinitionResource[],
+): TraitShape {
+  let nodes = shape.nodes.map((node) => (
+    node.kind === 'collection'
+      ? { ...node, path: [...node.path], entries: node.entries.map((entry) => ({ ...entry })) }
+      : { ...node, path: [...node.path] }
+  ));
+  const directives = grants
+    .filter((grant) =>
+      (grant.dataType === 'suppression' || grant.dataType === 'replacement')
+      && grant.structuralTargetSegments.length > 1)
+    .map((grant) => ({
+      grant,
+      path: grant.structuralTargetSegments.slice(1)
+        .map((segment) => segment.replace(/\[\]$/, '')),
+      priority: Number(grant.structuralPriority),
+    }));
+  const paths = [...new Set(directives.map((directive) => directive.path.join('.')))].sort((left, right) =>
+    left.split('.').length - right.split('.').length || left.localeCompare(right));
+  for (const pathKey of paths) {
+    const candidates = directives.filter((directive) => directive.path.join('.') === pathKey);
+    const priority = Math.max(...candidates.map((candidate) => candidate.priority));
+    const winners = candidates.filter((candidate) => candidate.priority === priority);
+    const winner = winners[0];
+    const compatible = winners.every((candidate) =>
+      candidate.grant.dataType === winner.grant.dataType
+      && (candidate.grant.dataType !== 'replacement' || candidate.grant.ref === winner.grant.ref));
+    if (!compatible) continue;
+    const targetPath = winner.path;
+    const isTargetOrDescendant = (path: string[]) =>
+      targetPath.every((segment, index) => path[index] === segment);
+    const targetIndex = nodes.findIndex((node) => node.path.join('.') === pathKey);
+    const target = nodes[targetIndex];
+    if (!target) continue;
+    if (target.kind === 'collection'
+      && winner.grant.structuralTargetSegments.some((segment) => segment.endsWith('[]'))) {
+      const expandedEntries = target.entries.flatMap((entry) =>
+        Array.from({ length: entry.count }, () => ({ ...entry, count: 1 })));
+      const selected = winner.grant.structuralMountSelectorMode === 'ordinal'
+        ? [Number(winner.grant.structuralMountOrdinal) - 1]
+          .filter((index) => index >= 0 && index < expandedEntries.length)
+        : expandedEntries.map((_, index) => index);
+      for (const index of selected) {
+        if (winner.grant.dataType === 'suppression') {
+          expandedEntries[index] = { ...expandedEntries[index], count: 0 };
+        } else if (winner.grant.ref) {
+          expandedEntries[index] = {
+            traitId: winner.grant.ref,
+            count: 1,
+            sourceTraitId: winner.grant.ref,
+          };
+        }
+      }
+      const rebuilt = new Map<string, (typeof target.entries)[number]>();
+      for (const entry of expandedEntries.filter((entry) => entry.count > 0)) {
+        const key = `${entry.traitId}\0${entry.sourceTraitId ?? ''}`;
+        const existing = rebuilt.get(key);
+        if (existing) existing.count += 1;
+        else rebuilt.set(key, { ...entry });
+      }
+      nodes[targetIndex] = { ...target, entries: [...rebuilt.values()] };
+      continue;
+    }
+    if (target.kind !== 'branch') continue;
+    nodes = nodes.filter((node) => !isTargetOrDescendant(node.path));
+    if (winner.grant.dataType === 'replacement' && winner.grant.ref) {
+      const replacement = definitions.find((definition) => definition.externalId === winner.grant.ref);
+      if (!replacement) continue;
+      const replacementShape = buildTraitShape({
+        definitions,
+        prerequisiteIds: [winner.grant.ref],
+        prerequisiteMode: 'all',
+      });
+      nodes.push({
+        kind: 'branch',
+        path: targetPath,
+        label: replacement.name,
+        traitId: winner.grant.ref,
+        sourceTraitId: winner.grant.ref,
+      });
+      nodes.push(...replacementShape.nodes.map((node) => ({
+        ...node,
+        path: [...targetPath, ...node.path],
+        ...(node.kind === 'collection'
+          ? { entries: node.entries.map((entry) => ({ ...entry })) }
+          : {}),
+      })));
+    }
+  }
+  return {
+    diagnostics: shape.diagnostics,
+    nodes: nodes.sort((left, right) => left.path.join('.').localeCompare(right.path.join('.'))),
+  };
+}
 
 export function GuidedTraitGrantsEditor({
   traitName, grants, prerequisites = DEFAULT_PREREQS, traitDefinitions, onChange, onPrerequisitesChange,
@@ -1635,6 +2411,7 @@ export function GuidedTraitGrantsEditor({
   const [prereqEditingIndex, setPrereqEditingIndex] = useState<number | null>(null);
   const [prereqModeEditing, setPrereqModeEditing] = useState(false);
   const [lastAddedId, setLastAddedId] = useState<string | null>(null);
+  const diagnosticsTitleId = useId();
   const slotTypeOptions = useMemo(() => extractSlotTypes(traitDefinitions, grants), [traitDefinitions, grants]);
   const traitShape = useMemo(() => buildTraitShape({
     definitions: traitDefinitions,
@@ -1642,6 +2419,15 @@ export function GuidedTraitGrantsEditor({
     prerequisiteMode: prerequisites.mode,
     draftGrants: traitShapeGrantsFromDraft(grants),
   }), [grants, prerequisites.ids, prerequisites.mode, traitDefinitions]);
+  const prerequisiteShape = useMemo(() => buildTraitShape({
+    definitions: traitDefinitions,
+    prerequisiteIds: prerequisites.ids,
+    prerequisiteMode: prerequisites.mode,
+  }), [prerequisites.ids, prerequisites.mode, traitDefinitions]);
+  const previewShape = useMemo(
+    () => applyDraftStructuralDirectives(traitShape, grants, traitDefinitions),
+    [grants, traitDefinitions, traitShape],
+  );
   const collectionOptions = useMemo(() => traitShape.nodes
     .filter((node): node is Extract<TraitShapeNode, { kind: 'collection' }> => node.kind === 'collection')
     .map((node) => ({
@@ -1750,7 +2536,7 @@ export function GuidedTraitGrantsEditor({
       )}
 
       {/* ── Grants ── */}
-      <p className="guided-grants-narrative" style={{ marginTop: onPrerequisitesChange ? '1.5rem' : undefined }}>
+      <p className={`guided-grants-narrative${onPrerequisitesChange ? ' guided-grants-narrative-separated' : ''}`}>
         <strong>{traitName.trim() || 'This trait'}</strong> grants the following to any entity that holds it:
       </p>
 
@@ -1762,6 +2548,8 @@ export function GuidedTraitGrantsEditor({
         <button type="button" className="secondary-action compact-action" onClick={() => add('trait')}>+ trait grant</button>
         <button type="button" className="secondary-action compact-action" onClick={() => add('trait-collection')}>+ trait collection</button>
         <button type="button" className="secondary-action compact-action" onClick={() => add('modifier')}>+ modifier</button>
+        <button type="button" className="secondary-action compact-action" onClick={() => add('suppression')}>+ suppression</button>
+        <button type="button" className="secondary-action compact-action" onClick={() => add('replacement')}>+ replacement</button>
         <button type="button" className="secondary-action compact-action" onClick={() => add('slot')}>+ slot</button>
         <button type="button" className="secondary-action compact-action" onClick={() => add('slot-affinity')}>+ slot-affinity</button>
       </div>
@@ -1783,12 +2571,18 @@ export function GuidedTraitGrantsEditor({
       <TraitShapePreview
         currentTraitName={traitName.trim() || 'This trait'}
         definitions={traitDefinitions}
-        shape={traitShape}
+        beforeShape={prerequisiteShape}
+        shape={previewShape}
       />
 
       {traitShape.diagnostics.length > 0 && (
-        <div className="guided-rule-diagnostics" aria-live="polite">
-          <strong>Trait structure needs attention</strong>
+        <div
+          className="guided-rule-diagnostics"
+          aria-labelledby={diagnosticsTitleId}
+          aria-live="polite"
+          role="status"
+        >
+          <strong id={diagnosticsTitleId}>Trait structure needs attention</strong>
           <ul>
             {traitShape.diagnostics.map((diagnostic, index) => (
               <li key={`${diagnostic.code}-${diagnostic.path.join('.')}-${index}`}>

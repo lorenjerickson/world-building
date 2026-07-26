@@ -46,6 +46,8 @@ import {
   type GrantDraft,
   type PrerequisiteSpec,
 } from './guided-trait-grants-editor';
+import { selectTraitDefinitionScope } from '@/lib/trait-shape';
+import { RuleAuthoringDiagnosticItem } from './rule-authoring-diagnostic';
 
 // ── Forms ──────────────────────────────────────────────────────────────────────
 
@@ -178,14 +180,15 @@ export function RuleDefinitionCreateForm({ definitions, modules, onCancel, onCre
         const related = definitions
           .filter((item) => item.definitionType === 'trait' && ['trait/1', 'trait/2'].includes(String(item.body.metamodelVersion)))
           .map((item) => ({ externalId: item.externalId, name: item.name, body: item.body }));
-        const validation = await validateRuleAuthoringDefinitions([
+        const candidate = {
+          externalId: 'trait:draft-new',
+          name: name.trim(),
+          body: parsedBody as Record<string, unknown>,
+        };
+        const validation = await validateRuleAuthoringDefinitions(selectTraitDefinitionScope([
           ...related,
-          {
-            externalId: 'trait:draft-new',
-            name: name.trim(),
-            body: parsedBody as Record<string, unknown>,
-          },
-        ]);
+          candidate,
+        ], [candidate.externalId]));
         setDiagnostics(validation.diagnostics);
         if (!validation.valid) {
           setError(validation.diagnostics.find((item) => item.severity === 'error')?.message
@@ -215,7 +218,17 @@ export function RuleDefinitionCreateForm({ definitions, modules, onCancel, onCre
       });
       onCreated(definition);
     } catch (cause) {
-      setError(cause instanceof RuleSetApiError ? cause.message : 'The definition could not be created.');
+      if (cause instanceof RuleSetApiError) {
+        const serverDiagnostics = Array.isArray(cause.context.diagnostics)
+          ? cause.context.diagnostics as AuthoringDiagnostic[]
+          : [];
+        setDiagnostics(serverDiagnostics);
+        setError(serverDiagnostics.length
+          ? 'Resolve the definition issues below before creating this definition.'
+          : cause.message);
+      } else {
+        setError('The definition could not be created.');
+      }
     } finally {
       setSubmitting(false);
     }
@@ -258,6 +271,21 @@ export function RuleDefinitionCreateForm({ definitions, modules, onCancel, onCre
               ? <GuidedResolutionEditor description={description} diagnostics={diagnostics} draft={resolutionDraft} name={name} onChange={setResolutionDraft} relatedDefinitions={definitions} />
               : <label className="rule-set-field rule-set-field-wide"><span>Rule data (JSON)</span><textarea className="rule-set-json-field" rows={7} value={body} onChange={(event) => { setBody(event.target.value); setBodyLabelSynced(false); }} spellCheck={false} /><small>Advanced structured data interpreted by this definition type. An empty object is valid for an initial draft.</small></label>}
       </div>
+      {definitionType === 'trait' && authoringExperience === 'grants' && !!diagnostics.length && (
+        <div className="guided-rule-diagnostics" aria-live="polite">
+          <strong>This draft needs attention</strong>
+          <ul>
+            {diagnostics.map((diagnostic) => (
+              <RuleAuthoringDiagnosticItem
+                definitions={definitions}
+                diagnostic={diagnostic}
+                key={`${diagnostic.code}:${diagnostic.path}`}
+                ruleSetId={ruleSetId}
+              />
+            ))}
+          </ul>
+        </div>
+      )}
       {error && <p className="rule-set-notice error" role="alert">{error}</p>}
       <div className="rule-set-form-actions"><button className="secondary-action" type="button" onClick={onCancel}>Cancel</button><button className="primary-action" type="submit" disabled={submitting || !moduleId}>{submitting ? 'Creating…' : 'Create definition'}</button></div>
     </form>
@@ -466,14 +494,15 @@ export function RuleDefinitionEditForm({ artifact, definitions, modules, onCance
             && item.definitionType === 'trait'
             && ['trait/1', 'trait/2'].includes(String(item.body.metamodelVersion)))
           .map((item) => ({ externalId: item.externalId, name: item.name, body: item.body }));
-        const validation = await validateRuleAuthoringDefinitions([
+        const candidate = {
+          externalId: artifact.externalId,
+          name: name.trim(),
+          body: parsedBody as Record<string, unknown>,
+        };
+        const validation = await validateRuleAuthoringDefinitions(selectTraitDefinitionScope([
           ...related,
-          {
-            externalId: artifact.externalId,
-            name: name.trim(),
-            body: parsedBody as Record<string, unknown>,
-          },
-        ]);
+          candidate,
+        ], [candidate.externalId]));
         setDiagnostics(validation.diagnostics);
         if (!validation.valid) {
           setError(validation.diagnostics.find((item) => item.severity === 'error')?.message
@@ -525,7 +554,17 @@ export function RuleDefinitionEditForm({ artifact, definitions, modules, onCance
         setConflict({ serverUpdatedAt, serverName });
         setError('This definition was updated by someone else. Review the conflict below before saving.');
       } else {
-        setError(cause instanceof RuleSetApiError ? cause.message : 'The definition could not be saved.');
+        if (cause instanceof RuleSetApiError) {
+          const serverDiagnostics = Array.isArray(cause.context.diagnostics)
+            ? cause.context.diagnostics as AuthoringDiagnostic[]
+            : [];
+          setDiagnostics(serverDiagnostics);
+          setError(serverDiagnostics.length
+            ? 'Resolve the definition issues below before saving this definition.'
+            : cause.message);
+        } else {
+          setError('The definition could not be saved.');
+        }
       }
     } finally {
       setSubmitting(false);
@@ -533,7 +572,7 @@ export function RuleDefinitionEditForm({ artifact, definitions, modules, onCance
   }
 
   return (
-    <form className="rule-set-child-form rule-set-artifact-editor" onSubmit={submit}>
+    <form className="rule-set-child-form rule-set-artifact-editor" id="definition-editor" onSubmit={submit}>
       <div className="rule-set-editor-heading">
         <div>
           <span className="eyebrow">Edit or rename {artifact.definitionType}</span>
@@ -561,7 +600,18 @@ export function RuleDefinitionEditForm({ artifact, definitions, modules, onCance
                     : 'Resolve the migration diagnostics before upgrading this draft.'}
                 </p>
                 {!!migrationPreview.pathChanges.length && <ul>{migrationPreview.pathChanges.map((change) => <li key={`${change.kind}:${change.path}`}><strong>{change.kind}</strong> {change.path}{change.before && change.after ? ` (${change.before} → ${change.after})` : ''}</li>)}</ul>}
-                {!!migrationPreview.diagnostics.length && <ul>{migrationPreview.diagnostics.map((diagnostic) => <li key={`${diagnostic.code}:${diagnostic.path}`}>{diagnostic.path}: {diagnostic.message}</li>)}</ul>}
+                {!!migrationPreview.diagnostics.length && (
+                  <ul className="guided-rule-diagnostics">
+                    {migrationPreview.diagnostics.map((diagnostic) => (
+                      <RuleAuthoringDiagnosticItem
+                        definitions={definitions}
+                        diagnostic={diagnostic}
+                        key={`${diagnostic.code}:${diagnostic.path}`}
+                        ruleSetId={ruleSetId}
+                      />
+                    ))}
+                  </ul>
+                )}
                 <details><summary>Canonical trait/2 source</summary><pre>{JSON.stringify(migrationPreview.migratedBody, null, 2)}</pre></details>
                 <div className="rule-set-form-actions">
                   <button className="secondary-action" type="button" disabled={migrationBusy} onClick={loadMigrationPreview}>Refresh preview</button>
@@ -616,6 +666,21 @@ export function RuleDefinitionEditForm({ artifact, definitions, modules, onCance
                 ? <label className="rule-set-field rule-set-field-wide"><span>Rule data (JSON)</span><textarea className="rule-set-json-field" rows={10} value={body} onChange={(event) => setBody(event.target.value)} spellCheck={false} /></label>
                 : null}
       </div>
+      {grantsDraft !== null && !!diagnostics.length && (
+        <div className="guided-rule-diagnostics" aria-live="polite">
+          <strong>This draft needs attention</strong>
+          <ul>
+            {diagnostics.map((diagnostic) => (
+              <RuleAuthoringDiagnosticItem
+                definitions={definitions}
+                diagnostic={diagnostic}
+                key={`${diagnostic.code}:${diagnostic.path}`}
+                ruleSetId={ruleSetId}
+              />
+            ))}
+          </ul>
+        </div>
+      )}
       {error && <p className="rule-set-notice error" role="alert">{error}</p>}
       {conflict && (
         <div className="rule-set-conflict-panel" role="alert">

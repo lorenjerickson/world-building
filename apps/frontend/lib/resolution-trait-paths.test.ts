@@ -86,6 +86,25 @@ test('operation path provenance identifies the check that contributes an inherit
   assert.match(result.options[0].explanation, /inherited from check:movement: Creature → Speed → Walk/);
 });
 
+test('path provenance retains every compatible direct contributor', () => {
+  const definitions = [
+    trait('trait:first-score', 'First Score', [{ key: 'score', dataType: 'number' }]),
+    trait('trait:second-score', 'Second Score', [{ key: 'score', dataType: 'number' }]),
+  ];
+  const result = guidedTraitPathOptions(
+    definitions,
+    ['trait:first-score', 'trait:second-score'],
+  );
+  const score = result.options.find((option) => option.path === 'self.score');
+
+  assert.deepEqual(
+    score?.provenance.map((item) => item.rootTraitId).sort(),
+    ['trait:first-score', 'trait:second-score'],
+  );
+  assert.match(score?.explanation ?? '', /First Score/);
+  assert.match(score?.explanation ?? '', /Second Score/);
+});
+
 test('collection field provenance includes the accepted base trait that owns the field', () => {
   const diceDefinitions = [
     trait('trait:die', 'Die', [{ key: 'sides', label: 'Sides', dataType: 'number' }]),
@@ -99,6 +118,29 @@ test('collection field provenance includes the accepted base trait that owns the
   const result = guidedTraitPathOptions(diceDefinitions, ['trait:dice-roll']);
   const option = result.options.find((candidate) => candidate.path === 'self.dice[].sides');
   assert.deepEqual(option?.provenance[0].traitChainLabels, ['Dice Roll', 'Die']);
+});
+
+test('completion exposes paths and selector prefixes through nested collections', () => {
+  const nestedDefinitions = [
+    trait('trait:member', 'Member', [{ key: 'score', dataType: 'number' }]),
+    trait('trait:group', 'Group', [{
+      key: 'members',
+      dataType: 'trait-collection',
+      acceptedTraits: ['trait:member'],
+    }]),
+    trait('trait:roster', 'Roster', [{
+      key: 'groups',
+      dataType: 'trait-collection',
+      acceptedTraits: ['trait:group'],
+    }]),
+  ];
+  const option = guidedTraitPathOptions(nestedDefinitions, ['trait:roster'])
+    .options.find((candidate) => candidate.path === 'self.groups[].members[].score');
+
+  assert.deepEqual(option?.repeatedCollectionPaths, [
+    ['self', 'groups[]'],
+    ['self', 'groups[]', 'members[]'],
+  ]);
 });
 
 test('unavailable paths offer only roots that safely restore the contract', () => {

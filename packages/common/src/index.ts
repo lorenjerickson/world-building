@@ -6,11 +6,14 @@ export * from './chunking';
 export * from './projection';
 export * from './picking';
 export * from './materials';
+export * from './units';
 export {
   buildTraitShape,
   resolveTraitShapeTerminal,
+  selectTraitDefinitionScope,
   traitSatisfiesCollection,
   traitShapeChildren,
+  traitShapeTerminalPaths,
 } from './trait-shape';
 export type {
   BuildTraitShapeInput,
@@ -20,4 +23,5 @@ export type {
   TraitShapeDiagnostic,
   TraitShapeGrant,
   TraitShapeNode,
+  TraitShapeTerminalPath,
 } from './trait-shape';

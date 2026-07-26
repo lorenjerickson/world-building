@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { AppBreadcrumbs } from "@/components/app-breadcrumbs";
 import type { Character, LocationNode, Organization, RelicItem, TimelineEvent, Triple, WorldAsset } from "@/components/world-view";
 
 export type LoreType = "locations" | "characters" | "organizations" | "events" | "items";
@@ -89,6 +90,13 @@ export function LoreCreateRoute({ worldId, loreType, parentId }: { worldId: stri
   if (!world) return <main className="world-create-page"><section className="card-surface">Loading world context...</section></main>;
 
   return <main className="world-create-page">
+    <AppBreadcrumbs items={[
+      { label: "Dashboard", href: "/dashboard" },
+      { label: "Worlds", href: "/worlds" },
+      { label: world.name, href: `/world/${encodeURIComponent(world.id)}` },
+      { label: labels.plural, href: `/world/${encodeURIComponent(world.id)}/${loreType}` },
+      { label: `New ${labels.singular}` },
+    ]} />
     <section className="world-create-panel card-surface">
       <header className="world-create-header">
         <Link className="back-btn" href={`/world/${encodeURIComponent(world.id)}/${loreType}`}>← Back to {labels.plural}</Link>

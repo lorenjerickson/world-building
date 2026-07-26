@@ -1,10 +1,12 @@
 "use client";
 
-import { useState, useTransition, useEffect, useRef, useDeferredValue } from "react";
+import { useState, useTransition, useEffect, useRef } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { LoreDocument, MarkdownLongText, type LoreFact, type LoreReference } from "@/components/lore-document";
 import { deleteLoreImage, uploadLoreImage } from "@/lib/image-uploads";
 import { CharacterArtwork } from "@/components/character-artwork";
+import { AppBreadcrumbs } from "@/components/app-breadcrumbs";
 
 // --- Data Interfaces ---
 export interface LocationNode {
@@ -98,16 +100,6 @@ export function WorldView({ initialWorld, onBackToDashboard, initialTab = "overv
   // --- Active Tab / Selected Item State ---
   const [activeTab, setActiveTab] = useState<WorldTab>(initialTab);
   const [selectedItemId, setSelectedItemId] = useState<string | null>(initialItemId);
-  const [loreSearch, setLoreSearch] = useState("");
-  const deferredLoreSearch = useDeferredValue(loreSearch);
-  const [expandedLoreSections, setExpandedLoreSections] = useState<Record<"locations" | "characters" | "organizations" | "events" | "items", boolean>>({
-    locations: true,
-    characters: true,
-    organizations: initialTab === "organizations",
-    events: initialTab === "events",
-    items: initialTab === "items",
-  });
-  const toggleLoreSection = (section: keyof typeof expandedLoreSections) => setExpandedLoreSections((current) => ({ ...current, [section]: !current[section] }));
 
   // Keep the workspace addressable and browser-history friendly. The route is the
   // source of truth on initial render; interactions below update it in one place.
@@ -819,67 +811,15 @@ export function WorldView({ initialWorld, onBackToDashboard, initialTab = "overv
     setAiPrompt("");
   };
 
-  // --- Recursive Locations Tree Sidebar Component ---
-  function LocationTreeRecursive({
-    node,
-    nodes,
-    level
-  }: {
-    node: LocationNode;
-    nodes: LocationNode[];
-    level: number;
-  }) {
-    const children = nodes.filter((n) => n.parentId === node.id && visibleLoreIds.locations.has(n.id));
-    const [isExpanded, setIsExpanded] = useState(true);
-    const isActive = selectedItemId === node.id && activeTab === "locations";
-
-    return (
-      <div className="tree-node-wrapper">
-        <div 
-          className={`tree-node ${isActive ? "active" : ""}`}
-          style={{ paddingLeft: `${level * 12 + 8}px` }}
-        >
-          <div className="tree-node-click" onClick={() => handleSelectLocation(node.id)}>
-            <span className="tree-chevron" onClick={(e) => {
-              e.stopPropagation();
-              setIsExpanded(!isExpanded);
-            }}>
-              {children.length > 0 ? (isExpanded ? "▼" : "▶") : ""}
-            </span>
-            <span className="node-text">{node.name}</span>
-            <span className="node-badge">{node.type}</span>
-          </div>
-          <button 
-            className="tree-nested-add-btn" 
-            title="Create nested location"
-            onClick={(e) => {
-              e.stopPropagation();
-              router.push(`/world/${encodeURIComponent(world!.id)}/locations/new?parentId=${encodeURIComponent(node.id)}`);
-            }}
-          >
-            +
-          </button>
-        </div>
-        {children.length > 0 && isExpanded && (
-          <div className="tree-children-list">
-            {children.map((child) => (
-              <LocationTreeRecursive
-                key={child.id}
-                node={child}
-                nodes={nodes}
-                level={level + 1}
-              />
-            ))}
-          </div>
-        )}
-      </div>
-    );
-  }
-
   // --- RENDER SCREEN: Prompter Lore Initial Form (No active world) ---
   if (!world) {
     return (
       <main className="world-create-page">
+        <AppBreadcrumbs items={[
+          { label: "Dashboard", href: "/dashboard" },
+          { label: "Worlds", href: "/worlds" },
+          { label: "New world" },
+        ]} />
         <section className="world-create-panel card-surface">
           <header className="world-create-header">
             <button className="back-btn" onClick={() => onBackToDashboard ? onBackToDashboard() : router.push("/dashboard")}>
@@ -947,11 +887,6 @@ export function WorldView({ initialWorld, onBackToDashboard, initialTab = "overv
   const items = world.items || [];
   const triples = world.triples || [];
 
-  // Locations with a missing parent must remain reachable instead of disappearing
-  // behind a parent node that no longer exists.
-  const locationIds = new Set(locations.map((location) => location.id));
-  const rootLocations = locations.filter((location) => !location.parentId || !locationIds.has(location.parentId));
-
   // Active item reference
   const activeLocation = activeTab === "locations" ? locations.find((l) => l.id === selectedItemId) : null;
   const activeCharacter = activeTab === "characters" ? characters.find((c) => c.id === selectedItemId) : null;
@@ -967,36 +902,39 @@ export function WorldView({ initialWorld, onBackToDashboard, initialTab = "overv
   ];
   const referenceFor = (id?: string) => loreReferences.find((reference) => reference.id === id);
 
-  const visibleLoreIds = (() => {
-    const normalizedSearchTerms = deferredLoreSearch.toLocaleLowerCase().normalize("NFKD").split(/\s+/).filter(Boolean);
-    const matches = (values: Array<string | undefined>) => {
-      if (!normalizedSearchTerms.length) return true;
-      const content = values.filter(Boolean).join(" ").toLocaleLowerCase().normalize("NFKD");
-      return normalizedSearchTerms.every((term) => content.includes(term));
-    };
-    const locationIds = new Set(locations.filter((entry) => matches([entry.name, entry.type, entry.description, locations.find((parent) => parent.id === entry.parentId)?.name])).map((entry) => entry.id));
-    // Preserve the path to matching nested places so results remain understandable.
-    for (const id of [...locationIds]) {
-      let parentId = locations.find((entry) => entry.id === id)?.parentId;
-      while (parentId) { locationIds.add(parentId); parentId = locations.find((entry) => entry.id === parentId)?.parentId; }
-    }
-    return {
-      locations: locationIds,
-      characters: new Set(characters.filter((entry) => matches([entry.name, entry.description, locations.find((location) => location.id === entry.locationId)?.name, organizations.find((organization) => organization.id === entry.factionId)?.name])).map((entry) => entry.id)),
-      organizations: new Set(organizations.filter((entry) => matches([entry.name, entry.type, entry.description, locations.find((location) => location.id === entry.baseLocationId)?.name])).map((entry) => entry.id)),
-      events: new Set(events.filter((entry) => matches([entry.name, entry.year, entry.description])).map((entry) => entry.id)),
-      items: new Set(items.filter((entry) => matches([entry.name, entry.type, entry.description, locations.find((location) => location.id === entry.locationId)?.name])).map((entry) => entry.id)),
-    };
-  })();
-  const hasLoreSearch = deferredLoreSearch.trim().length > 0;
-  const loreSearchResultCount = Object.values(visibleLoreIds).reduce((total, ids) => total + ids.size, 0);
-
   const documentDeleteAction = (type: "locations" | "characters" | "organizations" | "events" | "items", id: string) => (
     <button type="button" className="danger-text-button" onClick={() => handleDeleteElement(type, id)}>Delete</button>
   );
+  const sectionLabels: Record<WorldTab, string> = {
+    overview: "Overview",
+    map: "World map",
+    locations: "Geography & places",
+    characters: "Characters",
+    organizations: "Organizations & factions",
+    events: "Timeline & events",
+    items: "Items & relics",
+    relations: "Relationship graph",
+  };
+  const activeRecordName = activeLocation?.name
+    ?? activeCharacter?.name
+    ?? activeOrg?.name
+    ?? activeEvent?.name
+    ?? activeItem?.name;
 
   return (
     <div className="world-workspace-page">
+      <AppBreadcrumbs items={[
+        { label: "Dashboard", href: "/dashboard" },
+        { label: "Worlds", href: "/worlds" },
+        { label: world.name, href: `/world/${encodeURIComponent(world.id)}` },
+        ...(activeTab !== "overview" ? [{
+          label: sectionLabels[activeTab],
+          ...(selectedItemId ? {
+            href: `/world/${encodeURIComponent(world.id)}/${activeTab}#${encodeURIComponent(selectedItemId)}`,
+          } : {}),
+        }] : []),
+        ...(activeRecordName ? [{ label: activeRecordName }] : []),
+      ]} />
       {/* Title Bar */}
       <header className="workspace-navbar">
         <div className="nav-left">
@@ -1018,83 +956,35 @@ export function WorldView({ initialWorld, onBackToDashboard, initialTab = "overv
       </header>
 
       {/* Main Workspace Layout */}
-      <div className="workspace-layout-grid">
+      <div className={`workspace-layout-grid${selectedItemId ? " record-detail-layout" : ""}`}>
         {/* Column 1: Sidebar Navigation Tree */}
         <aside className="workspace-sidebar">
           <div className="sidebar-header">
-            <h3>Chronicle Index</h3>
+            <h3>World sections</h3>
           </div>
-
-          <label className="lore-search-field">
-            <span>Search all lore</span>
-            <div><input type="search" value={loreSearch} onChange={(event) => setLoreSearch(event.target.value)} placeholder="Names, notes, types..." />{loreSearch && <button type="button" aria-label="Clear lore search" onClick={() => setLoreSearch("")}>×</button>}</div>
-            {hasLoreSearch && <small>{loreSearchResultCount} matching records</small>}
-          </label>
-          
           <div className="sidebar-nav-list">
-            <button 
-              className={`sidebar-nav-item ${activeTab === "overview" ? "active" : ""}`}
-              onClick={() => { setActiveTab("overview"); setSelectedItemId(null); }}
-            >
-              Overview
-            </button>
-            <button 
-              className={`sidebar-nav-item ${activeTab === "map" ? "active" : ""}`}
-              onClick={() => { setActiveTab("map"); setSelectedItemId(null); }}
-            >
-              World Map
-            </button>
-
-            <div className="sidebar-lore-section">
-              <div className="sidebar-nav-row">
-                <button className="sidebar-collapse-button" aria-label="Toggle locations" aria-expanded={expandedLoreSections.locations || hasLoreSearch} onClick={() => toggleLoreSection("locations")}>{expandedLoreSections.locations || hasLoreSearch ? "▾" : "▸"}</button>
-                <button className={`sidebar-nav-item ${activeTab === "locations" && !selectedItemId ? "active" : ""}`} onClick={() => { setActiveTab("locations"); setSelectedItemId(null); setExpandedLoreSections((current) => ({ ...current, locations: true })); }}>Geography & Places <span>{hasLoreSearch ? `${visibleLoreIds.locations.size}/${locations.length}` : locations.length}</span></button>
-                <button className="sidebar-create-link" aria-label="Create a location" title="Create a location" onClick={() => router.push(`/world/${encodeURIComponent(world.id)}/locations/new`)}>+</button>
-              </div>
-              {(expandedLoreSections.locations || hasLoreSearch) && <div className="locations-tree-box">
-                {rootLocations.filter((location) => visibleLoreIds.locations.has(location.id)).length === 0 ? (
-                  <p className="empty-tree-text">No regions charted yet.</p>
-                ) : (
-                  rootLocations.filter((location) => visibleLoreIds.locations.has(location.id)).map((rootNode) => (
-                    <LocationTreeRecursive
-                      key={rootNode.id}
-                      node={rootNode}
-                      nodes={locations}
-                      level={0}
-                    />
-                  ))
-                )}
-                <button 
-                  className="sidebar-add-root-btn"
-                  onClick={() => router.push(`/world/${encodeURIComponent(world.id)}/locations/new`)}
-                >
-                  + Add Root Region
-                </button>
-              </div>}
-            </div>
-
-            <div className="sidebar-lore-section">
-              <div className="sidebar-nav-row"><button className="sidebar-collapse-button" aria-label="Toggle characters" aria-expanded={expandedLoreSections.characters || hasLoreSearch} onClick={() => toggleLoreSection("characters")}>{expandedLoreSections.characters || hasLoreSearch ? "▾" : "▸"}</button><button className={`sidebar-nav-item ${activeTab === "characters" && !selectedItemId ? "active" : ""}`} onClick={() => { setActiveTab("characters"); setSelectedItemId(null); setExpandedLoreSections((current) => ({ ...current, characters: true })); }}>Characters <span>{hasLoreSearch ? `${visibleLoreIds.characters.size}/${characters.length}` : characters.length}</span></button><button className="sidebar-create-link" aria-label="Create a character" title="Create a character" onClick={() => router.push(`/world/${encodeURIComponent(world.id)}/characters/new`)}>+</button></div>
-              {(expandedLoreSections.characters || hasLoreSearch) && <div className="sidebar-record-list">{visibleLoreIds.characters.size ? characters.filter((character) => visibleLoreIds.characters.has(character.id)).map((character) => <button className={selectedItemId === character.id && activeTab === "characters" ? "active" : ""} key={character.id} onClick={() => handleSelectCharacter(character.id)}>{character.name}</button>) : <span>No matching characters</span>}</div>}
-            </div>
-            <div className="sidebar-lore-section">
-              <div className="sidebar-nav-row"><button className="sidebar-collapse-button" aria-label="Toggle organizations" aria-expanded={expandedLoreSections.organizations || hasLoreSearch} onClick={() => toggleLoreSection("organizations")}>{expandedLoreSections.organizations || hasLoreSearch ? "▾" : "▸"}</button><button className={`sidebar-nav-item ${activeTab === "organizations" && !selectedItemId ? "active" : ""}`} onClick={() => { setActiveTab("organizations"); setSelectedItemId(null); setExpandedLoreSections((current) => ({ ...current, organizations: true })); }}>Organizations & Factions <span>{hasLoreSearch ? `${visibleLoreIds.organizations.size}/${organizations.length}` : organizations.length}</span></button><button className="sidebar-create-link" aria-label="Create an organization" title="Create an organization" onClick={() => router.push(`/world/${encodeURIComponent(world.id)}/organizations/new`)}>+</button></div>
-              {(expandedLoreSections.organizations || hasLoreSearch) && <div className="sidebar-record-list">{visibleLoreIds.organizations.size ? organizations.filter((organization) => visibleLoreIds.organizations.has(organization.id)).map((organization) => <button className={selectedItemId === organization.id && activeTab === "organizations" ? "active" : ""} key={organization.id} onClick={() => handleSelectOrganization(organization.id)}>{organization.name}</button>) : <span>No matching organizations</span>}</div>}
-            </div>
-            <div className="sidebar-lore-section">
-              <div className="sidebar-nav-row"><button className="sidebar-collapse-button" aria-label="Toggle events" aria-expanded={expandedLoreSections.events || hasLoreSearch} onClick={() => toggleLoreSection("events")}>{expandedLoreSections.events || hasLoreSearch ? "▾" : "▸"}</button><button className={`sidebar-nav-item ${activeTab === "events" && !selectedItemId ? "active" : ""}`} onClick={() => { setActiveTab("events"); setSelectedItemId(null); setExpandedLoreSections((current) => ({ ...current, events: true })); }}>Timeline & Events <span>{hasLoreSearch ? `${visibleLoreIds.events.size}/${events.length}` : events.length}</span></button><button className="sidebar-create-link" aria-label="Create an event" title="Create an event" onClick={() => router.push(`/world/${encodeURIComponent(world.id)}/events/new`)}>+</button></div>
-              {(expandedLoreSections.events || hasLoreSearch) && <div className="sidebar-record-list">{visibleLoreIds.events.size ? events.filter((event) => visibleLoreIds.events.has(event.id)).map((event) => <button className={selectedItemId === event.id && activeTab === "events" ? "active" : ""} key={event.id} onClick={() => handleSelectEvent(event.id)}>{event.name}</button>) : <span>No matching events</span>}</div>}
-            </div>
-            <div className="sidebar-lore-section">
-              <div className="sidebar-nav-row"><button className="sidebar-collapse-button" aria-label="Toggle items" aria-expanded={expandedLoreSections.items || hasLoreSearch} onClick={() => toggleLoreSection("items")}>{expandedLoreSections.items || hasLoreSearch ? "▾" : "▸"}</button><button className={`sidebar-nav-item ${activeTab === "items" && !selectedItemId ? "active" : ""}`} onClick={() => { setActiveTab("items"); setSelectedItemId(null); setExpandedLoreSections((current) => ({ ...current, items: true })); }}>Items & Relics <span>{hasLoreSearch ? `${visibleLoreIds.items.size}/${items.length}` : items.length}</span></button><button className="sidebar-create-link" aria-label="Create an item" title="Create an item" onClick={() => router.push(`/world/${encodeURIComponent(world.id)}/items/new`)}>+</button></div>
-              {(expandedLoreSections.items || hasLoreSearch) && <div className="sidebar-record-list">{visibleLoreIds.items.size ? items.filter((item) => visibleLoreIds.items.has(item.id)).map((item) => <button className={selectedItemId === item.id && activeTab === "items" ? "active" : ""} key={item.id} onClick={() => handleSelectItem(item.id)}>{item.name}</button>) : <span>No matching items</span>}</div>}
-            </div>
-            <button 
-              className={`sidebar-nav-item ${activeTab === "relations" ? "active" : ""}`}
-              onClick={() => { setActiveTab("relations"); setSelectedItemId(null); }}
-            >
-              Relationship Graph
-            </button>
+            {(Object.keys(sectionLabels) as WorldTab[]).map((section) => (
+              <button
+                className={`sidebar-nav-item ${activeTab === section ? "active" : ""}`}
+                key={section}
+                onClick={() => {
+                  setSelectedItemId(null);
+                  setActiveTab(section);
+                  router.push(section === "overview"
+                    ? `/world/${encodeURIComponent(world.id)}`
+                    : `/world/${encodeURIComponent(world.id)}/${section}`);
+                }}
+              >
+                {sectionLabels[section]}
+                {["locations", "characters", "organizations", "events", "items"].includes(section) ? <span>{({
+                  locations: locations.length,
+                  characters: characters.length,
+                  organizations: organizations.length,
+                  events: events.length,
+                  items: items.length,
+                } as Record<string, number>)[section]}</span> : null}
+              </button>
+            ))}
           </div>
         </aside>
 
@@ -1286,23 +1176,22 @@ export function WorldView({ initialWorld, onBackToDashboard, initialTab = "overv
                   </div>
                 ) : (
                   <div>
-                    <h3>Geography Directory</h3>
-                    <p className="subtext">A complete listing of all regions, domains, and structures.</p>
+                    <div className="section-title-bar"><div><h3>Geography Directory</h3><p className="subtext">A complete listing of all regions, domains, and structures.</p></div><Link className="primary-action compact-action" href={`/world/${encodeURIComponent(world.id)}/locations/new`}>New location</Link></div>
 
                     <div className="list-stack mt-4">
                       {locations.map((loc) => (
-                        <div key={loc.id} className="list-item clickable-node-item" onClick={() => handleSelectLocation(loc.id)}>
+                        <Link id={loc.id} href={`/world/${encodeURIComponent(world.id)}/locations/${encodeURIComponent(loc.id)}`} key={loc.id} className="list-item clickable-node-item">
                           <div>
                             <strong>{loc.name}</strong>
                             <span className="subtext">Type: {loc.type} {loc.parentId ? `| Sub-location of: ${locations.find(p=>p.id===loc.parentId)?.name}` : ""}</span>
                           </div>
                           <span>📍</span>
-                        </div>
+                        </Link>
                       ))}
                     </div>
 
                     {/* Manual Location Form */}
-                    <form onSubmit={handleCreateLocation} className="creator-box-form mt-8 border-t border-white/5 pt-6">
+                    <form onSubmit={handleCreateLocation} className="creator-box-form legacy-inline-creator mt-8 border-t border-white/5 pt-6">
                       <h4>Chart New Geography</h4>
                       <div className="flex gap-4 mt-4">
                         <div className="flex-1">
@@ -1445,12 +1334,11 @@ export function WorldView({ initialWorld, onBackToDashboard, initialTab = "overv
                   </div>
                 ) : (
                   <div>
-                    <h3>Character Directory (NPCs)</h3>
-                    <p className="subtext">Registered GameMaster personas and faction leaders.</p>
+                    <div className="section-title-bar"><div><h3>Character Directory (NPCs)</h3><p className="subtext">Registered GameMaster personas and faction leaders.</p></div><Link className="primary-action compact-action" href={`/world/${encodeURIComponent(world.id)}/characters/new`}>New character</Link></div>
 
                     <div className="list-stack mt-4">
                       {characters.map((c) => (
-                        <div key={c.id} className="list-item clickable-node-item" onClick={() => handleSelectCharacter(c.id)}>
+                        <Link id={c.id} href={`/world/${encodeURIComponent(world.id)}/characters/${encodeURIComponent(c.id)}`} key={c.id} className="list-item clickable-node-item">
                           <div>
                             <strong>{c.name}</strong>
                             <span className="subtext">
@@ -1459,11 +1347,11 @@ export function WorldView({ initialWorld, onBackToDashboard, initialTab = "overv
                             </span>
                           </div>
                           <span>👤</span>
-                        </div>
+                        </Link>
                       ))}
                     </div>
 
-                    <form onSubmit={handleCreateCharacter} className="creator-box-form mt-8 border-t border-white/5 pt-6">
+                    <form onSubmit={handleCreateCharacter} className="creator-box-form legacy-inline-creator mt-8 border-t border-white/5 pt-6">
                       <h4>Register New Character</h4>
                       <div className="mt-4">
                         <input 
@@ -1597,22 +1485,21 @@ export function WorldView({ initialWorld, onBackToDashboard, initialTab = "overv
                   </div>
                 ) : (
                   <div>
-                    <h3>Factions & Organizations</h3>
-                    <p className="subtext">Guilds, syndicates, and magical cabals shaping the political landscape.</p>
+                    <div className="section-title-bar"><div><h3>Factions & Organizations</h3><p className="subtext">Guilds, syndicates, and magical cabals shaping the political landscape.</p></div><Link className="primary-action compact-action" href={`/world/${encodeURIComponent(world.id)}/organizations/new`}>New organization</Link></div>
 
                     <div className="list-stack mt-4">
                       {organizations.map((o) => (
-                        <div key={o.id} className="list-item clickable-node-item" onClick={() => handleSelectOrganization(o.id)}>
+                        <Link id={o.id} href={`/world/${encodeURIComponent(world.id)}/organizations/${encodeURIComponent(o.id)}`} key={o.id} className="list-item clickable-node-item">
                           <div>
                             <strong>{o.name}</strong>
                             <span className="subtext">Type: {o.type} | Base Location: {locations.find((l) => l.id === o.baseLocationId)?.name || "Uncharted"}</span>
                           </div>
                           <span>🛡️</span>
-                        </div>
+                        </Link>
                       ))}
                     </div>
 
-                    <form onSubmit={handleCreateOrganization} className="creator-box-form mt-8 border-t border-white/5 pt-6">
+                    <form onSubmit={handleCreateOrganization} className="creator-box-form legacy-inline-creator mt-8 border-t border-white/5 pt-6">
                       <h4>Establish New Faction</h4>
                       <div className="flex gap-4 mt-4">
                         <div className="flex-1">
@@ -1728,22 +1615,21 @@ export function WorldView({ initialWorld, onBackToDashboard, initialTab = "overv
                   </div>
                 ) : (
                   <div>
-                    <h3>Chronological Timeline</h3>
-                    <p className="subtext">Key moments and historic periods that define this realm.</p>
+                    <div className="section-title-bar"><div><h3>Chronological Timeline</h3><p className="subtext">Key moments and historic periods that define this realm.</p></div><Link className="primary-action compact-action" href={`/world/${encodeURIComponent(world.id)}/events/new`}>New event</Link></div>
 
                     <div className="list-stack mt-4">
                       {events.sort((a,b)=>a.year.localeCompare(b.year)).map((ev) => (
-                        <div key={ev.id} className="list-item clickable-node-item" onClick={() => handleSelectEvent(ev.id)}>
+                        <Link id={ev.id} href={`/world/${encodeURIComponent(world.id)}/events/${encodeURIComponent(ev.id)}`} key={ev.id} className="list-item clickable-node-item">
                           <div>
                             <strong>{ev.name}</strong>
                             <span className="subtext">Epoch: {ev.year}</span>
                           </div>
                           <span>⏳</span>
-                        </div>
+                        </Link>
                       ))}
                     </div>
 
-                    <form onSubmit={handleCreateEvent} className="creator-box-form mt-8 border-t border-white/5 pt-6">
+                    <form onSubmit={handleCreateEvent} className="creator-box-form legacy-inline-creator mt-8 border-t border-white/5 pt-6">
                       <h4>Log Historic Event</h4>
                       <div className="flex gap-4 mt-4">
                         <div className="flex-1">
@@ -1864,22 +1750,21 @@ export function WorldView({ initialWorld, onBackToDashboard, initialTab = "overv
                   </div>
                 ) : (
                   <div>
-                    <h3>Relic & Item Inventory</h3>
-                    <p className="subtext">Legendary weapons, ancient keys, and powerful components.</p>
+                    <div className="section-title-bar"><div><h3>Relic & Item Inventory</h3><p className="subtext">Legendary weapons, ancient keys, and powerful components.</p></div><Link className="primary-action compact-action" href={`/world/${encodeURIComponent(world.id)}/items/new`}>New item</Link></div>
 
                     <div className="list-stack mt-4">
                       {items.map((it) => (
-                        <div key={it.id} className="list-item clickable-node-item" onClick={() => handleSelectItem(it.id)}>
+                        <Link id={it.id} href={`/world/${encodeURIComponent(world.id)}/items/${encodeURIComponent(it.id)}`} key={it.id} className="list-item clickable-node-item">
                           <div>
                             <strong>{it.name}</strong>
                             <span className="subtext">Type: {it.type} | Current Location: {locations.find((l) => l.id === it.locationId)?.name || "Uncharted"}</span>
                           </div>
                           <span>🔮</span>
-                        </div>
+                        </Link>
                       ))}
                     </div>
 
-                    <form onSubmit={handleCreateItem} className="creator-box-form mt-8 border-t border-white/5 pt-6">
+                    <form onSubmit={handleCreateItem} className="creator-box-form legacy-inline-creator mt-8 border-t border-white/5 pt-6">
                       <h4>Chronicle Legendary Item</h4>
                       <div className="flex gap-4 mt-4">
                         <div className="flex-1">

@@ -12,6 +12,7 @@ import {
   ResolutionPreview,
   ResolutionPrimitive,
   ResolutionRollResult,
+  ResolutionTraitPathSelector,
   TotalModifierDefinition,
 } from './resolution.types';
 import type { CompiledTraitCompositionArtifact } from '../traits/trait-composition.types';
@@ -19,7 +20,50 @@ import type { CompiledTraitCompositionArtifact } from '../traits/trait-compositi
 type EvaluationContext = ResolutionContext & {
   resolvedTraitInstances?: ResolutionPreview['activeTraitInstances'];
   resolvedTraitChoices?: ResolutionPreview['traitChoices'];
+  resolvedTraitTags?: Record<string, string[]>;
 };
+
+function repeatedPathPrefixes(segments: string[]): string[][] {
+  return segments.flatMap((segment, index) =>
+    segment.endsWith('[]')
+      ? [segments.slice(0, index + 1).map((item) => item.replace(/\[\]$/, ''))]
+      : []);
+}
+
+function selectorMatchesInstance(
+  selector: ResolutionTraitPathSelector | { mode: 'all' },
+  instance: ResolutionPreview['activeTraitInstances'][number],
+  traitTags: Record<string, string[]>,
+): boolean {
+  if (selector.mode === 'all') return true;
+  if (selector.mode === 'ordinal') return instance.ordinal === selector.ordinal;
+  if (selector.mode === 'trait') return instance.traitId === selector.traitId;
+  return (traitTags[instance.traitId] ?? []).includes(selector.tag);
+}
+
+function matchesRepeatedSelectors(
+  candidate: ResolutionPreview['activeTraitInstances'][number],
+  prefixes: string[][],
+  selectors: Array<ResolutionTraitPathSelector | { mode: 'all' }>,
+  instances: ResolutionPreview['activeTraitInstances'],
+  traitTags: Record<string, string[]>,
+): boolean {
+  if (prefixes.length !== selectors.length) return false;
+  return prefixes.every((prefix, index) => {
+    const selectedMount = [...candidate.instanceChain]
+      .reverse()
+      .map((instanceId) => instances.find((instance) => instance.instanceId === instanceId))
+      .find((instance) =>
+        instance?.relation === 'adds'
+        && instance.mountPath.join('\0') === prefix.join('\0'));
+    if (!selectedMount || !selectorMatchesInstance(selectors[index], selectedMount, traitTags)) return false;
+    const isInnermostPrefix = index === prefixes.length - 1;
+    const candidateOccupiesSelectedMount = candidate.mountPath.join('\0') === prefix.join('\0');
+    return !isInnermostPrefix
+      || !candidateOccupiesSelectedMount
+      || candidate.instanceId === selectedMount.instanceId;
+  });
+}
 
 function number(value: ResolutionPrimitive, label: string): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error(`${label} must be a finite number.`);
@@ -93,10 +137,17 @@ function expression(
     let candidates = (context.resolvedTraitInstances ?? []).filter((instance) =>
       instance.mountPath.join('\0') === mountPath.join('\0')
       && key in instance.values);
-    const pathSelector = node.mountSelector;
-    if (pathSelector?.mode === 'ordinal') {
-      candidates = candidates.filter((instance) =>
-        instance.relation === 'adds' && instance.ordinal === pathSelector.ordinal);
+    const prefixes = repeatedPathPrefixes(segments.slice(1, -1));
+    const selectors = node.mountSelectors
+      ?? (node.mountSelector ? [node.mountSelector] : []);
+    if (prefixes.length) {
+      candidates = candidates.filter((instance) => matchesRepeatedSelectors(
+        instance,
+        prefixes,
+        selectors,
+        context.resolvedTraitInstances ?? [],
+        context.resolvedTraitTags ?? {},
+      ));
     }
     if (!candidates.length) throw new Error(`Trait path field '${node.path}' is unavailable.`);
     if (candidates.length > 1) {
@@ -152,7 +203,7 @@ function expandActiveTraits(
   instancePrerequisiteSelections: Record<string, string[]> = {},
   instanceValues: Record<string, Record<string, ResolutionPrimitive>> = {},
   artifact?: CompiledTraitCompositionArtifact,
-): Pick<ResolutionPreview, 'activeTraits' | 'activeTraitInstances' | 'traitChoices'> {
+): Pick<ResolutionPreview, 'activeTraits' | 'activeTraitInstances' | 'traitChoices' | 'structuralChanges'> {
   const roots = [...new Set(rootTraitIds)].sort();
   if (!artifact) {
     if (Object.keys(prerequisiteSelections).length || Object.keys(instancePrerequisiteSelections).length) {
@@ -196,6 +247,7 @@ function expandActiveTraits(
         valueModifiers: [],
       })).sort((left, right) => left.instanceId.localeCompare(right.instanceId)),
       traitChoices: [],
+      structuralChanges: [],
     };
   }
   const knownTraits = new Set(artifact.traits.map((trait) => trait.traitId));
@@ -266,7 +318,6 @@ function expandActiveTraits(
   const resolvedChoices: ResolutionPreview['traitChoices'] = [];
   const encounteredChoiceTraits = new Map<string, string[]>();
   const encounteredChoiceInstances = new Set<string>();
-  const pathsByTrait = new Map<string, ResolutionPreview['activeTraits'][number]['roots']>();
   const activeTraitInstances: ResolutionPreview['activeTraitInstances'] = [];
   const queue: ResolutionPreview['activeTraitInstances'] = rootInstances.map((instance) => ({
     instanceId: instance.instanceId,
@@ -290,11 +341,6 @@ function expandActiveTraits(
     }
     visitedInstances.add(current.instanceId);
     activeTraitInstances.push(current);
-    const paths = pathsByTrait.get(current.traitId) ?? [];
-    if (!paths.some((path) => path.rootTraitId === current.rootTraitId && path.traitChain.join('\0') === current.traitChain.join('\0'))) {
-      paths.push({ rootTraitId: current.rootTraitId, traitChain: current.traitChain });
-      pathsByTrait.set(current.traitId, paths);
-    }
     for (const edge of edgesBySource.get(current.traitId) ?? []) {
       if (current.traitChain.includes(edge.toTraitId)) continue;
       const count = edge.count ?? 1;
@@ -309,7 +355,7 @@ function expandActiveTraits(
           parentInstanceId: current.instanceId,
           relation: edge.kind,
           ...(edge.path ? { path: edge.path } : {}),
-          ...(count > 1 ? { ordinal } : {}),
+          ...(edge.kind === 'adds' && edge.path?.includes('[]') ? { ordinal } : {}),
           mountPath: activationMountPath(current, edge),
           traitChain: [...current.traitChain, edge.toTraitId],
           instanceChain: [...current.instanceChain, childInstanceId],
@@ -365,6 +411,225 @@ function expandActiveTraits(
       throw new Error(`Trait prerequisite selection '${traitId}' is ambiguous across instances: ${instanceIds.join(', ')}. Select prerequisites by instance ID.`);
     }
   }
+  const structuralChanges: ResolutionPreview['structuralChanges'] = [];
+  const inactiveInstanceIds = new Set<string>();
+  const materializeReplacementTree = (
+    seed: ResolutionPreview['activeTraitInstances'][number],
+  ): void => {
+    const replacementQueue = [seed];
+    while (replacementQueue.length) {
+      const current = replacementQueue.shift()!;
+      if (activeTraitInstances.some((instance) => instance.instanceId === current.instanceId)) {
+        throw new Error(`Replacement trait instance ID '${current.instanceId}' resolves more than once.`);
+      }
+      activeTraitInstances.push(current);
+      const options = choicesByTrait.get(current.traitId);
+      if (options) {
+        encounteredChoiceInstances.add(current.instanceId);
+        const traitInstances = encounteredChoiceTraits.get(current.traitId) ?? [];
+        traitInstances.push(current.instanceId);
+        encounteredChoiceTraits.set(current.traitId, traitInstances);
+        const instanceSupplied = instancePrerequisiteSelections[current.instanceId];
+        const traitSupplied = prerequisiteSelections[current.traitId];
+        const supplied = instanceSupplied ?? traitSupplied;
+        const selectedTraitIds = [...new Set(
+          supplied ?? options.filter((traitId) => rootSet.has(traitId)),
+        )].sort();
+        if (!selectedTraitIds.length) {
+          throw new Error(`Trait instance '${current.instanceId}' requires a prerequisite selection from: ${options.join(', ')}.`);
+        }
+        const invalid = selectedTraitIds.find((traitId) => !options.includes(traitId));
+        if (invalid) {
+          throw new Error(`Trait '${invalid}' is not an allowed prerequisite selection for '${current.instanceId}'.`);
+        }
+        resolvedChoices.push({
+          traitId: current.traitId,
+          traitInstanceId: current.instanceId,
+          selectedTraitIds,
+          source: supplied ? 'context' : 'active-roots',
+        });
+        for (const traitId of selectedTraitIds) {
+          if (current.traitChain.includes(traitId)) continue;
+          const childInstanceId = `${current.instanceId}/choice:${encodeURIComponent(traitId)}`;
+          replacementQueue.push({
+            instanceId: childInstanceId,
+            traitId,
+            rootInstanceId: current.rootInstanceId,
+            rootTraitId: current.rootTraitId,
+            parentInstanceId: current.instanceId,
+            relation: 'choice',
+            mountPath: current.mountPath,
+            traitChain: [...current.traitChain, traitId],
+            instanceChain: [...current.instanceChain, childInstanceId],
+            values: materializeValues(traitId, childInstanceId, instanceValues[childInstanceId]),
+            valueModifiers: [],
+          });
+        }
+      }
+      for (const edge of edgesBySource.get(current.traitId) ?? []) {
+        if (current.traitChain.includes(edge.toTraitId)) continue;
+        const count = edge.count ?? 1;
+        for (let ordinal = 1; ordinal <= count; ordinal += 1) {
+          const segment = `${edge.kind}:${encodeURIComponent(edge.path ?? edge.toTraitId)}:${encodeURIComponent(edge.toTraitId)}${count > 1 ? `#${ordinal}` : ''}`;
+          const childInstanceId = `${current.instanceId}/${segment}`;
+          replacementQueue.push({
+            instanceId: childInstanceId,
+            traitId: edge.toTraitId,
+            rootInstanceId: current.rootInstanceId,
+            rootTraitId: current.rootTraitId,
+            parentInstanceId: current.instanceId,
+            relation: edge.kind,
+            ...(edge.path ? { path: edge.path } : {}),
+            ...(edge.kind === 'adds' && edge.path?.includes('[]') ? { ordinal } : {}),
+            mountPath: activationMountPath(current, edge),
+            traitChain: [...current.traitChain, edge.toTraitId],
+            instanceChain: [...current.instanceChain, childInstanceId],
+            values: materializeValues(edge.toTraitId, childInstanceId, instanceValues[childInstanceId]),
+            valueModifiers: [],
+          });
+        }
+      }
+    }
+  };
+  type StructuralApplication = {
+    source: ResolutionPreview['activeTraitInstances'][number];
+    directive: CompiledTraitCompositionArtifact['structuralDirectives'][number];
+    directiveIndex: number;
+    target: ResolutionPreview['activeTraitInstances'][number];
+  };
+  const processedStructuralApplications = new Set<string>();
+  const maximumStructuralChanges = Math.max(1, activeTraitInstances.length + artifact.structuralDirectives.length) * 8;
+  while (structuralChanges.length <= maximumStructuralChanges) {
+    const applicationsByTarget = new Map<string, StructuralApplication[]>();
+    for (const source of activeTraitInstances) {
+      if (inactiveInstanceIds.has(source.instanceId)) continue;
+      for (const [directiveIndex, directive] of (artifact.structuralDirectives ?? []).entries()) {
+        if (directive.sourceTraitId !== source.traitId) continue;
+        const root = activeTraitInstances.find((instance) => instance.instanceId === source.rootInstanceId)!;
+        const basePath = directive.anchor === 'this' ? source.mountPath : root.mountPath;
+        const targetMountPath = [
+          ...basePath,
+          ...directive.path.map((segment) => segment.replace(/\[\]$/, '')),
+        ];
+        let candidates = activeTraitInstances.filter((instance) =>
+          !inactiveInstanceIds.has(instance.instanceId)
+          && instance.rootInstanceId === source.rootInstanceId
+          && instance.relation === 'adds'
+          && instance.mountPath.join('\0') === targetMountPath.join('\0'));
+        const directiveSelectors = directive.mountSelectors
+          ?? (directive.mountSelector ? [directive.mountSelector] : []);
+        const directivePrefixes = repeatedPathPrefixes(directive.path);
+        if (directivePrefixes.length) {
+          const traitTags = Object.fromEntries(
+            artifact.traits.map((trait) => [trait.traitId, trait.tags ?? []]),
+          );
+          candidates = candidates.filter((instance) => matchesRepeatedSelectors(
+            instance,
+            directivePrefixes,
+            directiveSelectors,
+            activeTraitInstances,
+            traitTags,
+          ));
+        }
+        if (!directiveSelectors.some((selector) => selector.mode === 'all')
+          && candidates.length > 1) {
+          throw new Error(
+            `Structural directive '${source.instanceId}' resolves '${directive.anchor}.${directive.path.join('.')}' `
+            + `ambiguously to ${candidates.map((candidate) => candidate.instanceId).join(', ')}.`,
+          );
+        }
+        for (const target of candidates) {
+          const applicationKey = `${source.instanceId}\0${directiveIndex}\0${target.rootInstanceId}\0${target.mountPath.join('\0')}`;
+          if (processedStructuralApplications.has(applicationKey)) continue;
+          const grouped = applicationsByTarget.get(target.instanceId) ?? [];
+          grouped.push({ source, directive, directiveIndex, target });
+          applicationsByTarget.set(target.instanceId, grouped);
+        }
+      }
+    }
+    const next = [...applicationsByTarget.values()]
+      .sort((left, right) =>
+        left[0].target.mountPath.length - right[0].target.mountPath.length
+        || left[0].target.instanceId.localeCompare(right[0].target.instanceId))
+      .find((applications) =>
+        !inactiveInstanceIds.has(applications[0].target.instanceId)
+        && applications.some((application) => !inactiveInstanceIds.has(application.source.instanceId)));
+    if (!next) break;
+    const applications = next.filter((application) =>
+      !inactiveInstanceIds.has(application.source.instanceId));
+    applications.forEach((application) => {
+      processedStructuralApplications.add(
+        `${application.source.instanceId}\0${application.directiveIndex}\0${application.target.rootInstanceId}\0${application.target.mountPath.join('\0')}`,
+      );
+    });
+    const priority = Math.max(...applications.map((application) => application.directive.priority));
+    const winners = applications.filter((application) => application.directive.priority === priority);
+    const winnerKinds = new Set(winners.map((application) => application.directive.kind));
+    const replacementTraitIds = new Set(winners.map((application) => application.directive.replacementTraitId ?? ''));
+    if (winnerKinds.size !== 1
+      || (winners[0].directive.kind === 'replacement' && replacementTraitIds.size !== 1)) {
+      throw new Error(
+        `Structural directives conflict at '${winners[0].directive.anchor}.${winners[0].directive.path.join('.')}' `
+        + `with priority ${priority}: ${winners.map((winner) =>
+          `${winner.source.traitId}:${winner.directive.kind}${winner.directive.replacementTraitId ? `→${winner.directive.replacementTraitId}` : ''}`).join(', ')}.`,
+      );
+    }
+    const target = winners[0].target;
+    const inactive = activeTraitInstances
+      .filter((instance) => instance.instanceChain.includes(target.instanceId))
+      .map((instance) => instance.instanceId)
+      .sort();
+    inactive.forEach((instanceId) => inactiveInstanceIds.add(instanceId));
+    const directive = winners[0].directive;
+    let replacementInstanceId: string | undefined;
+    if (directive.kind === 'replacement') {
+      const replacementTraitId = directive.replacementTraitId!;
+      if (target.traitChain.includes(replacementTraitId)) {
+        throw new Error(
+          `Structural replacement cycle detected: ${[...target.traitChain, replacementTraitId].join(' → ')}.`,
+        );
+      }
+      replacementInstanceId = `${target.instanceId}/replacement:${encodeURIComponent(replacementTraitId)}`;
+      const parent = target.parentInstanceId
+        ? activeTraitInstances.find((instance) => instance.instanceId === target.parentInstanceId)
+        : undefined;
+      materializeReplacementTree({
+        instanceId: replacementInstanceId,
+        traitId: replacementTraitId,
+        rootInstanceId: target.rootInstanceId,
+        rootTraitId: target.rootTraitId,
+        ...(parent ? { parentInstanceId: parent.instanceId } : {}),
+        relation: 'adds',
+        ...(target.path ? { path: target.path } : {}),
+        ...(target.ordinal !== undefined ? { ordinal: target.ordinal } : {}),
+        mountPath: target.mountPath,
+        traitChain: [...(parent?.traitChain ?? [target.rootTraitId]), replacementTraitId],
+        instanceChain: [...(parent?.instanceChain ?? [target.rootInstanceId]), replacementInstanceId],
+        values: materializeValues(replacementTraitId, replacementInstanceId, instanceValues[replacementInstanceId]),
+        valueModifiers: [],
+      });
+    }
+    structuralChanges.push({
+      sourceInstanceIds: [...new Set(winners.map((winner) => winner.source.instanceId))].sort(),
+      sourceTraitIds: [...new Set(winners.map((winner) => winner.source.traitId))].sort(),
+      kind: directive.kind,
+      anchor: directive.anchor,
+      path: directive.path,
+      priority,
+      ...(directive.mountSelector ? { mountSelector: directive.mountSelector } : {}),
+      ...(directive.mountSelectors ? { mountSelectors: directive.mountSelectors } : {}),
+      targetInstanceId: target.instanceId,
+      targetTraitId: target.traitId,
+      inactiveInstanceIds: inactive,
+      ...(replacementInstanceId ? {
+        replacementInstanceId,
+        replacementTraitId: directive.replacementTraitId,
+      } : {}),
+    });
+  }
+  if (structuralChanges.length > maximumStructuralChanges) {
+    throw new Error(`Structural composition exceeded the ${maximumStructuralChanges}-change safety budget.`);
+  }
   const unusedSelection = Object.keys(prerequisiteSelections).find((traitId) => !encounteredChoiceTraits.has(traitId));
   if (unusedSelection) {
     throw new Error(`Trait prerequisite selection '${unusedSelection}' does not belong to an active trait with multiple alternatives.`);
@@ -373,7 +638,10 @@ function expandActiveTraits(
   if (unusedInstanceSelection) {
     throw new Error(`Trait instance prerequisite selection '${unusedInstanceSelection}' does not belong to an active trait instance with multiple alternatives.`);
   }
-  const unusedValues = Object.keys(instanceValues).find((instanceId) => !visitedInstances.has(instanceId));
+  const effectiveTraitInstances = activeTraitInstances
+    .filter((instance) => !inactiveInstanceIds.has(instance.instanceId));
+  const effectiveInstanceIds = new Set(effectiveTraitInstances.map((instance) => instance.instanceId));
+  const unusedValues = Object.keys(instanceValues).find((instanceId) => !effectiveInstanceIds.has(instanceId));
   if (unusedValues) throw new Error(`Trait instance values '${unusedValues}' do not belong to an active trait instance.`);
   const mountKey = (path: string[]): string => path.join('\0');
   const directTerminal = (instance: ResolutionPreview['activeTraitInstances'][number], key: string) => {
@@ -381,51 +649,174 @@ function expandActiveTraits(
     return contract.nodes.find((node) =>
       node.kind === 'terminal' && node.path.length === 1 && node.path[0] === key);
   };
-  const modifierApplications = activeTraitInstances.flatMap((source) =>
-    contractsByTrait.get(source.traitId)!.modifiers.map((modifier) => ({ source, modifier })))
+  const baseValuesByInstance = new Map(
+    effectiveTraitInstances.map((instance) => [instance.instanceId, { ...instance.values }]),
+  );
+  const modifierStage: Record<
+    CompiledTraitCompositionArtifact['traits'][number]['modifiers'][number]['operation'],
+    number
+  > = {
+    sets: 0,
+    increases: 1,
+    decreases: 1,
+    multiplies: 2,
+    divides: 2,
+    'at-least': 3,
+    'at-most': 4,
+  };
+  const modifierApplications = effectiveTraitInstances.flatMap((source) =>
+    contractsByTrait.get(source.traitId)!.modifiers.map((modifier, sourceGrantIndex) => ({
+      source,
+      modifier,
+      sourceGrantIndex,
+    })))
     .sort((left, right) => {
-      const leftLocal = left.modifier.path.length === 1 && !left.modifier.mountSelector ? 0 : 1;
-      const rightLocal = right.modifier.path.length === 1 && !right.modifier.mountSelector ? 0 : 1;
+      const leftLocal = left.modifier.path.length === 1
+        && !left.modifier.mountSelector
+        && !left.modifier.mountSelectors ? 0 : 1;
+      const rightLocal = right.modifier.path.length === 1
+        && !right.modifier.mountSelector
+        && !right.modifier.mountSelectors ? 0 : 1;
       return leftLocal - rightLocal
+        || modifierStage[left.modifier.operation] - modifierStage[right.modifier.operation]
+        || (left.modifier.priority ?? 0) - (right.modifier.priority ?? 0)
         || left.source.instanceId.localeCompare(right.source.instanceId)
         || left.modifier.path.join('.').localeCompare(right.modifier.path.join('.'))
-        || left.modifier.operation.localeCompare(right.modifier.operation)
-        || String(left.modifier.amount).localeCompare(String(right.modifier.amount));
+        || left.sourceGrantIndex - right.sourceGrantIndex;
     });
+  const resolveModifierTargets = (
+    source: ResolutionPreview['activeTraitInstances'][number],
+    modifier: CompiledTraitCompositionArtifact['traits'][number]['modifiers'][number],
+  ): ResolutionPreview['activeTraitInstances'] => {
+    const key = modifier.path.at(-1)!;
+    const basePath = modifier.anchor === 'this'
+      ? source.mountPath
+      : effectiveTraitInstances.find((instance) => instance.instanceId === source.rootInstanceId)!.mountPath;
+    const targetMountPath = [
+      ...basePath,
+      ...modifier.path.slice(0, -1).map((segment) => segment.replace(/\[\]$/, '')),
+    ];
+    let candidates = effectiveTraitInstances.filter((instance) =>
+      instance.rootInstanceId === source.rootInstanceId
+      && mountKey(instance.mountPath) === mountKey(targetMountPath)
+      && directTerminal(instance, key));
+    if (modifier.path.length === 1 && directTerminal(source, key)) candidates = [source];
+    const mountSelectors = modifier.mountSelectors
+      ?? (modifier.mountSelector ? [modifier.mountSelector] : []);
+    const repeatedPrefixes = repeatedPathPrefixes(modifier.path.slice(0, -1));
+    if (repeatedPrefixes.length) {
+      const traitTags = Object.fromEntries(
+        artifact.traits.map((trait) => [trait.traitId, trait.tags ?? []]),
+      );
+      candidates = candidates.filter((instance) => matchesRepeatedSelectors(
+        instance,
+        repeatedPrefixes,
+        mountSelectors,
+        effectiveTraitInstances,
+        traitTags,
+      ));
+    }
+    if (candidates.length > 1) {
+      const owned = candidates.filter((instance) => directTerminal(instance, key)?.sourceTraitId === instance.traitId);
+      if (owned.length === 1) candidates = owned;
+    }
+    if (!candidates.length) {
+      throw new Error(`Trait modifier '${source.instanceId}' cannot resolve '${modifier.anchor}.${modifier.path.join('.')}' to an active instance field.`);
+    }
+    if (candidates.length > 1 && !mountSelectors.some((selector) => selector.mode === 'all')) {
+      throw new Error(`Trait modifier '${source.instanceId}' resolves '${modifier.anchor}.${modifier.path.join('.')}' ambiguously to: ${candidates.map((instance) => instance.instanceId).join(', ')}.`);
+    }
+    return candidates.sort((left, right) => left.instanceId.localeCompare(right.instanceId));
+  };
+  const modifierConditionMatches = (
+    target: ResolutionPreview['activeTraitInstances'][number],
+    modifier: CompiledTraitCompositionArtifact['traits'][number]['modifiers'][number],
+  ): boolean => {
+    if (!modifier.condition) return true;
+    const key = modifier.path.at(-1)!;
+    const baseValue = baseValuesByInstance.get(target.instanceId)?.[key];
+    if (baseValue === undefined) {
+      throw new Error(`Trait modifier condition requires a base value at '${target.instanceId}.${key}'.`);
+    }
+    return modifier.condition.operator === 'equals'
+      ? baseValue === modifier.condition.value
+      : modifier.condition.operator === 'gte'
+        ? number(baseValue, 'trait modifier condition base') >= number(modifier.condition.value, 'trait modifier condition value')
+        : number(baseValue, 'trait modifier condition base') <= number(modifier.condition.value, 'trait modifier condition value');
+  };
+  const activeModifiersByTarget = new Map<
+    string,
+    Array<(typeof modifierApplications)[number]>
+  >();
+  for (const application of modifierApplications) {
+    for (const target of resolveModifierTargets(application.source, application.modifier)) {
+      if (!modifierConditionMatches(target, application.modifier)) continue;
+      const key = `${target.instanceId}\0${application.modifier.path.at(-1)!}`;
+      const grouped = activeModifiersByTarget.get(key) ?? [];
+      grouped.push(application);
+      activeModifiersByTarget.set(key, grouped);
+    }
+  }
+  for (const [target, applications] of activeModifiersByTarget) {
+    const setsByPriority = new Map<number, typeof applications>();
+    for (const application of applications.filter(({ modifier }) => modifier.operation === 'sets')) {
+      const priority = application.modifier.priority ?? 0;
+      const grouped = setsByPriority.get(priority) ?? [];
+      grouped.push(application);
+      setsByPriority.set(priority, grouped);
+    }
+    for (const [priority, sets] of setsByPriority) {
+      if (new Set(sets.map(({ modifier }) => JSON.stringify(modifier.amount))).size > 1) {
+        throw new Error(
+          `Trait modifiers conflict at '${target.replace('\0', '.')}' with priority ${priority}: `
+          + `${sets.map(({ source, modifier }) => `${source.traitId}:sets→${String(modifier.amount)}`).join(', ')}.`,
+        );
+      }
+    }
+    const lowerBounds = applications
+      .filter(({ modifier }) => modifier.operation === 'at-least')
+      .map(({ modifier }) => number(modifier.amount, 'trait minimum bound'));
+    const upperBounds = applications
+      .filter(({ modifier }) => modifier.operation === 'at-most')
+      .map(({ modifier }) => number(modifier.amount, 'trait maximum bound'));
+    if (lowerBounds.length && upperBounds.length
+      && Math.max(...lowerBounds) > Math.min(...upperBounds)) {
+      throw new Error(
+        `Trait modifier bounds conflict at '${target.replace('\0', '.')}': `
+        + `minimum ${Math.max(...lowerBounds)} exceeds maximum ${Math.min(...upperBounds)}.`,
+      );
+    }
+  }
   for (const { source, modifier } of modifierApplications) {
       const key = modifier.path.at(-1)!;
-      const basePath = modifier.anchor === 'this'
-        ? source.mountPath
-        : activeTraitInstances.find((instance) => instance.instanceId === source.rootInstanceId)!.mountPath;
-      const targetMountPath = [
-        ...basePath,
-        ...modifier.path.slice(0, -1).map((segment) => segment.replace(/\[\]$/, '')),
-      ];
-      let candidates = activeTraitInstances.filter((instance) =>
-        instance.rootInstanceId === source.rootInstanceId
-        && mountKey(instance.mountPath) === mountKey(targetMountPath)
-        && directTerminal(instance, key));
-      if (modifier.path.length === 1 && directTerminal(source, key)) candidates = [source];
       const mountSelector = modifier.mountSelector;
-      if (mountSelector) {
-        candidates = candidates.filter((instance) =>
-          instance.relation === 'adds' && instance.ordinal !== undefined);
-        if (mountSelector.mode === 'ordinal') {
-          candidates = candidates.filter((instance) => instance.ordinal === mountSelector.ordinal);
-        }
-      }
-      if (candidates.length > 1) {
-        const owned = candidates.filter((instance) => directTerminal(instance, key)?.sourceTraitId === instance.traitId);
-        if (owned.length === 1) candidates = owned;
-      }
-      if (!candidates.length) {
-        throw new Error(`Trait modifier '${source.instanceId}' cannot resolve '${modifier.anchor}.${modifier.path.join('.')}' to an active instance field.`);
-      }
-      if (candidates.length > 1 && mountSelector?.mode !== 'all') {
-        throw new Error(`Trait modifier '${source.instanceId}' resolves '${modifier.anchor}.${modifier.path.join('.')}' ambiguously to: ${candidates.map((instance) => instance.instanceId).join(', ')}.`);
-      }
-      for (const target of candidates.sort((left, right) => left.instanceId.localeCompare(right.instanceId))) {
+      const mountSelectors = modifier.mountSelectors;
+      for (const target of resolveModifierTargets(source, modifier)) {
         const before = target.values[key];
+        const condition = modifier.condition;
+        const conditionMatched = modifierConditionMatches(target, modifier);
+        if (!conditionMatched) {
+          target.valueModifiers.push({
+            sourceInstanceId: source.instanceId,
+            sourceTraitId: source.traitId,
+            anchor: modifier.anchor,
+            operation: modifier.operation,
+            path: modifier.path,
+            amount: modifier.amount,
+            ...(modifier.priority ? { priority: modifier.priority } : {}),
+            condition,
+            applied: false,
+            conditionMatched: false,
+            ...(modifier.authoredAmount ? { authoredAmount: modifier.authoredAmount } : {}),
+            ...(modifier.normalizedAmount ? { normalizedAmount: modifier.normalizedAmount } : {}),
+            ...(modifier.targetUnit ? { targetUnit: modifier.targetUnit } : {}),
+            ...(mountSelector ? { mountSelector } : {}),
+            ...(mountSelectors ? { mountSelectors } : {}),
+            ...(before !== undefined ? { before } : {}),
+            after: before,
+          });
+          continue;
+        }
         let after: ResolutionPrimitive;
         if (modifier.operation === 'sets') {
           after = modifier.amount;
@@ -436,10 +827,11 @@ function expandActiveTraits(
           if (modifier.operation === 'increases') after = before + modifier.amount;
           else if (modifier.operation === 'decreases') after = before - modifier.amount;
           else if (modifier.operation === 'multiplies') after = before * modifier.amount;
-          else {
+          else if (modifier.operation === 'divides') {
             if (modifier.amount === 0) throw new Error(`Trait modifier '${source.instanceId}' cannot divide by zero.`);
             after = before / modifier.amount;
-          }
+          } else if (modifier.operation === 'at-least') after = Math.max(before, modifier.amount);
+          else after = Math.min(before, modifier.amount);
           if (!Number.isFinite(after)) throw new Error(`Trait modifier '${source.instanceId}' produced a non-finite number.`);
         }
         target.values[key] = after;
@@ -450,21 +842,42 @@ function expandActiveTraits(
           operation: modifier.operation,
           path: modifier.path,
           amount: modifier.amount,
+          ...(modifier.priority ? { priority: modifier.priority } : {}),
+          ...(condition ? { condition, applied: true, conditionMatched: true } : {}),
+          ...(modifier.authoredAmount ? { authoredAmount: modifier.authoredAmount } : {}),
+          ...(modifier.normalizedAmount ? { normalizedAmount: modifier.normalizedAmount } : {}),
+          ...(modifier.targetUnit ? { targetUnit: modifier.targetUnit } : {}),
           ...(mountSelector ? { mountSelector } : {}),
+          ...(mountSelectors ? { mountSelectors } : {}),
           ...(before !== undefined ? { before } : {}),
           after,
         });
       }
   }
   return {
-    activeTraits: [...pathsByTrait].map(([traitId, traitRoots]) => ({
+    activeTraits: [...new Set(effectiveTraitInstances.map((instance) => instance.traitId))].map((traitId) => ({
       traitId,
-      roots: traitRoots.sort((left, right) => left.rootTraitId.localeCompare(right.rootTraitId)),
+      roots: effectiveTraitInstances
+        .filter((instance) => instance.traitId === traitId)
+        .map((instance) => ({
+          rootTraitId: instance.rootTraitId,
+          traitChain: instance.traitChain,
+        }))
+        .filter((path, index, paths) =>
+          paths.findIndex((candidate) =>
+            candidate.rootTraitId === path.rootTraitId
+            && candidate.traitChain.join('\0') === path.traitChain.join('\0')) === index)
+        .sort((left, right) =>
+          left.rootTraitId.localeCompare(right.rootTraitId)
+          || left.traitChain.join('\0').localeCompare(right.traitChain.join('\0'))),
     })).sort((left, right) => left.traitId.localeCompare(right.traitId)),
-    activeTraitInstances: activeTraitInstances.sort((left, right) => left.instanceId.localeCompare(right.instanceId)),
+    activeTraitInstances: effectiveTraitInstances.sort((left, right) =>
+      left.instanceId.localeCompare(right.instanceId)),
     traitChoices: resolvedChoices.sort((left, right) =>
       left.traitId.localeCompare(right.traitId)
       || (left.traitInstanceId ?? '').localeCompare(right.traitInstanceId ?? '')),
+    structuralChanges: structuralChanges.sort((left, right) =>
+      left.targetInstanceId.localeCompare(right.targetInstanceId)),
   };
 }
 
@@ -631,9 +1044,12 @@ export function previewResolutionOperation(
     context.traitInstanceValues ?? {},
     traitArtifact,
   );
-  const { activeTraits, activeTraitInstances, traitChoices } = traitExpansion;
+  const { activeTraits, activeTraitInstances, traitChoices, structuralChanges } = traitExpansion;
   context.resolvedTraitInstances = activeTraitInstances;
   context.resolvedTraitChoices = traitChoices;
+  context.resolvedTraitTags = Object.fromEntries(
+    (traitArtifact?.traits ?? []).map((trait) => [trait.traitId, trait.tags ?? []]),
+  );
   const modifierSources = new Map<string, ResolutionRollResult['modifierActivations'][number]['sources']>();
   const activateModifier = (
     modifierId: string,
@@ -715,7 +1131,7 @@ export function previewResolutionOperation(
     if (step.kind === 'validate') {
       const allowed = condition(step.condition, context, results);
       trace.push({ stepId, kind: step.kind, message: allowed ? 'Availability condition passed.' : step.failureMessage, values: { allowed } });
-      if (!allowed) return { outcome: 'failure', data: { reason: step.failureMessage }, resourceChanges, effects, events, activeTraits, activeTraitInstances, traitChoices, rolls, entropyConsumed, trace };
+      if (!allowed) return { outcome: 'failure', data: { reason: step.failureMessage }, resourceChanges, effects, events, activeTraits, activeTraitInstances, traitChoices, structuralChanges, rolls, entropyConsumed, trace };
       stepId = step.next;
     } else if (step.kind === 'consume-resource') {
       const amount = number(expression(step.amount, context, results), `${stepId}.amount`);
@@ -774,7 +1190,7 @@ export function previewResolutionOperation(
     } else {
       const data = Object.fromEntries(Object.entries(step.data ?? {}).map(([key, value]) => [key, expression(value, context, results)]));
       trace.push({ stepId, kind: step.kind, message: `Returned ${step.outcome}.`, values: data });
-      return { outcome: step.outcome, data, resourceChanges, effects, events, activeTraits, activeTraitInstances, traitChoices, rolls, entropyConsumed, trace };
+      return { outcome: step.outcome, data, resourceChanges, effects, events, activeTraits, activeTraitInstances, traitChoices, structuralChanges, rolls, entropyConsumed, trace };
     }
   }
 }

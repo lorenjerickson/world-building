@@ -1,5 +1,6 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { createHash } from 'node:crypto';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 
 export type CompositionMemberInput = {
@@ -68,53 +69,64 @@ export class CompositionManifestService {
       sortOrders.add(member.sortOrder);
     }
 
-    const compositionHash = this.computeCompositionHash(input.members);
-    const existing = await this.prisma.ruleSetComposition.findUnique({
-      where: {
-        workspaceExternalId_compositionHash: {
-          workspaceExternalId: input.workspaceExternalId,
-          compositionHash,
-        },
-      },
-    });
-
-    if (existing) {
-      return existing;
-    }
-
-    const manifest = {
-      profileName: input.gameplayProfileName,
-      members: input.members.sort((a, b) => a.sortOrder - b.sortOrder),
-    };
-
-    const composition = await this.prisma.ruleSetComposition.create({
-      data: {
+    const orderedMembers = [...input.members].sort((a, b) => a.sortOrder - b.sortOrder);
+    const compositionHash = this.computeCompositionHash(orderedMembers);
+    const compositionKey = {
+      workspaceExternalId_compositionHash: {
         workspaceExternalId: input.workspaceExternalId,
         compositionHash,
-        manifest: manifest as any,
-        engineVersion: '1.0.0',
-        compilerVersion: '1.0.0',
-        validationSummary: { status: 'valid', memberCount: input.members.length },
-        createdBy: input.createdBy,
       },
-    });
+    };
+    const manifest = {
+      profileName: input.gameplayProfileName,
+      members: orderedMembers,
+    };
 
-    // Create members
-    for (const member of input.members) {
-      await this.prisma.ruleSetCompositionMember.create({
-        data: {
-          compositionId: composition.id,
-          ruleSetId: member.ruleSetId,
-          releaseId: member.releaseId,
-          releaseHash: member.releaseHash,
-          namespaceAlias: member.namespaceAlias,
-          sortOrder: member.sortOrder,
-          policy: (member.policy ?? {}) as any,
-        },
+    try {
+      return await this.prisma.$transaction(async (transaction) => {
+        const existing = await transaction.ruleSetComposition.findUnique({
+          where: compositionKey,
+        });
+        if (existing) {
+          return existing;
+        }
+
+        return transaction.ruleSetComposition.create({
+          data: {
+            workspaceExternalId: input.workspaceExternalId,
+            compositionHash,
+            manifest: manifest as any,
+            engineVersion: '1.0.0',
+            compilerVersion: '1.0.0',
+            validationSummary: { status: 'valid', memberCount: orderedMembers.length },
+            createdBy: input.createdBy,
+            members: {
+              create: orderedMembers.map((member) => ({
+                ruleSetId: member.ruleSetId,
+                releaseId: member.releaseId,
+                releaseHash: member.releaseHash,
+                namespaceAlias: member.namespaceAlias,
+                sortOrder: member.sortOrder,
+                policy: (member.policy ?? {}) as any,
+              })),
+            },
+          },
+        });
       });
+    } catch (error) {
+      // Concurrent identical requests can both miss the first lookup. The
+      // database uniqueness constraint selects the winner; return it so this
+      // content-addressed operation remains idempotent.
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        const existing = await this.prisma.ruleSetComposition.findUnique({
+          where: compositionKey,
+        });
+        if (existing) {
+          return existing;
+        }
+      }
+      throw error;
     }
-
-    return composition;
   }
 
   async bindCompositionToScope(input: {

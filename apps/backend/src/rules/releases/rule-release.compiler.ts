@@ -1,5 +1,10 @@
 import { createHash } from 'crypto';
-import { buildTraitShape, traitSatisfiesCollection, type TraitShapeNode } from '@world-building/common';
+import {
+  buildTraitShape,
+  traitSatisfiesCollection,
+  traitShapeTerminalPaths,
+  type TraitShapeNode,
+} from '@world-building/common';
 import { compileCreatureCapabilities } from '../metamodel/creature-capability.compiler';
 import { compileResolutionDefinitions } from '../resolution/resolution.compiler';
 import { validateTemplateDefinition } from '../templates/template.compiler';
@@ -66,7 +71,7 @@ function prefixDiagnostics(
 
 function validateResolutionDieTraits(
   traitResult: ReturnType<typeof compileTraitCompositions> | undefined,
-  traitSources: Array<{ externalId: string; name: string; body: Record<string, unknown> }>,
+  traitSources: Array<{ externalId: string; name: string; body: Record<string, unknown>; tags?: string[] }>,
   resolutionSources: Record<string, unknown>[],
   operationSubjectContracts: Record<string, {
     effectiveTraitIds: string[];
@@ -184,19 +189,8 @@ function validateResolutionDieTraits(
         prerequisiteSelections: effectiveSubjectTraitSelections as Record<string, string[]>,
       });
       const availablePaths = new Set(
-        subjectShape.nodes.flatMap((node) => {
-          if (node.kind === 'terminal') return [`self.${node.path.join('.')}`];
-          if (node.kind !== 'collection') return [];
-          const elementShape = buildTraitShape({
-            definitions: traitSources,
-            prerequisiteIds: node.acceptedTraitIds,
-            prerequisiteMode: node.acceptsMode,
-          });
-          return elementShape.nodes.flatMap((terminal) =>
-            terminal.kind === 'terminal' && terminal.path.length === 1
-              ? [`self.${node.path.join('.')}[].${terminal.path[0]}`]
-              : []);
-        }),
+        traitShapeTerminalPaths(subjectShape, traitSources)
+          .map(({ path: terminalPath }) => `self.${terminalPath.join('.')}`),
       );
       const visitExpressions = (value: unknown, valuePath: string): void => {
         if (Array.isArray(value)) {
@@ -360,6 +354,7 @@ export function compileRuleRelease(
       externalId: definition.externalId,
       name: definition.name,
       body: definition.body,
+      tags: definition.tags,
     }));
   const creatureSources = sortedDefinitions
     .filter((definition) => definition.body.metamodelVersion === 'creature-capabilities/1')

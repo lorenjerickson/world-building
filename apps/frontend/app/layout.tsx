@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { UserProvider } from "@auth0/nextjs-auth0/client";
+import { GlobalSearch } from "@/components/global-search";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -16,7 +17,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
-        <UserProvider>{children}</UserProvider>
+        <UserProvider><GlobalSearch />{children}</UserProvider>
       </body>
     </html>
   );

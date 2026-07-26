@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 import { DeleteArtifactButton } from './delete-artifact-button';
 import {
@@ -34,6 +34,7 @@ type EditingArtifact =
 
 export function RuleSetDetailRoute({ ruleSetId }: { ruleSetId: string }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const numericId = Number(ruleSetId);
   const invalidId = !Number.isInteger(numericId) || numericId < 1;
   const [ruleSet, setRuleSet] = useState<RuleSetResource>();
@@ -81,6 +82,26 @@ export function RuleSetDetailRoute({ ruleSetId }: { ruleSetId: string }) {
     return () => controller.abort();
   }, [invalidId, numericId]);
 
+  const linkedDefinitionId = Number(searchParams.get('definition'));
+  useEffect(() => {
+    if (!Number.isInteger(linkedDefinitionId) || linkedDefinitionId < 1) return;
+    const definition = definitions.find((candidate) => candidate.id === linkedDefinitionId);
+    if (!definition) return;
+    let scrollFrame = 0;
+    const frame = requestAnimationFrame(() => {
+      setAuthoring(undefined);
+      setDefinitionVisibilityDraft(definition.visibility);
+      setEditing({ kind: 'definition', artifact: definition });
+      scrollFrame = requestAnimationFrame(() => {
+        document.getElementById('definition-editor')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    });
+    return () => {
+      cancelAnimationFrame(frame);
+      cancelAnimationFrame(scrollFrame);
+    };
+  }, [definitions, linkedDefinitionId]);
+
   const filteredModules = useMemo(() => {
     const search = moduleSearch.trim().toLowerCase();
     return modules.filter((module) => {
@@ -115,7 +136,7 @@ export function RuleSetDetailRoute({ ruleSetId }: { ruleSetId: string }) {
         <div className="header-left"><span className="eyebrow">{ruleSet.status} · {ruleSet.lifecycle}</span><h2>{ruleSet.name}</h2><p>{ruleSet.summary}</p></div>
         <div className="section-actions">
           <Link href="/rule-sets" className="secondary-action">Back to rule sets</Link>
-          <button type="button" className="secondary-action" disabled={exporting} onClick={async () => { setExporting(true); try { const bundle = await exportRuleSet(numericId); const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `${ruleSet.slug || ruleSet.name.toLowerCase().replace(/\s+/g, '-')}-export.json`; a.click(); URL.revokeObjectURL(url); } catch (cause) { /* silently ignore */ } finally { setExporting(false); } }}>{exporting ? 'Exporting…' : 'Export'}</button>
+          <button type="button" className="secondary-action" disabled={exporting} onClick={async () => { setExporting(true); try { const bundle = await exportRuleSet(numericId); const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `${ruleSet.slug || ruleSet.name.toLowerCase().replace(/\s+/g, '-')}-export.json`; a.click(); URL.revokeObjectURL(url); } catch { /* silently ignore */ } finally { setExporting(false); } }}>{exporting ? 'Exporting…' : 'Export'}</button>
           <button type="button" className="secondary-action" onClick={() => setShowImport((v) => !v)}>{showImport ? 'Cancel import' : 'Import'}</button>
           <button type="button" className="primary-action" disabled={!modules.length || !definitions.length}
             title={!modules.length || !definitions.length ? 'Add at least one module and definition before publishing.' : undefined}

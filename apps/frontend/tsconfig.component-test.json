@@ -1,0 +1,21 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "incremental": false,
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "noEmit": false,
+    "outDir": ".next/trait-component-tests",
+    "rootDir": ".",
+    "types": ["node"],
+    "jsx": "react-jsx"
+  },
+  "include": [
+    "components/guided-trait-grants-editor.tsx",
+    "components/guided-trait-grants-editor.component.test.tsx",
+    "lib/rule-sets.ts",
+    "lib/trait-modifier-paths.ts",
+    "lib/trait-shape-diff.ts",
+    "lib/trait-shape.ts"
+  ]
+}

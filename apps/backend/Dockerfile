@@ -22,6 +22,7 @@ WORKDIR /app
 # Copy workspace manifests before source (layer-cache friendly)
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY apps/backend/package.json ./apps/backend/
+COPY apps/backend/prisma/ ./apps/backend/prisma/
 COPY packages/common/package.json ./packages/common/
 
 # Force node-llama-cpp to compile from source inside Linux
@@ -33,10 +34,11 @@ RUN pnpm install --filter=@world-building/backend... --frozen-lockfile
 
 COPY apps/backend/ ./apps/backend/
 COPY packages/common/ ./packages/common/
+RUN pnpm --filter=@world-building/backend prisma:generate
 RUN pnpm --filter=@world-building/backend... build
 
 # ── Stage 2: production runtime ───────────────────────────────────────────────
-FROM node:20-bookworm-slim AS runner
+FROM node:24-bookworm-slim AS runner
 
 RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
 
@@ -46,8 +48,10 @@ WORKDIR /app
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY apps/backend/package.json ./apps/backend/
+COPY apps/backend/prisma/ ./apps/backend/prisma/
 COPY packages/common/package.json ./packages/common/
 RUN pnpm install --filter=@world-building/backend... --frozen-lockfile --prod
+RUN pnpm --filter=@world-building/backend prisma:generate
 
 COPY --from=builder /app/apps/backend/dist ./apps/backend/dist
 COPY --from=builder /app/packages/common/dist ./packages/common/dist
@@ -56,4 +60,6 @@ ENV NODE_ENV=production
 WORKDIR /app/apps/backend
 
 EXPOSE 8000
+HEALTHCHECK --interval=5s --timeout=3s --start-period=10s --retries=12 \
+  CMD node -e "fetch('http://127.0.0.1:8000/health').then(response => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"
 CMD ["node", "dist/main"]

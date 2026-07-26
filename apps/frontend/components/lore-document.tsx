@@ -73,11 +73,11 @@ function DocumentImage({ imageUrl, label, onChange }: { imageUrl?: string; label
 }
 
 export function LoreDocument({ eyebrow, title, description, imageUrl, imageLabel = "image", facts, references, related, onTitleChange, onDescriptionChange, onImageChange, actions, media }: { eyebrow: string; title: string; description: string; imageUrl?: string; imageLabel?: string; facts: LoreFact[]; references: LoreReference[]; related?: LoreReference[]; onTitleChange: (value: string) => void; onDescriptionChange: (value: string) => void; onImageChange?: (value?: string) => void; actions?: ReactNode; media?: ReactNode; }) {
-  return <article className="lore-document">
+  return <article className={`lore-document${facts.length ? " has-facts" : ""}`}>
     <header className="lore-document-header"><div><span className="eyebrow">{eyebrow}</span><InlineTitle value={title} onChange={onTitleChange} /></div>{actions}</header>
     {media}
     {onImageChange && <DocumentImage imageUrl={imageUrl} label={imageLabel} onChange={onImageChange} />}
-    <section className="lore-document-body"><div className="document-main"><span className="document-section-label">Lore and notes</span><MarkdownLongText value={description} onChange={onDescriptionChange} references={references} label={`${title} lore`} /></div><aside className="document-facts">{facts.map((fact) => <div className="document-fact" key={fact.label}><span>{fact.label}</span><InlineFact fact={fact} /></div>)}</aside></section>
+    <section className="lore-document-body"><div className="document-main"><span className="document-section-label">Lore and notes</span><MarkdownLongText value={description} onChange={onDescriptionChange} references={references} label={`${title} lore`} /></div>{facts.length ? <aside className="document-facts">{facts.map((fact) => <div className="document-fact" key={fact.label}><span>{fact.label}</span><InlineFact fact={fact} /></div>)}</aside> : null}</section>
     {!!related?.length && <footer className="document-related"><span className="document-section-label">Connected lore</span><div>{related.map((reference) => <Link href={reference.href} key={`${reference.kind}-${reference.id}`}><span>{reference.kind}</span>{reference.name}</Link>)}</div></footer>}
   </article>;
 }

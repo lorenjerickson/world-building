@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   buildTraitShape,
   resolveTraitShapeTerminal,
+  selectTraitDefinitionScope,
   traitSatisfiesCollection,
   traitShapeChildren,
   type TraitShapeDefinition,
@@ -35,6 +36,28 @@ const speed = trait('trait:speed', 'Speed', [
 const creature = trait('trait:creature', 'Creature', [
   { key: 'speed', dataType: 'trait', ref: 'trait:speed' },
 ]);
+
+test('selects only the trait graph affected by incremental authoring', () => {
+  const invalidUnrelated = trait('trait:invalid', 'Invalid Legacy Draft', [
+    { dataType: 'modifier' },
+  ]);
+  const speedConsumer = trait(
+    'trait:sprinter',
+    'Sprinter',
+    [],
+    { mode: 'all', ids: ['trait:speed'] },
+  );
+  const definitions = [invalidUnrelated, creature, speed, walk, run, speedConsumer];
+
+  assert.deepEqual(
+    selectTraitDefinitionScope(definitions, ['trait:creature']).map((definition) => definition.externalId),
+    ['trait:creature', 'trait:speed', 'trait:walk', 'trait:run'],
+  );
+  assert.deepEqual(
+    selectTraitDefinitionScope(definitions, ['trait:speed'], true).map((definition) => definition.externalId),
+    ['trait:creature', 'trait:speed', 'trait:walk', 'trait:run', 'trait:sprinter'],
+  );
+});
 
 test('recursively expands trait grants into arbitrary-depth modifier paths', () => {
   const shape = buildTraitShape({
@@ -86,6 +109,90 @@ test('retains the trait that contributes each recursively mounted node', () => {
   assert.equal(speedBranch?.sourceTraitId, 'trait:creature');
   assert.equal(walkBranch?.sourceTraitId, 'trait:speed');
   assert.equal(resolveTraitShapeTerminal(shape, ['speed', 'walk', 'rate'])?.sourceTraitId, 'trait:walk');
+});
+
+test('preserves the complete authored terminal field schema', () => {
+  const scored = trait('trait:scored', 'Scored', [
+    {
+      key: 'score',
+      label: 'Score',
+      dataType: 'number',
+      required: true,
+      min: 0,
+      max: 10,
+      default: 4,
+      unit: 'ft',
+    },
+  ]);
+  const shape = buildTraitShape({
+    definitions: [scored],
+    prerequisiteIds: ['trait:scored'],
+  });
+
+  assert.deepEqual(resolveTraitShapeTerminal(shape, ['score']), {
+    kind: 'terminal',
+    path: ['score'],
+    label: 'Score',
+    dataType: 'number',
+    required: true,
+    min: 0,
+    max: 10,
+    default: 4,
+    unit: 'ft',
+    allowedValues: undefined,
+    sourceTraitId: 'trait:scored',
+  });
+});
+
+test('treats different numeric units at one terminal path as a conflict', () => {
+  const feet = trait('trait:feet', 'Feet', [
+    { key: 'distance', dataType: 'number', unit: 'ft' },
+  ]);
+  const meters = trait('trait:meters', 'Meters', [
+    { key: 'distance', dataType: 'number', unit: 'm' },
+  ]);
+  const shape = buildTraitShape({
+    definitions: [feet, meters],
+    prerequisiteIds: ['trait:feet', 'trait:meters'],
+    prerequisiteMode: 'all',
+  });
+
+  assert.ok(shape.diagnostics.some((diagnostic) => diagnostic.code === 'path-conflict'));
+});
+
+test('treats incompatible terminal constraints at one path as a conflict', () => {
+  const bounded = trait('trait:bounded', 'Bounded', [
+    { key: 'score', dataType: 'number', min: 0, max: 10 },
+  ]);
+  const differentlyBounded = trait('trait:differently-bounded', 'Differently Bounded', [
+    { key: 'score', dataType: 'number', min: 0, max: 20 },
+  ]);
+  const shape = buildTraitShape({
+    definitions: [bounded, differentlyBounded],
+    prerequisiteIds: ['trait:bounded', 'trait:differently-bounded'],
+    prerequisiteMode: 'all',
+  });
+
+  assert.ok(shape.diagnostics.some((diagnostic) => diagnostic.code === 'path-conflict'));
+});
+
+test('preserves every compatible contributor at one singular path', () => {
+  const first = trait('trait:first-score', 'First Score', [
+    { key: 'score', dataType: 'number', min: 0, max: 10 },
+  ]);
+  const second = trait('trait:second-score', 'Second Score', [
+    { key: 'score', dataType: 'number', min: 0, max: 10 },
+  ]);
+  const shape = buildTraitShape({
+    definitions: [first, second],
+    prerequisiteIds: ['trait:first-score', 'trait:second-score'],
+    prerequisiteMode: 'all',
+  });
+  const score = resolveTraitShapeTerminal(shape, ['score']);
+
+  assert.deepEqual(shape.diagnostics, []);
+  assert.equal(score?.sourceTraitId, 'trait:first-score');
+  assert.deepEqual(score?.sourceTraitIds, ['trait:first-score', 'trait:second-score']);
 });
 
 test('any-of prerequisites expose only their common guaranteed paths', () => {

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import type { FormEvent } from "react";
 import { useState } from "react";
+import { AppBreadcrumbs } from "@/components/app-breadcrumbs";
 
 export function EncounterMapCreator() {
   const [encounterId, setEncounterId] = useState("encounter-demo");
@@ -36,6 +37,7 @@ export function EncounterMapCreator() {
 
   return (
     <main className="dashboard-container encounter-setup-container">
+      <AppBreadcrumbs items={[{ label: "Dashboard", href: "/dashboard" }, { label: "Encounters" }, { label: "New map" }]} />
       <header className="dashboard-header">
         <div className="header-left">
           <span className="eyebrow">Encounter authoring</span>

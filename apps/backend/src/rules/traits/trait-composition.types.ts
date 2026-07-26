@@ -1,4 +1,4 @@
-import type { TraitShapeNode } from '@world-building/common';
+import type { CanonicalUnitId, TraitShapeNode, UnitAmount } from '@world-building/common';
 
 export const TRAIT_COMPOSITION_METAMODEL_VERSION = 'trait/2' as const;
 export const LEGACY_TRAIT_COMPOSITION_METAMODEL_VERSION = 'trait/1' as const;
@@ -8,22 +8,43 @@ export interface TraitCompositionSourceDefinition {
   externalId: string;
   name: string;
   body: Record<string, unknown>;
+  tags?: string[];
 }
+
+export type CompiledTraitMountSelector =
+  | { mode: 'all' }
+  | { mode: 'ordinal'; ordinal: number }
+  | { mode: 'trait'; traitId: string }
+  | { mode: 'tag'; tag: string };
 
 export interface TraitCompositionDiagnostic {
   code: string;
   message: string;
   path: string;
   severity: 'error' | 'warning';
+  definitionExternalId?: string;
+  definitionName?: string;
+  grantIndex?: number;
 }
 
 export interface CompiledTraitModifier {
   sourceTraitId: string;
   anchor: 'self' | 'this';
-  operation: 'increases' | 'decreases' | 'multiplies' | 'divides' | 'sets';
+  operation: 'increases' | 'decreases' | 'multiplies' | 'divides' | 'sets' | 'at-least' | 'at-most';
   path: string[];
   amount: string | number | boolean;
-  mountSelector?: { mode: 'all' } | { mode: 'ordinal'; ordinal: number };
+  priority?: number;
+  condition?: {
+    operator: 'equals' | 'gte' | 'lte';
+    value: string | number | boolean;
+    authoredValue?: UnitAmount;
+    normalizedValue?: UnitAmount;
+  };
+  authoredAmount?: UnitAmount;
+  normalizedAmount?: UnitAmount;
+  targetUnit?: CanonicalUnitId;
+  mountSelector?: CompiledTraitMountSelector;
+  mountSelectors?: CompiledTraitMountSelector[];
 }
 
 export interface CompiledTraitContract {
@@ -31,6 +52,18 @@ export interface CompiledTraitContract {
   name: string;
   nodes: TraitShapeNode[];
   modifiers: CompiledTraitModifier[];
+  tags: string[];
+}
+
+export interface CompiledTraitStructuralDirective {
+  sourceTraitId: string;
+  kind: 'suppression' | 'replacement';
+  anchor: 'self' | 'this';
+  path: string[];
+  priority: number;
+  replacementTraitId?: string;
+  mountSelector?: CompiledTraitMountSelector;
+  mountSelectors?: CompiledTraitMountSelector[];
 }
 
 export interface CompiledTraitActivationEdge {
@@ -53,6 +86,7 @@ export interface CompiledTraitCompositionArtifact {
   traits: CompiledTraitContract[];
   activationEdges: CompiledTraitActivationEdge[];
   activationChoices: CompiledTraitActivationChoice[];
+  structuralDirectives: CompiledTraitStructuralDirective[];
 }
 
 export interface TraitCompositionCompilationResult {
@@ -73,11 +107,13 @@ export const traitCompositionMetamodelDescriptor = {
     'trait',
     'trait-collection',
     'modifier',
+    'suppression',
+    'replacement',
     'slot',
     'slot-affinity',
   ],
-  compositionOperations: ['adds', 'extends', 'requires', 'modifies'],
-  pathRoots: ['self', 'this', 'owner', 'target'],
-  artifactCapabilities: ['effective-shape', 'modifier-provenance', 'trait-activation-graph', 'instance-prerequisite-choices', 'counted-trait-instances', 'typed-instance-values', 'cross-mount-value-modifiers', 'repeated-mount-selectors'],
+  compositionOperations: ['adds', 'extends', 'requires', 'modifies', 'suppresses', 'replaces'],
+  pathRoots: ['self', 'this'],
+  artifactCapabilities: ['effective-shape', 'modifier-provenance', 'trait-activation-graph', 'instance-prerequisite-choices', 'counted-trait-instances', 'typed-instance-values', 'cross-mount-value-modifiers', 'repeated-mount-selectors', 'canonical-units', 'advanced-value-stacking', 'structural-directives', 'authoritative-structural-contracts', 'recursive-structural-directives', 'structural-mount-selectors', 'recursive-repeated-paths', 'trait-identity-selectors', 'semantic-tag-selectors'],
   compatibleSourceVersions: [LEGACY_TRAIT_COMPOSITION_METAMODEL_VERSION, TRAIT_COMPOSITION_METAMODEL_VERSION],
 };

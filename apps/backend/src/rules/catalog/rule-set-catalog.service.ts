@@ -29,6 +29,7 @@ import { compileTraitCompositions } from '../traits/trait-composition.compiler';
 import type { TraitCompositionSourceDefinition } from '../traits/trait-composition.types';
 import { previewTraitDefinitionMigration } from '../traits/trait-migration';
 import { compileRuleRelease } from '../releases/rule-release.compiler';
+import { selectTraitDefinitionScope } from '@world-building/common';
 
 @Injectable()
 export class RuleSetCatalogService {
@@ -209,6 +210,7 @@ export class RuleSetCatalogService {
         externalId: 'trait:draft-new',
         name: dto.name.trim(),
         body: dto.body,
+        tags: this.uniqueTags(dto.tags),
       },
     );
     return this.repository.createDefinition(resolvedActor, ruleSetId, {
@@ -247,7 +249,7 @@ export class RuleSetCatalogService {
     const definition = await this.repository.getDefinition(resolvedActor, definitionId);
     this.requireRuleSetRelation(definition.ruleSetId, ruleSetId, 'RULE_DEFINITION_NOT_FOUND');
     this.requireRevision(definition.updatedAt, expectedUpdatedAt);
-    if (changes.body !== undefined || changes.name !== undefined) {
+    if (changes.body !== undefined || changes.name !== undefined || changes.tags !== undefined) {
       await this.validateTraitDefinitionChange(
         resolvedActor,
         ruleSetId,
@@ -256,6 +258,7 @@ export class RuleSetCatalogService {
           externalId: definition.externalId,
           name: changes.name?.trim() || definition.name,
           body: changes.body ?? definition.body,
+          tags: changes.tags ? this.uniqueTags(changes.tags) : definition.tags,
         },
         definition.id,
       );
@@ -564,6 +567,7 @@ export class RuleSetCatalogService {
         externalId: definition.externalId,
         name: snapshot.name,
         body: snapshot.body,
+        tags: definition.tags,
       },
       definition.id,
     );
@@ -697,25 +701,67 @@ export class RuleSetCatalogService {
       });
     }
     const existing = await this.repository.listDefinitions(actor, ruleSetId, { type: 'trait' });
-    const sources: TraitCompositionSourceDefinition[] = existing
-      .filter((definition) =>
-        definition.id !== replacedDefinitionId
-        && ['trait/1', 'trait/2'].includes(String(definition.body.metamodelVersion)))
-      .map((definition) => ({
+    const existingTraits = existing
+      .filter((definition) => ['trait/1', 'trait/2'].includes(String(definition.body.metamodelVersion)));
+    const sourceFromResource = (definition: RuleDefinitionResource): TraitCompositionSourceDefinition => ({
         externalId: definition.externalId,
         name: definition.name,
         body: definition.body,
-      }));
+        tags: definition.tags,
+      });
+    const existingSources = existingTraits.map(sourceFromResource);
+    const sources = existingTraits
+      .filter((definition) => definition.id !== replacedDefinitionId)
+      .map(sourceFromResource);
     sources.push(candidate);
-    const result = compileTraitCompositions(sources);
+    const scopedSources = selectTraitDefinitionScope(
+      sources,
+      [candidate.externalId],
+      replacedDefinitionId !== undefined,
+    );
+    const result = compileTraitCompositions(scopedSources);
     if (!result.valid) {
+      const baselineErrors = replacedDefinitionId === undefined
+        ? new Set<string>()
+        : new Set(
+          compileTraitCompositions(selectTraitDefinitionScope(
+            existingSources,
+            [candidate.externalId],
+            true,
+          )).diagnostics
+            .filter((item) => item.severity === 'error')
+            .map((item) => this.traitDiagnosticIdentity(item)),
+        );
+      const blockingDiagnostics = result.diagnostics.filter((item) =>
+        item.severity !== 'error'
+        || !baselineErrors.has(this.traitDiagnosticIdentity(item)));
+      if (!blockingDiagnostics.some((item) => item.severity === 'error')) return;
       throw new BadRequestException({
         code: 'RULE_TRAIT_COMPOSITION_INVALID',
         message: 'The trait contract is invalid.',
-        diagnostics: result.diagnostics,
+        diagnostics: blockingDiagnostics,
         retryable: false,
       });
     }
+  }
+
+  private traitDiagnosticIdentity(diagnostic: {
+    code: string;
+    definitionExternalId?: string;
+    grantIndex?: number;
+    message: string;
+    path: string;
+  }): string {
+    const relativePath = diagnostic.path.includes('].')
+      ? diagnostic.path.slice(diagnostic.path.indexOf('].') + 2)
+      : diagnostic.path;
+    return [
+      diagnostic.definitionExternalId ?? '',
+      diagnostic.code,
+      diagnostic.grantIndex ?? '',
+      relativePath,
+      diagnostic.message,
+    ].join('\0');
   }
 
   private async validateImportedTraitDefinitions(
@@ -730,6 +776,7 @@ export class RuleSetCatalogService {
         externalId: definition.externalId,
         name: definition.name,
         body: definition.body,
+        tags: definition.tags,
       }));
     traits.push(...bundle.definitions
       .filter((definition) =>
@@ -739,6 +786,7 @@ export class RuleSetCatalogService {
         externalId: definition.externalId || `trait:import-${index}`,
         name: definition.name,
         body: definition.body,
+        tags: definition.tags,
       })));
     if (!traits.length) return;
     const result = compileTraitCompositions(traits);

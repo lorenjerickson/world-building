@@ -1,13 +1,24 @@
+import type { CanonicalUnitId, UnitAmount } from '@world-building/common';
+
 export const RESOLUTION_METAMODEL_VERSION = 'resolution/1' as const;
 export const RESOLUTION_ARTIFACT_VERSION = 'resolution-artifact/1' as const;
 
 export type ResolutionPrimitive = string | number | boolean;
+export type ResolutionTraitPathSelector =
+  | { mode: 'ordinal'; ordinal: number }
+  | { mode: 'trait'; traitId: string }
+  | { mode: 'tag'; tag: string };
 export type ResolutionExpression =
   | { op: 'literal'; value: ResolutionPrimitive }
   | { op: 'actor-field'; key: string }
   | { op: 'target-field'; key: string }
   | { op: 'trait-instance-field'; instanceId: string; key: string }
-  | { op: 'trait-path-field'; path: string; mountSelector?: { mode: 'ordinal'; ordinal: number } }
+  | {
+    op: 'trait-path-field';
+    path: string;
+    mountSelector?: { mode: 'ordinal'; ordinal: number };
+    mountSelectors?: ResolutionTraitPathSelector[];
+  }
   | { op: 'input'; key: string }
   | { op: 'result'; key: string; property: string }
   | { op: 'add' | 'subtract' | 'multiply' | 'divide'; left: ResolutionExpression; right: ResolutionExpression };
@@ -243,6 +254,22 @@ export interface ResolutionTraitChoice {
   source: 'context' | 'active-roots';
 }
 
+export interface ResolutionStructuralChange {
+  sourceInstanceIds: string[];
+  sourceTraitIds: string[];
+  kind: 'suppression' | 'replacement';
+  anchor: 'self' | 'this';
+  path: string[];
+  priority: number;
+  mountSelector?: import('../traits/trait-composition.types').CompiledTraitMountSelector;
+  mountSelectors?: import('../traits/trait-composition.types').CompiledTraitMountSelector[];
+  targetInstanceId: string;
+  targetTraitId: string;
+  inactiveInstanceIds: string[];
+  replacementInstanceId?: string;
+  replacementTraitId?: string;
+}
+
 export interface ResolutionActiveTraitInstance {
   instanceId: string;
   traitId: string;
@@ -260,10 +287,23 @@ export interface ResolutionActiveTraitInstance {
     sourceInstanceId: string;
     sourceTraitId: string;
     anchor: 'self' | 'this';
-    operation: 'increases' | 'decreases' | 'multiplies' | 'divides' | 'sets';
+    operation: 'increases' | 'decreases' | 'multiplies' | 'divides' | 'sets' | 'at-least' | 'at-most';
     path: string[];
     amount: ResolutionPrimitive;
-    mountSelector?: { mode: 'all' } | { mode: 'ordinal'; ordinal: number };
+    priority?: number;
+    condition?: {
+      operator: 'equals' | 'gte' | 'lte';
+      value: ResolutionPrimitive;
+      authoredValue?: UnitAmount;
+      normalizedValue?: UnitAmount;
+    };
+    applied?: boolean;
+    conditionMatched?: boolean;
+    authoredAmount?: UnitAmount;
+    normalizedAmount?: UnitAmount;
+    targetUnit?: CanonicalUnitId;
+    mountSelector?: import('../traits/trait-composition.types').CompiledTraitMountSelector;
+    mountSelectors?: import('../traits/trait-composition.types').CompiledTraitMountSelector[];
     before?: ResolutionPrimitive;
     after: ResolutionPrimitive;
   }>;
@@ -278,6 +318,7 @@ export interface ResolutionPreview {
   activeTraits: ResolutionActiveTrait[];
   activeTraitInstances: ResolutionActiveTraitInstance[];
   traitChoices: ResolutionTraitChoice[];
+  structuralChanges: ResolutionStructuralChange[];
   rolls: ResolutionRollResult[];
   entropyConsumed: number[];
   trace: ResolutionTraceEntry[];

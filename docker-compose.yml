@@ -6,7 +6,7 @@ services:
       POSTGRES_PASSWORD: password123
       POSTGRES_DB: worlddb
     ports:
-      - "5432:5432"
+      - "${DB_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -16,27 +16,38 @@ services:
       retries: 5
 
   backend:
+    image: ${BACKEND_IMAGE:-world-building-backend:local}
     build:
       context: .
       dockerfile: apps/backend/Dockerfile
     ports:
-      - "8000:8000"
+      - "${BACKEND_PORT:-8000}:8000"
     volumes:
-      - ./apps/backend:/app/apps/backend
       - uploads_data:/app/apps/backend/data/uploads
       - ./models:/models:ro
     env_file:
-      - ./apps/backend/.env
+      - path: ./apps/backend/.env
+        required: false
     environment:
-      DATABASE_URL: postgresql://worldbuilder:password123@db:5432/worlddb
+      DATABASE_URL: ${BACKEND_DATABASE_URL:-postgresql://worldbuilder:password123@db:5432/worlddb}
       CMS_BASE_URL: http://cms:3000
       LLAMA_MODEL_PATH: /models/model.gguf
     depends_on:
-      db:
-        condition: service_healthy
+      backend-migrate:
+        condition: service_completed_successfully
     networks:
       - default
       - cms_private
+
+  backend-migrate:
+    image: ${BACKEND_IMAGE:-world-building-backend:local}
+    command: ["pnpm", "run", "prisma:migrate:deploy"]
+    environment:
+      DATABASE_URL: ${BACKEND_DATABASE_URL:-postgresql://worldbuilder:password123@db:5432/worlddb}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
 
   frontend:
     build:
@@ -65,7 +76,8 @@ services:
       WATCHPACK_POLLING: "true"
       WATCHPACK_POLLING_INTERVAL: "500"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
 
   cms-db:
     image: postgres:17-alpine

@@ -122,6 +122,9 @@ export interface TraitMigrationPreview {
     message: string;
     path: string;
     severity: 'error' | 'warning';
+    definitionExternalId?: string;
+    definitionName?: string;
+    grantIndex?: number;
   }>;
 }
 

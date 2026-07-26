@@ -2,7 +2,7 @@
 title: "Recursive Trait Composition"
 created: "2026-01-01"
 last_updated: "2026-07-25"
-completion_status: in-progress
+completion_status: complete
 disposition: approved
 ---
 
@@ -10,7 +10,7 @@ disposition: approved
 
 | Attribute | Value |
 | --- | --- |
-| Status | Core recursive composition, publication, migration, mounted-instance evaluation, and Phase A are implemented; Phase B preview and UI verification are in progress, while units and advanced modifier semantics remain |
+| Status | Recursive trait composition and Phases A–E are implemented and verified |
 | Audience | Product, rule-system architecture, frontend, backend, and QA |
 | Last updated | 2026-07-25 |
 | Related designs | [Rule sets design](./rule-systems-design-doc.md), [Rule data authoring strategy](./rule-data-authoring.md) |
@@ -130,7 +130,7 @@ Boots of Striding modifies self.speed.walk.rate by +10 feet.
 
 The modifier affects walking without implicitly affecting running, swimming, or flying. Modifier evaluation must retain provenance so the system can explain the base value, each contribution, and the effective result.
 
-Exact local modifier scope is implemented: `this` begins at the contributing mounted instance, while `self` begins at the root composition. Advanced stacking, suppression, replacement, and conditional behavior remain open. See [Resolved and open decisions](#11-resolved-and-open-decisions).
+Exact local modifier scope is implemented: `this` begins at the contributing mounted instance, while `self` begins at the root composition. Advanced stacking, repeated terminal paths, and bounded exact-path suppression/replacement execute with provenance. Optional or conditional structure remains open. See [Resolved and open decisions](#11-resolved-and-open-decisions).
 
 ### 2.7 Replaces and suppresses
 
@@ -148,6 +148,13 @@ Magical Flight adds Fly.
 ```
 
 Without explicit precedence and conflict rules, the result depends on evaluation order. Suppression is reversible and explainable: Wings may still contribute Fly while Grounded prevents that contribution from currently taking effect.
+
+Phase D is split into two semantic slices:
+
+- **D1 — advanced value stacking:** deterministic numeric floors/ceilings and conditions evaluated against an immutable base-value snapshot; and
+- **D2 — structural directives:** exact-path suppression and replacement applied to activation contributions, with inactive/replaced provenance retained separately from the effective structure.
+
+This boundary is intentional. Value stacking changes terminal evaluation; structural directives change which mounted instances and guaranteed paths exist.
 
 ## 3. Traits create an effective shape
 
@@ -599,11 +606,74 @@ Each applied value modifier records:
 - source trait and instance IDs;
 - `self` or `this` anchor;
 - authored field path and operation;
-- modifier amount;
+- authored and target-normalized modifier amounts, including canonical units for numeric values;
 - value before application; and
 - effective value afterward.
 
 Sources and their modifiers use deterministic ordering so stacking is reproducible. Exact-path resolution prefers the instance that owns the terminal field. No match, a missing numeric base, division by zero, or more than one equally valid mounted target is an evaluation error. Repeated collections require the explicit selector described below rather than silently applying an exact modifier to every element.
+
+#### 4.8.1 Canonical numeric units
+
+Numeric terminals may declare one canonical unit ID. The initial catalog covers scalar, length, duration, and movement-rate dimensions. Stable IDs such as `1`, `ft`, `m`, `s`, `min`, `ft/turn`, and `m/turn` are distinct from display labels; aliases are normalized only at an input boundary and are not stored in compiled artifacts.
+
+Additive, subtractive, and numeric `sets` modifiers must use the target dimension. The compiler converts a compatible authored amount into the terminal's unit and stores both forms:
+
+```json
+{
+  "amount": 10,
+  "authoredAmount": { "value": 3.048, "unit": "m/turn" },
+  "normalizedAmount": { "value": 10, "unit": "ft/turn" },
+  "targetUnit": "ft/turn"
+}
+```
+
+Multiplication and division accept only dimensionless amounts. Legacy bare numeric amounts remain valid: additive and set values are interpreted in the target unit, while multiplication and division values are interpreted as scalar factors. Runtime arithmetic uses the normalized primitive amount, while evaluator provenance retains both authored and normalized forms.
+
+#### 4.8.2 Advanced value stacking
+
+Phase D1 adds `at-least` and `at-most` numeric modifier operations. They use the target field's dimension, normalize like additive amounts, and clamp the post-arithmetic value. Modifier stages are stable and independent of catalog input order:
+
+1. `sets`;
+2. `increases` and `decreases`;
+3. `multiplies` and `divides`;
+4. `at-least`; and
+5. `at-most`.
+
+Within one stage, lower integer priority executes first, followed by source instance ID, target path, and source grant order. Higher priority therefore has the final say within the same operation stage without making source array order authoritative.
+
+The initial conditional form is deliberately local:
+
+```json
+{
+  "dataType": "modifier",
+  "operation": "increases",
+  "field": "self.speed.walk.rate",
+  "amount": { "value": 10, "unit": "ft/turn" },
+  "when": {
+    "operator": "lte",
+    "value": { "value": 30, "unit": "ft/turn" }
+  }
+}
+```
+
+The predicate compares the target's pre-modifier base snapshot with a type-compatible compiled value. It does not observe earlier modifiers, so adding or reordering another contribution cannot change whether the predicate activates. Evaluator provenance records the normalized predicate, whether it matched, and the unchanged before/after value for skipped contributions.
+
+Broader conditions that read other paths remain deferred until dependency cycles and missing optional paths have an explicit policy. Active same-priority sets with different values and active clamp ranges whose greatest floor exceeds their least ceiling fail deterministically before any modifier mutates the target.
+
+#### 4.8.3 Structural directive contract
+
+Phase D2 uses exact branch targets:
+
+```json
+{ "dataType": "suppression", "target": "self.speed.fly", "priority": 10 }
+{ "dataType": "replacement", "target": "self.speed.walk", "ref": "trait:fly", "priority": 20 }
+```
+
+A suppression makes the winning activation contribution and its descendants inactive while retaining source, target, priority, and suppressed instance provenance. A replacement suppresses the winning contribution and mounts the replacement trait at the same path. Removing the suppressing/replacing active trait restores the original contribution because source artifacts are never mutated.
+
+Structural directives reject roots and terminal fields. Singular branch targets need no selector; collection-entry targets use a trailing `[]` and require the same explicit `all` or one-based `ordinal` mount selector used by repeated modifiers. Highest priority wins. Equal-priority suppressions coalesce; equal-priority replacements coalesce only when they name the same replacement trait. A suppression tied with a replacement, or replacements naming different traits, is a composition conflict. The same rules apply across immutable release artifacts; release order is never a precedence mechanism.
+
+Guaranteed contracts are rewritten during compilation, including directives inherited from mounted traits and replacement contracts. Runtime application proceeds to a bounded fixed point: shallow ancestor changes shadow directives aimed at descendants of the now-inactive contribution, replacement subtrees may apply their own directives, and replacement traits with unresolved `any` prerequisites use the normal explicit instance-aware selection contract. A directive whose exact target is unavailable because an ancestor is inactive is a deterministic no-op rather than an error.
 
 ### 4.9 Explicit repeated-mount selectors
 
@@ -1138,18 +1208,19 @@ Implementation has resolved several questions that were open in the original des
 - the same trait definition may have several mounted instances with stable, opaque instance IDs;
 - local modifiers materialize before cross-mount modifiers, and implemented operations use deterministic source ordering;
 - repeated trait children use typed collections with explicit counts and instance ordinals; and
-- exact repeated-mount access requires an explicit `all` or one-based `ordinal` selector, depending on whether the consumer returns many values or one scalar; and
-- compatible singular contributions retain a deterministic primary `sourceTraitId` plus every contributor in `sourceTraitIds`.
+- exact repeated-mount access requires an explicit `all` or one-based `ordinal` selector, depending on whether the consumer returns many values or one scalar;
+- compatible singular contributions retain a deterministic primary `sourceTraitId` plus every contributor in `sourceTraitIds`; and
+- numeric fields use canonical unit IDs with dimension-checked conversion, while multiply/divide amounts remain dimensionless; and
+- exact singular branch suppression/replacement uses bounded priority, deterministic coalescing/conflicts, reversible inactive provenance, and release-order-independent precedence.
 
 The following decisions remain open or only partially resolved:
 
-1. **Units:** The shared shape now preserves requiredness, defaults, numeric bounds, and enum choices. The canonical unit representation and conversion rules remain undecided.
-2. **Modifier storage:** Which base values and contribution-ledger entries are persisted versus recomputed from the compiled artifact remains a runtime persistence decision.
-3. **Advanced stacking:** Additive, multiplicative, and set operations are deterministic. Minimum, maximum, conditional, suppression, and replacement precedence are not designed.
-4. **Suppression and replacement:** Their target forms, compatibility rules, reversibility, and cross-release conflict behavior remain undefined.
-5. **Parameters:** A grant cannot yet configure fields on the trait instance it adds without creating another definition or supplying runtime instance values.
-6. **Broader selectors:** Wildcards, trait-identity selectors, semantic tags, and paths beyond one repeated segment followed by one direct field remain deferred.
-7. **Optional paths:** Runtime behavior for conditional or suppressed structure remains undefined.
+1. **Modifier storage:** Which base values and contribution-ledger entries are persisted versus recomputed from the compiled artifact remains a runtime persistence decision.
+2. **Advanced stacking:** Additive, multiplicative, set, floor, ceiling, priority, and base-snapshot conditional operations are deterministic, including cross-contribution set/clamp conflict rejection.
+3. **Suppression and replacement:** Exact singular branches and explicitly selected collection entries are resolved. Authoritative guaranteed-shape rewriting covers inherited/nested directives and unresolved replacement choices. Optional structural targets and structural paths through multiple repeated segments remain deferred.
+4. **Parameters:** A grant cannot yet configure fields on the trait instance it adds without creating another definition or supplying runtime instance values.
+5. **Broader selectors:** Ordered selectors now address every repeated segment in a terminal path. Ordinal, trait-identity, and semantic-tag selectors must resolve one instance for scalar expressions; explicit `all` wildcard selection is available only to collection-valued modifier and structural operations. Exact paths remain the default.
+6. **Optional paths:** Runtime behavior for conditional or suppressed structure remains undefined.
 
 These decisions do not block the implemented exact-path recursive-composition slice.
 
@@ -1160,6 +1231,7 @@ This assessment was performed against the repository on 2026-07-25. It traces so
 Primary implementation surfaces are:
 
 - `packages/common/src/trait-shape.ts` — shared bounded recursive shape resolver;
+- `packages/common/src/units.ts` — canonical numeric units, dimensions, aliases, and conversion helpers;
 - `apps/frontend/components/guided-trait-grants-editor.tsx` — grants, modifier-path, nested-addition, collection, and shape-preview authoring;
 - `apps/frontend/lib/resolution-trait-paths.ts` and `guided-resolution-editor.tsx` — subject-contract-aware resolution path authoring;
 - `apps/backend/src/rules/traits/trait-composition.compiler.ts` — authoritative `trait-composition-artifact/1` compiler;
@@ -1177,18 +1249,19 @@ Status meanings:
 | Design area | Status | Evidence and remaining gap |
 | --- | --- | --- |
 | Recursive shape resolver | Complete | The shared package recursively expands `trait/1` and `trait/2`, rebases `this`/`self`, intersects unresolved `any` prerequisites, validates typed collections, detects cycles and conflicts, and enforces depth/node budgets. Frontend resolver tests cover deep `Creature → Speed → Walk → rate`, collisions, cycles, collections, nested additions, and prerequisite modes. |
-| Recursive modifier completion | Phase B interaction coverage substantially complete | The grants editor walks arbitrary branch depth, filters terminal choices by operation, and no longer accepts free-form segments. Its index searches complete paths, breadcrumbs, placement keys, labels, stable IDs, types, and contributor labels, including direct collection-element fields. It reports invalid-structure, unmatched-search, and incompatible-branch empty states. Rendered tests now cover full-path keyboard selection, operation filtering, typed value controls, repeated selectors, ARIA listbox state, and empty-result announcements. Segment-by-segment pointer traversal and live browser layout verification remain. |
-| Terminal schema propagation | Core complete | Terminal kind, data type, requiredness, default, numeric bounds, enum choices, source trait, and collection contracts are shared and compiler-validated. Units remain for Phase C. |
-| Effective-shape preview | Phase B core complete | The editor renders prerequisite and draft-effective trees side by side, plus deterministic added/changed/removed semantic rows for nested additions and field-contract edits. Rendered component coverage verifies the nested-addition comparison and accessible change structure. Live browser and assistive-technology verification remain. |
+| Recursive modifier completion | Complete for exact paths | The grants editor walks arbitrary branch depth, filters terminal choices by operation, and no longer accepts free-form segments. Rendered and authenticated live-browser verification cover pointer/keyboard traversal, focus restoration, typed values, unit choices, repeated selectors, ARIA state, responsive containment, and empty-result announcements. |
+| Terminal schema propagation | Complete | Terminal kind, data type, requiredness, default, numeric bounds, canonical unit, enum choices, source trait, and collection contracts are shared and compiler-validated. |
+| Effective-shape preview | Complete | The editor renders prerequisite and draft-effective trees side by side, plus deterministic added/changed/removed semantic rows for nested additions and field-contract edits. Rendered and authenticated live-browser verification cover the comparison, named trees, expanded tree/group semantics, accessible diagnostics, narrow layouts, and change structure. |
 | Nested additions / `extends` | Complete for the initial contract | Guided authoring writes explicit `at` destinations, limits the parent picker to branches already guaranteed by prerequisites or additions, says “extends Parent with Trait as key,” updates the live shape, and receives backend collision/destination validation. `extends` deliberately does not infer a structural requirement. |
-| Authoritative backend compilation | Complete | NestJS validates source shape, exact modifier paths and amounts, collection contracts, cycles, conflicts, and budgets through the shared resolver, then emits a deterministic `trait-composition-artifact/1`. Catalog mutation gates and release compilation reject invalid source independently of the browser. |
+| Authoritative backend compilation | Complete | NestJS validates source shape, exact modifier paths and amounts, collection contracts, cycles, conflicts, and budgets through the shared resolver, then emits a deterministic `trait-composition-artifact/1`. Incremental authoring validates the affected dependency graph so unrelated legacy drafts do not block creation or migration; publication still validates the entire catalog. Trait diagnostics carry structured definition identity, and GM-facing migration errors render concise named messages with links to the relevant definition editor instead of exposing compiler paths. |
 | Immutable publication | Complete | `rule-release/1` includes the source snapshot and compiled artifacts under a content hash. Publication rechecks catalog revisions and aborts concurrent changes. Deterministic reordering, invalid-path, normalized-die, complete-roll-trait, and concurrency cases are tested. |
 | `trait/1` compatibility and `trait/2` migration | Complete | Mixed catalogs compile; new guided source defaults to `trait/2`; preview normalizes placement and prerequisites and compares effective node meaning; apply requires `expectedUpdatedAt`, preserves stable identity, snapshots the old source, and leaves releases immutable. Both API and frontend review UI exist. |
-| Typed collections and counted traits | Complete for the initial slice | Acceptance by recursive prerequisite closure, positive literal counts, deterministic activation edges, per-entry mounted instances, and ordinal/all selectors are implemented. Expression counts and nested element paths remain deferred. |
+| Typed collections and counted traits | Complete for the implemented contract | Acceptance by recursive prerequisite closure, positive literal counts, deterministic activation edges, per-entry mounted instances, and ordered ordinal/identity/tag/all selectors are implemented. Expression-based counts remain deferred. |
 | Runtime activation and mounted instances | Complete for the documented initial slice | High-level roots expand through additions and deterministic prerequisites; ambiguous `any` choices require explicit instance-aware selections. Independent value bags, generated child IDs, activation chains, and provenance are implemented and exercised by backend tests. |
-| Exact value modifiers and path expressions | Core complete | Local and cross-mount `self`/`this` modifiers, deterministic ordering, before/after traces, ambiguity rejection, `trait-instance-field`, `trait-path-field`, and one-level repeated selectors execute. Compatible singular shape contributions retain all source IDs. Unit compatibility and deeper repeated paths remain. |
+| Exact value modifiers and path expressions | Phase E complete | Local and cross-mount `self`/`this` modifiers, staged priority ordering, before/after traces, base-snapshot conditions, numeric floors/ceilings, ambiguity rejection, and terminal paths through multiple repeated segments execute. Each repeated segment has an ordered ordinal, trait-identity, semantic-tag, or modifier-only wildcard selector. Scalar expressions reject collection-valued wildcard results. Numeric amounts and predicates are dimension-checked and normalized, and active same-priority set or contradictory clamp conflicts fail deterministically. |
 | Semantic roll-result effects | Complete for the three initial operations | `add-dice`, `replace-result`, and `increase-result` retain die identity, origin, replacement links, priorities, purpose subtotals, activation source, and applicability. This is resolution behavior built on composition, not structural replacement/suppression. |
-| Structural suppression, replacement, wildcard selectors, and conditional structure | Deferred | No canonical algebra, authoring UI, compiler contract, or evaluator behavior exists. |
+| Structural suppression and replacement | Phase D2 complete | Source syntax, exact branch and explicitly selected collection-entry targets, deterministic compiled directives, authoritative guaranteed-contract rewriting, recursive runtime suppression/replacement, ancestor-shadowing, optional inactive-target no-ops, unresolved-`any` replacement selections, priority/coalescing/tie rules, inactive/replacement provenance, runtime preview traces, guided controls, and draft semantic diffs are implemented and tested. |
+| Wildcard selectors and conditional structure | Selector slice complete; conditional structure deferred | `all` is the explicit wildcard for modifier and structural fan-out, while scalar path expressions reject it. Guided authoring, compilation, evaluation, and provenance support it alongside ordinal, identity, and tag selection. Conditional/optional structural existence remains deferred. |
 
 The broader metamodel split remains:
 
@@ -1199,7 +1272,7 @@ Future work should continue converging both approaches on shared typed recursive
 
 ## 13. Phased remaining work
 
-Original Phases 0, 1, 5, and 6 are complete. Phases 2 and 3 are core-complete, Phase 4 is partial, and Phase 7 is partial. Remaining work should proceed in the following order.
+The implementation phases below are complete. Remaining open decisions in section 11 are independent follow-up work and should be separately designed rather than silently extending this phase plan.
 
 ### Phase A: Close the guided-authoring contract
 
@@ -1218,7 +1291,7 @@ Implementation status: semantic work complete. Focused pure tests cover the sear
 
 Deliverable: the guided editor expresses exactly the canonical contract that publication enforces, and every offered scope/path is meaningful.
 
-### Remaining Phase B: Finish preview UX and UI verification
+### Phase B: Finish preview UX and UI verification — completed
 
 Completed in the first Phase B slice:
 
@@ -1229,55 +1302,119 @@ Completed in the first Phase B slice:
 - rendered coverage for full-path keyboard selection, operation filtering, number/text/Boolean/enum controls, repeated mount selectors, ARIA combobox/listbox state, and nested-addition diffs; and
 - a catalog-service acceptance fixture that authors the Creature/Speed/Walk/Fly/Winged/Boots definitions through backend validation and publishes the resulting immutable trait artifact.
 
-Remaining:
+Completed in the second Phase B slice:
 
-1. Extend rendered component tests for:
-   - arbitrary-depth mouse and keyboard selection;
-   - focus restoration after Escape and outside-pointer dismissal;
-   - accessible tree state and diagnostics with an assistive-technology audit; and
-   - segment-by-segment pointer traversal in addition to complete-path search.
-2. Verify the grants editor in a live authenticated authoring page at desktop and narrow widths.
-3. Add an HTTP/browser-level acceptance scenario that connects the rendered authoring flow to the catalog publish endpoint. The component and catalog-service halves are covered independently, but not yet in one browser-driven test.
+- arbitrary-depth segment-by-segment pointer and keyboard traversal through `self.speed.walk.rate`;
+- trigger-focus restoration after Escape and outside-pointer dismissal;
+- explicit accessible names for prerequisite and draft-effective trees;
+- rendered assertions for expanded tree/group state and labelled live diagnostics;
+- narrow-width popup containment within the authoring sentence; and
+- a successful frontend production build with the Phase B 42-test trait suite passing (expanded to 45 tests in Phase C).
+
+Completed in the authenticated live-verification slice:
+
+- desktop verification of the prerequisite/draft comparison, semantic diff rows, and live diagnostics;
+- narrow-width verification at 390 px, including stacked comparison panels, internally scrollable deep trees, and a contained picker popup;
+- live accessibility-tree verification of named before/after trees, expanded tree items, labelled listboxes, selected options, live diagnostics, and restored trigger focus after Escape;
+- an unsaved end-to-end authoring interaction on the `Roll` trait that added a modifier, selected `self.type` through complete-path keyboard search, and exposed the enum-specific amount picker before cancelling the draft; and
+- removal of narrow-page horizontal overflow by allowing the rule-set grid, artifact editor, and grants editor to shrink to their responsive tracks.
+
+The live `Winged` fixture also correctly surfaced existing recursive prerequisite-cycle diagnostics between `Speed` and its movement traits. Those catalog diagnostics are real authored-data feedback and were not suppressed or changed during UI verification.
+
+Completed in the final acceptance slice:
+
+- a deterministic rendered-browser scenario authors a recursive, unit-aware modifier through the real grants editor;
+- the scenario saves the resulting `trait/2` body through the definition `PATCH` boundary before invoking publication;
+- the catalog release `POST` assertion verifies the saved recursive modifier is present before accepting the release request; and
+- the rendered outcome confirms the immutable version returned by the publish endpoint.
 
 Deliverable: recursive composition is demonstrably usable and visually consistent, not only correct at resolver and compiler level.
 
-### Remaining Phase C: Add unit-aware value semantics
+### Phase C: Add unit-aware value semantics — completed
 
-1. Define canonical unit identity, dimensions, display units, and conversion/normalization rules.
-2. Add units to authored numeric grants and the shared terminal schema.
-3. Validate modifier amount dimensions and normalize compatible units in the compiler.
-4. Preserve authored and normalized amounts in evaluator provenance.
-5. Add guided unit controls and incompatible-unit diagnostics.
-6. Test additive compatibility, multiplicative/divisive policy, conversion, and publication/runtime agreement.
+Completed:
+
+1. A framework-free shared unit catalog defines canonical identity, aliases, dimensions, display labels, and base-unit conversion factors.
+2. Authored numeric grants and shared terminal nodes preserve canonical units; unit differences participate in shape conflicts and semantic diffs.
+3. The compiler validates field units and modifier dimensions, normalizes compatible additive/set values to the target unit, and limits multiplication/division to dimensionless amounts.
+4. Compiled and evaluated modifier provenance preserves authored amount, normalized amount, and target unit while runtime arithmetic continues to consume one normalized primitive.
+5. Guided numeric-field and modifier sentences expose compatible unit pickers and announce incompatible loaded source.
+6. Common, backend, and rendered frontend tests cover aliases, conversion, incompatible dimensions, scalar policy, serialization, publication artifacts, and runtime agreement.
 
 Deliverable: examples such as “+10 feet per turn” are executable typed rules rather than untyped numbers.
 
-### Remaining Phase D: Design negative and advanced composition
+### Phase D: Negative and advanced composition — completed
 
-1. Specify suppression and structural replacement targets, precedence, reversibility, and provenance before adding source syntax.
-2. Define cross-release conflict rules and semantic diff behavior.
-3. Implement compiler diagnostics and evaluator traces before guided controls.
-4. Add minimum, maximum, and conditional value modifiers only with deterministic stacking rules.
-5. Define optional-path behavior when a contribution becomes inactive.
+Completed in D1:
+
+1. Specified stable modifier stages and bounded integer priority.
+2. Added unit-aware `at-least` and `at-most` operations.
+3. Added same-target conditions evaluated against the immutable pre-modifier base snapshot.
+4. Added compiler diagnostics for invalid priority, condition operators, values, types, enums, and dimensions.
+5. Added evaluator provenance for matched and skipped conditions, including unchanged before/after values.
+6. Added guided clamp, priority, and condition controls using the established sentence editor.
+7. Added compiler, runtime, serialization, and rendered-component coverage.
+
+Specified for D2:
+
+1. Exact singular branch targets for suppression and replacement.
+2. Highest-priority precedence, coalescing rules, and deterministic tie conflicts.
+3. Reversible inactive/replaced contribution provenance.
+4. Cross-release behavior that never derives precedence from release order.
+
+Completed in D2:
+
+1. Added `suppression` and `replacement` grant syntax with required bounded integer priority, exact `self`/`this` targets, replacement reference validation, rejection of roots and terminals, and explicit `all`/ordinal selectors for collection entries.
+2. Added deterministic structural directives to `trait-composition-artifact/1`.
+3. Applied directives after original activation expansion, retaining the inactive target subtree and mounting deterministic replacement instances at the same path.
+4. Implemented highest-priority precedence, identical suppression coalescing, same-reference replacement coalescing, and stable incompatible-tie errors.
+5. Exposed source, target, inactive-instance, and replacement-instance provenance in resolution previews while filtering inactive paths from effective traits.
+6. Added guided suppression/replacement sentences with branch-only target completion, priority and replacement-trait controls, runtime structural traces, and draft-effective removed/changed/added semantic rows.
+7. Added compiler and evaluator coverage for validation, deterministic artifact ordering, coalescing, precedence, replacement mounts, inactive provenance, and tie conflicts, plus rendered authoring coverage.
+
+Completed in the final Phase D slice:
+
+1. Active incompatible same-priority sets and contradictory clamp bounds fail before mutation.
+2. Compilation rewrites authoritative guaranteed contracts for nested, inherited, suppressed, and replaced branches.
+3. Structural evaluation proceeds recursively through replacement traits and uses explicit selections for unresolved `any` prerequisites.
+4. Overlapping directives resolve shallow ancestors first; directives aimed into the inactive original descendant subtree are shadowed.
+5. Exact targets made unavailable by an inactive ancestor are deterministic no-ops.
+6. Structural directives target collection contributions through required `all` or one-based ordinal selectors, with guided authoring and preview support.
 
 Deliverable: negative and advanced operations remain deterministic, attributable, and explainable.
 
-### Remaining Phase E: Expand selectors only from proven use cases
+### Phase E: Expand selectors only from proven use cases — completed
 
-1. Extend repeated selection beyond one repeated segment plus one direct field when a concrete rule requires it.
-2. Decide scalar versus collection result typing for deeper expression selectors.
-3. Evaluate trait-identity, semantic-tag, or wildcard selectors against explicit matching and ambiguity rules.
-4. Keep exact paths as the default authoring and evaluation model.
+Completed:
+
+1. A shared recursive terminal-path enumerator exposes paths through multiple repeated collection segments and the ordered collection prefixes that require selection.
+2. Compiled modifiers, structural directives, and scalar trait-path expressions preserve an ordered selector for every repeated segment while retaining the legacy single-selector representation for one segment.
+3. Scalar expressions are explicitly scalar: ordinal, trait-identity, and semantic-tag selectors must resolve exactly one value, and wildcard/`all` selectors fail compilation as collection-valued results.
+4. Modifier and structural operations may use explicit `all` fan-out. Trait-identity and semantic-tag selectors retain ambiguity rejection unless the operation explicitly uses `all`.
+5. Definition tags flow into compiled trait contracts and runtime matching. Selection follows mounted-instance ancestry, so inherited prerequisite instances cannot accidentally replace the selected collection mount.
+6. Guided resolution and trait-grant authoring render one selector control per repeated segment, including ordinal, identity, tag, and applicable wildcard choices.
+7. Release subject-contract validation and frontend completion enumerate the same recursive repeated paths as the compiler.
+8. Exact, non-repeated paths remain selector-free and are still the default authoring and evaluation model.
 
 Deliverable: broader selection adds expressiveness without weakening exact-path safety.
+
+### Post-phase application navigation integration — completed
+
+The authoring shell now presents rule sets, modules, definitions, worlds, and world lore records as list-first resources with dedicated detail URLs. Opening a record no longer retains a competing record list beside the editor. Breadcrumbs preserve the collection and anchored-record return path, and long lore and rule-definition detail surfaces use responsive desktop columns while collapsing to a single hierarchy on narrow screens.
+
+A global authenticated search surface now indexes the GM's accessible world lore and rule-authoring records in PostgreSQL. Search documents are isolated by actor, ranked with `websearch_to_tsquery`, and stored in a generated weighted `tsvector` column with a GIN index. The browser supplies only records already available through its authenticated application APIs; the search API remains behind the existing NestJS trust boundary.
+
+The database addition is captured by `20260725213000_add_global_search_documents`. Both application migrations apply successfully to an empty PostgreSQL database, migration status reports current, and a cross-field full-text query returns the expected indexed record.
 
 ## 14. Test plan
 
 Current verification on 2026-07-25:
 
-- `pnpm --filter @world-building/frontend test` passes 39 tests, including four Happy DOM rendered-component cases for complete-path keyboard selection, typed modifier controls, operation filtering, repeated selectors, ARIA state, and the effective-shape diff.
-- `pnpm --filter @world-building/backend test:rules` passes 56 tests after a clean backend build, including a catalog-validation-to-publication acceptance fixture for Creature/Speed/Walk/Fly/Winged/Boots.
-- These suites now prove the principal rendered grants-editor interactions and the backend author/publish boundary independently. They do not yet prove responsive layout in a live browser or one browser-driven flow spanning both boundaries.
+- `pnpm --filter @world-building/common test` passes 31 tests, including recursive terminal enumeration through multiple repeated segments, canonical unit aliases, dimension compatibility, and conversion.
+- `pnpm --filter @world-building/frontend test` passes 53 tests, including affected-graph selection, nested repeated completion, ordered selector serialization, a rendered authoring-to-publication HTTP acceptance flow, and Happy DOM component cases for recursive path interaction, typed, unit-aware, conditional, clamp, suppression, and replacement controls, repeated selectors, ARIA state, and effective-shape diffs.
+- `pnpm --filter @world-building/backend test:rules` passes 67 tests, including nested repeated runtime selection by trait identity and semantic tag, scalar wildcard rejection, incremental validation isolation, named diagnostics, unit normalization, modifier conflict detection, authoritative structural contract rewriting, recursive replacement/selection behavior, provenance, and catalog validation through publication.
+- Focused ESLint and the frontend production build pass. Authenticated desktop, narrow-layout, and accessibility-tree checks cover the Phase B UI, and the deterministic rendered-browser acceptance scenario spans authoring, definition persistence, and the publish HTTP boundary.
+- The post-phase navigation/search integration passes frontend and backend production builds. Its clean-database verification applies both Prisma migrations, reports no pending migrations, and confirms the generated full-text vector matches terms distributed across summary and searchable body fields.
 
 ### 14.1 Resolver unit tests
 
@@ -1298,16 +1435,17 @@ Status: core cases, terminal-schema propagation, and compatible multi-source pro
 
 ### 14.2 Authoring UI tests
 
-Status: principal component interactions are implemented and passing in Happy DOM. Live-browser visual verification and the following interaction edges remain:
+Status: principal component interactions are implemented and passing in Happy DOM; authenticated desktop, 390 px, and accessibility-tree verification are complete.
 
 - segment-by-segment pointer selection advances through Self, Speed, Walk, and Rate;
 - Escape and outside-pointer dismissal restore focus predictably;
-- the recursive preview tree is audited with a screen reader; and
-- desktop and narrow-width layouts are verified in the authenticated production page.
+- the recursive preview tree exposes named tree/group semantics to assistive technology;
+- desktop and narrow-width layouts are verified in the authenticated production page; and
+- compatible unit selection and incompatible-unit announcements are covered in the rendered harness.
 
 ### 14.3 Compiler tests
 
-Status: the listed canonicalization, application, provenance, collision, cycle, migration, and framework-independent compilation behaviors are covered across the frontend and backend suites. Unit-aware compilation and a dedicated end-to-end public-boundary fixture remain.
+Status: the listed canonicalization, application, provenance, collision, cycle, migration, framework-independent compilation, unit-aware behavior, and rendered authoring-to-publish public boundary are covered across the common, frontend, and backend suites.
 
 - local additions normalize to explicit mounted additions;
 - nested additions require a valid destination branch;

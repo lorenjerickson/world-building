@@ -7,6 +7,7 @@ import {
   defaultGuidedScalarExpression,
   parseGuidedScalarExpression,
   type GuidedExpressionSource,
+  type GuidedMountSelectorDraft,
   type GuidedScalarExpressionDraft,
 } from '@/lib/resolution-expression';
 import {
@@ -603,6 +604,25 @@ function ScalarExpressionEditor({
 }) {
   const set = <K extends keyof GuidedScalarExpressionDraft>(key: K, value: GuidedScalarExpressionDraft[K]) =>
     onChange({ ...expression, [key]: value });
+  const changeTraitPath = (traitPath: string) => {
+    const repeatedCount = traitPath.split('.').filter((segment) => segment.endsWith('[]')).length;
+    onChange({
+      ...expression,
+      traitPath,
+      mountSelectors: Array.from({ length: repeatedCount }, (_, index) =>
+        expression.mountSelectors[index]
+        ?? { mode: 'ordinal' as const, ordinal: index === 0 ? expression.mountOrdinal : 1 }),
+    });
+  };
+  const changeMountSelector = (index: number, selector: GuidedMountSelectorDraft) => {
+    const mountSelectors = [...expression.mountSelectors];
+    mountSelectors[index] = selector;
+    onChange({
+      ...expression,
+      mountSelectors,
+      ...(index === 0 && selector.mode === 'ordinal' ? { mountOrdinal: selector.ordinal } : {}),
+    });
+  };
   const selectedTraitPath = traitPathOptions.find((option) => option.path === expression.traitPath);
   const traitPathRepair = traitPathRepairs.find((repair) => repair.path === expression.traitPath);
   const unavailableTraitPath = expression.source === 'trait-path-field'
@@ -615,14 +635,39 @@ function ScalarExpressionEditor({
       {expression.source === 'literal' && <label><span>Number</span><input type="number" step="any" value={expression.literalValue} onChange={(event) => set('literalValue', Number(event.target.value))} /></label>}
       {['actor-field', 'target-field', 'input'].includes(expression.source) && <label><span>Field key</span><input value={expression.key} onChange={(event) => set('key', event.target.value)} placeholder={expression.source === 'input' ? 'amount' : 'strength-modifier'} /></label>}
       {expression.source === 'trait-path-field' && <>
-        <label><span>Trait field path</span><select value={expression.traitPath} onChange={(event) => set('traitPath', event.target.value)}><option value="">Select an actual field…</option>{!traitPathOptions.some((option) => option.path === expression.traitPath) && expression.traitPath && <option value={expression.traitPath}>{expression.traitPath} (unavailable)</option>}{traitPathOptions.map((option) => <option key={option.path} value={option.path}>{option.label}</option>)}</select>{selectedTraitPath && <small>Why available: {selectedTraitPath.explanation}</small>}</label>
+        <label><span>Trait field path</span><select value={expression.traitPath} onChange={(event) => changeTraitPath(event.target.value)}><option value="">Select an actual field…</option>{!traitPathOptions.some((option) => option.path === expression.traitPath) && expression.traitPath && <option value={expression.traitPath}>{expression.traitPath} (unavailable)</option>}{traitPathOptions.map((option) => <option key={option.path} value={option.path}>{option.label}</option>)}</select>{selectedTraitPath && <small>Why available: {selectedTraitPath.explanation}</small>}</label>
         {unavailableTraitPath && <div className="rule-set-notice error">
           <strong>Why unavailable</strong>
           <p>{traitPathRepair?.message ?? 'No trait in the current catalog guarantees this path.'}</p>
           {!!traitPathRepair?.candidates.length && traitPathRepair.reason !== 'optional-prerequisite' && onAddSubjectTrait && <div className="rule-set-form-actions">{traitPathRepair.candidates.map((candidate) => <button type="button" className="secondary-action" key={candidate.traitId} onClick={() => onAddSubjectTrait(candidate.traitId)}>Add {candidate.traitLabel} to self contract</button>)}</div>}
           {!!traitPathRepair?.candidates.length && traitPathRepair.reason === 'optional-prerequisite' && onSelectSubjectBranch && <div className="rule-set-form-actions">{traitPathRepair.candidates.map((candidate) => candidate.selectionOwnerTraitId && <button type="button" className="secondary-action" key={`${candidate.selectionOwnerTraitId}:${candidate.traitId}`} onClick={() => onSelectSubjectBranch(candidate.selectionOwnerTraitId!, candidate.traitId)}>Require {candidate.selectionOwnerLabel} → {candidate.traitLabel}</button>)}</div>}
         </div>}
-        {expression.traitPath.includes('[]') && <label><span>Collection entry number</span><input type="number" min={1} value={expression.mountOrdinal} onChange={(event) => set('mountOrdinal', Number(event.target.value))} /></label>}
+        {expression.traitPath.split('.').filter((segment) => segment.endsWith('[]')).map((segment, index) => {
+          const selector = expression.mountSelectors[index]
+            ?? { mode: 'ordinal' as const, ordinal: index === 0 ? expression.mountOrdinal : 1 };
+          const collectionPath = selectedTraitPath?.repeatedCollectionPaths[index]?.join('.')
+            ?? segment.replace(/\[\]$/, '');
+          return <div className="rule-set-field" key={`${collectionPath}:${index}`}>
+            <label>
+              <span>{collectionPath} selection</span>
+              <select value={selector.mode} onChange={(event) => {
+                const mode = event.target.value;
+                changeMountSelector(index, mode === 'trait'
+                  ? { mode, traitId: '' }
+                  : mode === 'tag'
+                    ? { mode, tag: '' }
+                    : { mode: 'ordinal', ordinal: 1 });
+              }}>
+                <option value="ordinal">Entry number</option>
+                <option value="trait">Specific trait</option>
+                <option value="tag">Semantic tag</option>
+              </select>
+            </label>
+            {selector.mode === 'ordinal' && <label><span>Entry number</span><input type="number" min={1} value={selector.ordinal} onChange={(event) => changeMountSelector(index, { mode: 'ordinal', ordinal: Number(event.target.value) })} /></label>}
+            {selector.mode === 'trait' && <label><span>Trait ID</span><input value={selector.traitId} onChange={(event) => changeMountSelector(index, { mode: 'trait', traitId: event.target.value })} placeholder="trait:walking" /></label>}
+            {selector.mode === 'tag' && <label><span>Trait tag</span><input value={selector.tag} onChange={(event) => changeMountSelector(index, { mode: 'tag', tag: event.target.value })} placeholder="movement" /></label>}
+          </div>;
+        })}
       </>}
       {expression.source === 'trait-instance-field' && <>
         <label><span>Trait instance ID</span><input value={expression.instanceId} onChange={(event) => set('instanceId', event.target.value)} placeholder="movement:left" /></label>
@@ -712,6 +757,15 @@ type ResolutionPreviewSummary = {
     valueModifiers: Array<Record<string, unknown>>;
   }>;
   traitChoices?: Array<{ traitId: string; traitInstanceId?: string; selectedTraitIds: string[]; source: 'context' | 'active-roots' }>;
+  structuralChanges?: Array<{
+    kind: 'suppression' | 'replacement';
+    path: string[];
+    priority: number;
+    targetTraitId: string;
+    replacementTraitId?: string;
+    sourceTraitIds: string[];
+    inactiveInstanceIds: string[];
+  }>;
   rolls?: Array<{ modifierActivations?: Array<{ modifierId: string; sources: Array<Record<string, unknown>> }> }>;
   trace: Array<{ stepId: string; kind: string; message: string; values?: Record<string, unknown> }>;
 };
@@ -834,6 +888,7 @@ function FixtureRunner({ operationId, relatedBodies, traitSources, body }: { ope
             {!!result.preview.activeTraitInstances?.length && <p className="fixture-outcome">Trait instances: {result.preview.activeTraitInstances.map((instance) => `${instance.instanceId} → ${instance.traitId} @ ${instance.mountPath.length ? `self.${instance.mountPath.join('.')}` : 'self'}${Object.keys(instance.values).length ? ` ${JSON.stringify(instance.values)}` : ''}`).join('; ')}</p>}
             {!!result.preview.activeTraitInstances?.some((instance) => instance.valueModifiers.length) && <p className="fixture-outcome">Trait value modifiers: {JSON.stringify(result.preview.activeTraitInstances.flatMap((instance) => instance.valueModifiers.map((modifier) => ({ targetInstanceId: instance.instanceId, ...modifier }))))}</p>}
             {!!result.preview.traitChoices?.length && <p className="fixture-outcome">Prerequisite choices: {result.preview.traitChoices.map((choice) => `${choice.traitInstanceId ?? choice.traitId} → ${choice.selectedTraitIds.join(' + ')}`).join('; ')}</p>}
+            {!!result.preview.structuralChanges?.length && <p className="fixture-outcome">Structural changes: {JSON.stringify(result.preview.structuralChanges)}</p>}
             {!!result.preview.rolls?.some((roll) => roll.modifierActivations?.length) && <p className="fixture-outcome">Modifier activation: {JSON.stringify(result.preview.rolls.flatMap((roll) => roll.modifierActivations ?? []))}</p>}
             <ol className="fixture-trace">{result.preview.trace.map((entry) => (
               <li key={entry.stepId}><span>{entry.stepId}</span>{entry.message}{entry.values && <small>{JSON.stringify(entry.values)}</small>}</li>
@@ -1206,7 +1261,7 @@ export function GuidedResolutionEditor({ name, description, draft, onChange, dia
       {draft.kind === 'operation' && view === 'preview' && (
         <div className="resolution-preview" role="tabpanel">
           <button className="secondary-action" type="button" onClick={runPreview}>Run sample preview</button>
-          {preview && <><strong>Outcome: {preview.outcome}</strong>{!!preview.activeTraits?.length && <p>Expanded traits: {preview.activeTraits.map((trait) => trait.traitId).join(', ')}</p>}{!!preview.traitChoices?.length && <p>Prerequisite choices: {preview.traitChoices.map((choice) => `${choice.traitId} → ${choice.selectedTraitIds.join(' + ')}`).join('; ')}</p>}{!!preview.rolls?.some((roll) => roll.modifierActivations?.length) && <p>Modifier activation: {JSON.stringify(preview.rolls.flatMap((roll) => roll.modifierActivations ?? []))}</p>}<ol>{preview.trace.map((entry) => <li key={entry.stepId}><span>{entry.stepId}</span>{entry.message}{entry.values && <small>{JSON.stringify(entry.values)}</small>}</li>)}</ol></>}
+          {preview && <><strong>Outcome: {preview.outcome}</strong>{!!preview.activeTraits?.length && <p>Expanded traits: {preview.activeTraits.map((trait) => trait.traitId).join(', ')}</p>}{!!preview.traitChoices?.length && <p>Prerequisite choices: {preview.traitChoices.map((choice) => `${choice.traitId} → ${choice.selectedTraitIds.join(' + ')}`).join('; ')}</p>}{!!preview.structuralChanges?.length && <p>Structural changes: {JSON.stringify(preview.structuralChanges)}</p>}{!!preview.rolls?.some((roll) => roll.modifierActivations?.length) && <p>Modifier activation: {JSON.stringify(preview.rolls.flatMap((roll) => roll.modifierActivations ?? []))}</p>}<ol>{preview.trace.map((entry) => <li key={entry.stepId}><span>{entry.stepId}</span>{entry.message}{entry.values && <small>{JSON.stringify(entry.values)}</small>}</li>)}</ol></>}
         </div>
       )}
       {draft.kind === 'operation' && view === 'fixture' && (

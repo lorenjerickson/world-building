@@ -17,6 +17,12 @@
       "browser": "./src/trait-shape.ts",
       "require": "./dist/src/trait-shape.js",
       "default": "./dist/src/trait-shape.js"
+    },
+    "./units": {
+      "types": "./dist/src/units.d.ts",
+      "browser": "./src/units.ts",
+      "require": "./dist/src/units.js",
+      "default": "./dist/src/units.js"
     }
   },
   "scripts": {

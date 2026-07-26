@@ -18,6 +18,11 @@ const { compileTraitCompositions } = require('../dist/rules/traits/trait-composi
 const { migrateTraitBody, previewTraitDefinitionMigration } = require('../dist/rules/traits/trait-migration');
 const { compileRuleRelease } = require('../dist/rules/releases/rule-release.compiler');
 const { RuleSentenceParserService } = require('../dist/rules/assistant/rule-sentence-parser.service');
+const { CompositionManifestService } = require('../dist/rules/releases/composition-manifest.service');
+const { RuleDefinitionSnapshotService } = require('../dist/rules/catalog/rule-definition-snapshot.service');
+const { classifyPrismaError } = require('../dist/database/prisma-exception.filter');
+const { serializePrismaValue } = require('../dist/database/prisma-response.interceptor');
+const { Prisma } = require('@prisma/client');
 
 const originalFetch = global.fetch;
 const originalRuleApiToken = process.env.RULE_API_INTERNAL_TOKEN;
@@ -432,6 +437,9 @@ test('recursive trait contracts compile dice collections and inherited modifiers
     operation: 'sets',
     path: ['sides'],
     amount: 10,
+    authoredAmount: { value: 10, unit: '1' },
+    normalizedAmount: { value: 10, unit: '1' },
+    targetUnit: '1',
   }]);
   const roll = first.artifact.traits.find((trait) => trait.traitId === 'trait:dice-roll');
   assert.deepEqual(roll.nodes[0].entries, [
@@ -475,6 +483,264 @@ test('recursive trait compiler rejects incompatible collection entries and inval
   assert.equal(result.valid, false);
   assert.ok(result.diagnostics.some((item) => item.code === 'RULE_TRAIT_COLLECTION_TYPE_MISMATCH'));
   assert.ok(result.diagnostics.some((item) => item.code === 'RULE_TRAIT_MODIFIER_TARGET_INVALID'));
+});
+
+test('recursive trait compiler preserves terminal schemas and rejects invalid field contracts', () => {
+  const valid = compileTraitCompositions([{
+    externalId: 'trait:scored',
+    name: 'Scored',
+    body: {
+      metamodelVersion: 'trait/2',
+      grants: [{
+        dataType: 'number',
+        key: 'score',
+        label: 'Score',
+        required: true,
+        min: 0,
+        max: 10,
+        default: 4,
+      }],
+    },
+  }]);
+  assert.equal(valid.valid, true, JSON.stringify(valid.diagnostics));
+  assert.deepEqual(valid.artifact.traits[0].nodes[0], {
+    kind: 'terminal',
+    path: ['score'],
+    label: 'Score',
+    dataType: 'number',
+    required: true,
+    min: 0,
+    max: 10,
+    default: 4,
+    allowedValues: undefined,
+    sourceTraitId: 'trait:scored',
+  });
+
+  const invalid = compileTraitCompositions([{
+    externalId: 'trait:invalid-score',
+    name: 'Invalid Score',
+    body: {
+      metamodelVersion: 'trait/2',
+      grants: [
+        { dataType: 'number', key: 'backwards', min: 10, max: 1, default: 5 },
+        { dataType: 'boolean', key: 'enabled', default: 'yes' },
+        { dataType: 'enum', key: 'mode', allowedValues: ['fast', 'slow'], default: 'other' },
+      ],
+    },
+  }]);
+  assert.equal(invalid.valid, false);
+  assert.ok(invalid.diagnostics.some((item) => item.code === 'RULE_TRAIT_FIELD_BOUNDS_INVALID'));
+  assert.ok(invalid.diagnostics.some((item) => item.code === 'RULE_TRAIT_FIELD_DEFAULT_OUT_OF_RANGE'));
+  assert.ok(invalid.diagnostics.some((item) => item.code === 'RULE_TRAIT_FIELD_DEFAULT_INVALID'));
+});
+
+test('recursive trait compiler retains compatible singular contribution provenance', () => {
+  const result = compileTraitCompositions([
+    {
+      externalId: 'trait:first-score',
+      name: 'First Score',
+      body: {
+        metamodelVersion: 'trait/2',
+        grants: [{ dataType: 'number', key: 'score', min: 0, max: 10 }],
+      },
+    },
+    {
+      externalId: 'trait:second-score',
+      name: 'Second Score',
+      body: {
+        metamodelVersion: 'trait/2',
+        grants: [{ dataType: 'number', key: 'score', min: 0, max: 10 }],
+      },
+    },
+    {
+      externalId: 'trait:combined-score',
+      name: 'Combined Score',
+      body: {
+        metamodelVersion: 'trait/2',
+        prerequisites: {
+          mode: 'all',
+          ids: ['trait:first-score', 'trait:second-score'],
+        },
+        grants: [],
+      },
+    },
+  ]);
+  assert.equal(result.valid, true, JSON.stringify(result.diagnostics));
+  const combined = result.artifact.traits.find((trait) => trait.traitId === 'trait:combined-score');
+  assert.equal(combined.nodes[0].sourceTraitId, 'trait:first-score');
+  assert.deepEqual(
+    combined.nodes[0].sourceTraitIds,
+    ['trait:first-score', 'trait:second-score'],
+  );
+});
+
+test('trait value modifiers reject unsupported or implicit roots', () => {
+  for (const field of ['owner.score', 'target.score', 'score']) {
+    const result = compileTraitCompositions([{
+      externalId: `trait:invalid-root-${field.replace('.', '-')}`,
+      name: 'Invalid Modifier Root',
+      body: {
+        metamodelVersion: 'trait/2',
+        grants: [
+          { dataType: 'number', key: 'score', default: 1 },
+          { dataType: 'modifier', operation: 'increases', field, amount: 1 },
+        ],
+      },
+    }]);
+    assert.equal(result.valid, false);
+    assert.ok(result.diagnostics.some((item) => item.code === 'RULE_TRAIT_MODIFIER_ROOT_INVALID'));
+  }
+});
+
+test('recursive trait compiler normalizes compatible units and rejects dimension errors', () => {
+  const valid = compileTraitCompositions([{
+    externalId: 'trait:stride',
+    name: 'Stride',
+    body: {
+      metamodelVersion: 'trait/2',
+      grants: [
+        { dataType: 'number', key: 'rate', unit: 'ft/turn', default: 20 },
+        {
+          dataType: 'modifier',
+          operation: 'increases',
+          field: 'self.rate',
+          amount: { value: 3.048, unit: 'm/turn' },
+        },
+        { dataType: 'modifier', operation: 'multiplies', field: 'self.rate', amount: 2 },
+        {
+          dataType: 'modifier',
+          operation: 'at-least',
+          field: 'self.rate',
+          amount: { value: 6.096, unit: 'm/turn' },
+          priority: 5,
+          when: {
+            operator: 'lte',
+            value: { value: 3.048, unit: 'm/turn' },
+          },
+        },
+      ],
+    },
+  }]);
+  assert.equal(valid.valid, true, JSON.stringify(valid.diagnostics));
+  assert.deepEqual(valid.artifact.traits[0].modifiers, [
+    {
+      sourceTraitId: 'trait:stride',
+      anchor: 'self',
+      operation: 'increases',
+      path: ['rate'],
+      amount: 10,
+      authoredAmount: { value: 3.048, unit: 'm/turn' },
+      normalizedAmount: { value: 10, unit: 'ft/turn' },
+      targetUnit: 'ft/turn',
+    },
+    {
+      sourceTraitId: 'trait:stride',
+      anchor: 'self',
+      operation: 'multiplies',
+      path: ['rate'],
+      amount: 2,
+      authoredAmount: { value: 2, unit: '1' },
+      normalizedAmount: { value: 2, unit: '1' },
+      targetUnit: 'ft/turn',
+    },
+    {
+      sourceTraitId: 'trait:stride',
+      anchor: 'self',
+      operation: 'at-least',
+      path: ['rate'],
+      amount: 20,
+      priority: 5,
+      condition: {
+        operator: 'lte',
+        value: 10,
+        authoredValue: { value: 3.048, unit: 'm/turn' },
+        normalizedValue: { value: 10, unit: 'ft/turn' },
+      },
+      authoredAmount: { value: 6.096, unit: 'm/turn' },
+      normalizedAmount: { value: 20, unit: 'ft/turn' },
+      targetUnit: 'ft/turn',
+    },
+  ]);
+
+  for (const amount of [
+    { value: 1, unit: 's' },
+    { value: 2, unit: 'ft/turn', operation: 'multiplies' },
+  ]) {
+    const invalid = compileTraitCompositions([{
+      externalId: 'trait:invalid-unit',
+      name: 'Invalid Unit',
+      body: {
+        metamodelVersion: 'trait/2',
+        grants: [
+          { dataType: 'number', key: 'rate', unit: 'ft/turn' },
+          {
+            dataType: 'modifier',
+            operation: amount.operation ?? 'increases',
+            field: 'self.rate',
+            amount: { value: amount.value, unit: amount.unit },
+          },
+        ],
+      },
+    }]);
+    assert.equal(invalid.valid, false);
+    assert.ok(invalid.diagnostics.some((item) => item.code === 'RULE_TRAIT_MODIFIER_UNIT_INCOMPATIBLE'));
+  }
+
+  const invalidFieldUnits = compileTraitCompositions([{
+    externalId: 'trait:invalid-field-units',
+    name: 'Invalid Field Units',
+    body: {
+      metamodelVersion: 'trait/2',
+      grants: [
+        { dataType: 'number', key: 'distance', unit: 'parsec' },
+        { dataType: 'text', key: 'name', unit: 'ft' },
+      ],
+    },
+  }]);
+  assert.equal(invalidFieldUnits.valid, false);
+  assert.ok(invalidFieldUnits.diagnostics.some((item) => item.code === 'RULE_TRAIT_FIELD_UNIT_INVALID'));
+  assert.ok(invalidFieldUnits.diagnostics.some((item) => item.code === 'RULE_TRAIT_FIELD_UNIT_UNSUPPORTED'));
+
+  const invalidAdvanced = compileTraitCompositions([{
+    externalId: 'trait:invalid-advanced',
+    name: 'Invalid Advanced Modifier',
+    body: {
+      metamodelVersion: 'trait/2',
+      grants: [
+        { dataType: 'text', key: 'label' },
+        {
+          dataType: 'modifier',
+          operation: 'at-most',
+          field: 'self.label',
+          amount: 2,
+          priority: 1.5,
+          when: { operator: 'gte', value: 'a' },
+        },
+      ],
+    },
+  }]);
+  assert.equal(invalidAdvanced.valid, false);
+  assert.ok(invalidAdvanced.diagnostics.some((item) => item.code === 'RULE_TRAIT_MODIFIER_PRIORITY_INVALID'));
+
+  const invalidCondition = compileTraitCompositions([{
+    externalId: 'trait:invalid-condition',
+    name: 'Invalid Condition',
+    body: {
+      metamodelVersion: 'trait/2',
+      grants: [
+        { dataType: 'number', key: 'score' },
+        {
+          dataType: 'modifier',
+          operation: 'increases',
+          field: 'self.score',
+          amount: 1,
+          when: { operator: 'gte', value: true },
+        },
+      ],
+    },
+  }]);
+  assert.equal(invalidCondition.valid, false);
+  assert.ok(invalidCondition.diagnostics.some((item) => item.code === 'RULE_TRAIT_MODIFIER_CONDITION_VALUE_INVALID'));
 });
 
 test('trait composition validation preserves keyless equipment-slot grants', () => {
@@ -540,6 +806,29 @@ test('trait/1 migration produces explicit trait/2 placement without semantic pat
   assert.deepEqual(after.artifact.traits, before.artifact.traits);
   assert.deepEqual(after.artifact.activationEdges, before.artifact.activationEdges);
   assert.deepEqual(after.artifact.activationChoices, before.artifact.activationChoices);
+});
+
+test('trait migration preview ignores invalid definitions outside the migrated dependency graph', () => {
+  const selected = {
+    externalId: 'trait:selected',
+    name: 'Selected',
+    body: { metamodelVersion: 'trait/1', grants: [] },
+  };
+  const invalidUnrelated = {
+    externalId: 'trait:broken-legacy',
+    name: 'Broken Legacy',
+    body: {
+      metamodelVersion: 'trait/1',
+      grants: [
+        { dataType: 'number', key: 'score', min: 10, default: 5 },
+        { dataType: 'trait', ref: 'trait:selected' },
+        { dataType: 'modifier' },
+      ],
+    },
+  };
+  const preview = previewTraitDefinitionMigration(selected, [selected, invalidUnrelated]);
+  assert.equal(preview.valid, true, JSON.stringify(preview.diagnostics));
+  assert.deepEqual(preview.diagnostics, []);
 });
 
 test('trait/1 migration diagnoses missing placement keys instead of inventing paths', () => {
@@ -641,6 +930,126 @@ test('catalog creation rejects an invalid recursive trait before persistence', a
     },
   );
   assert.equal(created, false);
+});
+
+test('incremental trait creation ignores unrelated invalid legacy drafts', async () => {
+  let created = false;
+  const repository = {
+    resolveActor: async (actor) => ({ ...actor, workspaceExternalId: 'workspace' }),
+    getRuleSet: async () => ({ id: 2 }),
+    getModule: async () => ({ id: 4, ruleSetId: 2 }),
+    listDefinitions: async () => [{
+      id: 9,
+      externalId: 'trait:broken-legacy',
+      name: 'Broken Legacy',
+      body: {
+        metamodelVersion: 'trait/1',
+        grants: [{ dataType: 'number', key: 'score', min: 10, default: 5 }],
+      },
+      definitionType: 'trait',
+      ruleSetId: 2,
+    }],
+    createDefinition: async () => {
+      created = true;
+      return { id: 12 };
+    },
+  };
+  const service = new RuleSetCatalogService(repository);
+  await service.createDefinition(
+    { auth0Subject: 'auth0|author' },
+    2,
+    {
+      moduleId: 4,
+      definitionType: 'trait',
+      name: 'Empty Trait',
+      body: { metamodelVersion: 'trait/2', grants: [] },
+    },
+  );
+  assert.equal(created, true);
+});
+
+test('valid trait edits are not blocked by pre-existing errors in dependent drafts', async () => {
+  const updatedAt = '2026-07-25T00:00:00.000Z';
+  let updated = false;
+  const walk = {
+    id: 10,
+    externalId: 'trait:walk',
+    name: 'Walk',
+    body: {
+      metamodelVersion: 'trait/2',
+      grants: [{ dataType: 'number', key: 'rate', min: 0, max: 10, default: 5, unit: 'ft' }],
+    },
+    definitionType: 'trait',
+    ruleSetId: 2,
+    updatedAt,
+  };
+  const repository = {
+    resolveActor: async (actor) => ({ ...actor, workspaceExternalId: 'workspace' }),
+    getRuleSet: async () => ({ id: 2 }),
+    getDefinition: async () => walk,
+    listDefinitions: async () => [
+      walk,
+      {
+        id: 11,
+        externalId: 'trait:broken-dependent',
+        name: 'Broken Dependent',
+        body: {
+          metamodelVersion: 'trait/1',
+          prerequisites: ['trait:walk'],
+          grants: [{ dataType: 'modifier' }],
+        },
+        definitionType: 'trait',
+        ruleSetId: 2,
+      },
+    ],
+    updateDefinition: async () => {
+      updated = true;
+      return walk;
+    },
+  };
+  const service = new RuleSetCatalogService(repository, { capture: async () => undefined });
+  await service.updateDefinition(
+    { auth0Subject: 'auth0|author' },
+    2,
+    walk.id,
+    {
+      body: {
+        metamodelVersion: 'trait/2',
+        grants: [{ dataType: 'number', key: 'rate', label: 'Rate', required: true, min: 0, max: 10, default: 5, unit: 'ft' }],
+      },
+      expectedUpdatedAt: updatedAt,
+    },
+  );
+  assert.equal(updated, true);
+});
+
+test('trait compiler diagnostics identify definitions by GM-facing name', () => {
+  const result = compileTraitCompositions([{
+    externalId: 'trait:broken-score',
+    name: 'Broken Score',
+    body: {
+      metamodelVersion: 'trait/1',
+      grants: [{ dataType: 'number', key: 'score', min: 10, default: 5 }],
+    },
+  }]);
+  assert.equal(result.valid, false);
+  assert.equal(
+    result.diagnostics.find((diagnostic) =>
+      diagnostic.code === 'RULE_TRAIT_FIELD_DEFAULT_OUT_OF_RANGE').path,
+    'definitions["Broken Score"].body.grants[0].default',
+  );
+  assert.deepEqual(
+    {
+      definitionExternalId: result.diagnostics[0].definitionExternalId,
+      definitionName: result.diagnostics[0].definitionName,
+      grantIndex: result.diagnostics[0].grantIndex,
+    },
+    {
+      definitionExternalId: 'trait:broken-score',
+      definitionName: 'Broken Score',
+      grantIndex: 0,
+    },
+  );
 });
 
 function releaseFixture() {
@@ -964,6 +1373,127 @@ test('publishing compiles and persists one content-addressed release', async () 
   assert.equal(createInput.manifest.artifacts.traitComposition.artifactVersion, 'trait-composition-artifact/1');
   assert.equal(createInput.sourceSnapshot.definitions.length, 3);
   assert.match(createInput.contentHash, /^[a-f0-9]{64}$/);
+});
+
+test('guided recursive trait scenario authors through catalog validation and publishes the effective contract', async () => {
+  const { ruleSet, modules } = releaseFixture();
+  const actor = { auth0Subject: 'auth0|author' };
+  const idsByName = new Map([
+    ['Walk', 'trait:walk'],
+    ['Speed', 'trait:speed'],
+    ['Creature', 'trait:creature'],
+    ['Fly', 'trait:fly'],
+    ['Winged', 'trait:winged'],
+    ['Boots of Striding', 'trait:boots-of-striding'],
+  ]);
+  const definitions = [];
+  let nextId = 40;
+  let persistedRelease;
+  const repository = {
+    resolveActor: async (input) => ({ ...input, userId: 5, workspaceExternalId: 'workspace' }),
+    getRuleSet: async () => ruleSet,
+    getModule: async () => modules[0],
+    listModules: async () => modules,
+    listDefinitions: async () => definitions,
+    listReleases: async () => [],
+    createDefinition: async (_actor, _ruleSetId, input) => {
+      const created = {
+        id: nextId++,
+        externalId: idsByName.get(input.name),
+        ruleSetId: ruleSet.id,
+        moduleId: input.moduleId,
+        definitionType: input.definitionType,
+        name: input.name,
+        schemaVersion: input.schemaVersion,
+        visibility: input.visibility,
+        body: input.body,
+        presentation: input.presentation,
+        tags: input.tags,
+        status: 'draft',
+        createdAt: ruleSet.createdAt,
+        updatedAt: ruleSet.updatedAt,
+      };
+      definitions.push(created);
+      return created;
+    },
+    createRelease: async (_actor, _ruleSetId, input) => {
+      persistedRelease = {
+        id: 99,
+        externalId: 'release:recursive-acceptance',
+        ruleSetId: ruleSet.id,
+        lifecycle: 'published',
+        createdAt: input.publishedAt,
+        updatedAt: input.publishedAt,
+        ...input,
+      };
+      return persistedRelease;
+    },
+  };
+  const service = new RuleSetCatalogService(repository);
+  const create = (name, body) => service.createDefinition(actor, ruleSet.id, {
+    moduleId: modules[0].id,
+    definitionType: 'trait',
+    name,
+    body,
+  });
+
+  await create('Walk', {
+    metamodelVersion: 'trait/2',
+    grants: [{ dataType: 'number', key: 'rate', label: 'Rate', required: true, min: 0, unit: 'ft/turn' }],
+  });
+  await create('Speed', {
+    metamodelVersion: 'trait/2',
+    grants: [{ dataType: 'trait', ref: 'trait:walk', at: 'this.walk' }],
+  });
+  await create('Creature', {
+    metamodelVersion: 'trait/2',
+    grants: [{ dataType: 'trait', ref: 'trait:speed', at: 'this.speed' }],
+  });
+  await create('Fly', {
+    metamodelVersion: 'trait/2',
+    grants: [{ dataType: 'number', key: 'rate', label: 'Rate', required: true, min: 0, unit: 'ft/turn' }],
+  });
+  await create('Winged', {
+    metamodelVersion: 'trait/2',
+    prerequisites: { mode: 'all', ids: ['trait:creature'] },
+    grants: [{ dataType: 'trait', ref: 'trait:fly', at: 'this.speed.fly' }],
+  });
+  await create('Boots of Striding', {
+    metamodelVersion: 'trait/2',
+    prerequisites: { mode: 'all', ids: ['trait:creature'] },
+    grants: [{
+      dataType: 'modifier',
+      operation: 'increases',
+      field: 'self.speed.walk.rate',
+      amount: { value: 3.048, unit: 'm/turn' },
+    }],
+  });
+
+  const release = await service.publish(actor, ruleSet.id, {
+    version: '1.0.0',
+    expectedUpdatedAt: ruleSet.updatedAt,
+    releaseNotes: 'Recursive composition acceptance fixture',
+  });
+
+  assert.equal(definitions.length, 6);
+  assert.equal(release, persistedRelease);
+  const artifact = release.manifest.artifacts.traitComposition;
+  const creature = artifact.traits.find((trait) => trait.traitId === 'trait:creature');
+  const winged = artifact.traits.find((trait) => trait.traitId === 'trait:winged');
+  const boots = artifact.traits.find((trait) => trait.traitId === 'trait:boots-of-striding');
+  assert.ok(creature.nodes.some((node) => node.path.join('.') === 'speed.walk.rate'));
+  assert.ok(!creature.nodes.some((node) => node.path.join('.') === 'speed.fly'));
+  assert.ok(winged.nodes.some((node) => node.path.join('.') === 'speed.fly.rate'));
+  assert.deepEqual(boots.modifiers, [{
+    sourceTraitId: 'trait:boots-of-striding',
+    anchor: 'self',
+    operation: 'increases',
+    path: ['speed', 'walk', 'rate'],
+    amount: 10,
+    authoredAmount: { value: 3.048, unit: 'm/turn' },
+    normalizedAmount: { value: 10, unit: 'ft/turn' },
+    targetUnit: 'ft/turn',
+  }]);
 });
 
 test('publishing aborts when a definition changes during compilation', async () => {
@@ -1482,6 +2012,9 @@ test('roll-result modifiers preserve die traits and provenance for add, replace,
         operation: 'increases',
         path: ['dice[]', 'sides'],
         amount: 2,
+        authoredAmount: { value: 2, unit: '1' },
+        normalizedAmount: { value: 2, unit: '1' },
+        targetUnit: '1',
         mountSelector: { mode: 'all' },
       },
       {
@@ -1490,6 +2023,9 @@ test('roll-result modifiers preserve die traits and provenance for add, replace,
         operation: 'increases',
         path: ['dice[]', 'sides'],
         amount: 3,
+        authoredAmount: { value: 3, unit: '1' },
+        normalizedAmount: { value: 3, unit: '1' },
+        targetUnit: '1',
         mountSelector: { mode: 'ordinal', ordinal: 2 },
       },
     ],
@@ -1613,6 +2149,161 @@ test('roll-result modifiers preserve die traits and provenance for add, replace,
   assert.ok(missingSelector.diagnostics.some((diagnostic) => diagnostic.code === 'RULE_TRAIT_MODIFIER_SELECTOR_REQUIRED'));
 });
 
+test('nested repeated paths support ordered identity and semantic-tag selectors', () => {
+  const traitCompilation = compileTraitCompositions([
+    {
+      externalId: 'trait:member',
+      name: 'Member',
+      body: {
+        metamodelVersion: 'trait/2',
+        grants: [{ dataType: 'number', key: 'score', default: 1 }],
+      },
+    },
+    {
+      externalId: 'trait:leader',
+      name: 'Leader',
+      tags: ['leader'],
+      body: {
+        metamodelVersion: 'trait/2',
+        prerequisites: { mode: 'all', ids: ['trait:member'] },
+        grants: [{ dataType: 'modifier', operation: 'sets', field: 'self.score', amount: 1 }],
+      },
+    },
+    {
+      externalId: 'trait:group',
+      name: 'Group',
+      body: {
+        metamodelVersion: 'trait/2',
+        grants: [{
+          dataType: 'trait-collection',
+          key: 'members',
+          acceptedTraits: ['trait:member'],
+        }],
+      },
+    },
+    {
+      externalId: 'trait:blue-group',
+      name: 'Blue Group',
+      body: {
+        metamodelVersion: 'trait/2',
+        prerequisites: { mode: 'all', ids: ['trait:group'] },
+        grants: [{ dataType: 'trait', ref: 'trait:leader', into: 'this.members' }],
+      },
+    },
+    {
+      externalId: 'trait:red-group',
+      name: 'Red Group',
+      body: {
+        metamodelVersion: 'trait/2',
+        prerequisites: { mode: 'all', ids: ['trait:group'] },
+        grants: [{ dataType: 'trait', ref: 'trait:leader', into: 'this.members' }],
+      },
+    },
+    {
+      externalId: 'trait:roster',
+      name: 'Roster',
+      body: {
+        metamodelVersion: 'trait/2',
+        grants: [
+          {
+            dataType: 'trait-collection',
+            key: 'groups',
+            acceptedTraits: ['trait:group'],
+          },
+          { dataType: 'trait', ref: 'trait:blue-group', into: 'this.groups' },
+          { dataType: 'trait', ref: 'trait:red-group', into: 'this.groups' },
+          {
+            dataType: 'modifier',
+            operation: 'increases',
+            field: 'self.groups[].members[].score',
+            amount: 4,
+            mountSelectors: [
+              { mode: 'trait', traitId: 'trait:red-group' },
+              { mode: 'tag', tag: 'leader' },
+            ],
+          },
+        ],
+      },
+    },
+  ]);
+  assert.equal(traitCompilation.valid, true, JSON.stringify(traitCompilation.diagnostics));
+  assert.deepEqual(
+    traitCompilation.artifact.traits.find((trait) => trait.traitId === 'trait:leader').tags,
+    ['leader'],
+  );
+
+  const base = { formatVersion: '1', metamodelVersion: 'resolution/1' };
+  const check = {
+    ...base,
+    definitionType: 'check',
+    definitionId: 'check:red-leader-score',
+    name: 'Red Leader Score',
+    subjectTraitIds: ['trait:roster'],
+    checkKind: 'target-number',
+    roll: { count: 1, sides: 20 },
+    bonus: {
+      op: 'trait-path-field',
+      path: 'self.groups[].members[].score',
+      mountSelectors: [
+        { mode: 'trait', traitId: 'trait:red-group' },
+        { mode: 'tag', tag: 'leader' },
+      ],
+    },
+    target: { op: 'literal', value: 1 },
+    comparison: 'gte',
+  };
+  const resolution = compileResolutionDefinitions([
+    check,
+    {
+      ...base,
+      definitionType: 'operation',
+      definitionId: 'operation:red-leader-score',
+      name: 'Red Leader Score',
+      startStepId: 'roll',
+      budget: { maximumSteps: 2 },
+      steps: [
+        {
+          stepId: 'roll',
+          kind: 'perform-check',
+          checkId: check.definitionId,
+          resultKey: 'result',
+          onSuccess: 'done',
+          onFailure: 'done',
+        },
+        { stepId: 'done', kind: 'return', outcome: 'success' },
+      ],
+    },
+  ]);
+  assert.equal(resolution.valid, true, JSON.stringify(resolution.diagnostics));
+  const preview = previewResolutionOperation(
+    resolution.artifact,
+    'operation:red-leader-score',
+    {
+      actor: { id: 'actor:one', fields: {}, resources: {} },
+      target: { id: 'target:one', fields: {} },
+      activeTraitInstances: [{ instanceId: 'roster:one', traitId: 'trait:roster' }],
+      entropy: [1],
+    },
+    traitCompilation.artifact,
+  );
+  assert.equal(preview.rolls[0].bonus, 5);
+
+  const wildcardScalar = compileResolutionDefinitions([{
+    ...check,
+    bonus: {
+      op: 'trait-path-field',
+      path: 'self.groups[].members[].score',
+      mountSelectors: [
+        { mode: 'all' },
+        { mode: 'tag', tag: 'leader' },
+      ],
+    },
+  }]);
+  assert.equal(wildcardScalar.valid, false);
+  assert.ok(wildcardScalar.diagnostics.some((diagnostic) =>
+    diagnostic.code === 'RULE_EXPRESSION_TRAIT_PATH_SELECTOR_COLLECTION_RESULT_INVALID'));
+});
+
 test('mounted trait instance values are typed, materialized, and addressable by expressions', () => {
   const base = { formatVersion: '1', metamodelVersion: 'resolution/1' };
   const operation = (definitionId, checkId) => ({
@@ -1690,7 +2381,7 @@ test('mounted trait instance values are typed, materialized, and addressable by 
       body: {
         metamodelVersion: 'trait/1',
         grants: [
-          { dataType: 'number', key: 'rate' },
+          { dataType: 'number', key: 'rate', unit: 'ft/turn' },
           { dataType: 'enum', key: 'gait', allowedValues: ['ground', 'hover'] },
           { dataType: 'boolean', key: 'enabled' },
         ],
@@ -1728,7 +2419,32 @@ test('mounted trait instance values are typed, materialized, and addressable by 
       body: {
         metamodelVersion: 'trait/1',
         prerequisites: ['trait:creature'],
-        grants: [{ dataType: 'modifier', operation: 'increases', field: 'self.speed.walk.rate', amount: 5 }],
+        grants: [{
+          dataType: 'modifier',
+          operation: 'increases',
+          field: 'self.speed.walk.rate',
+          amount: { value: 1.524, unit: 'm/turn' },
+        }],
+      },
+    },
+    {
+      externalId: 'trait:tempered',
+      name: 'Tempered Pace',
+      body: {
+        metamodelVersion: 'trait/1',
+        prerequisites: ['trait:walk'],
+        grants: [
+          { dataType: 'modifier', operation: 'at-most', field: 'self.rate', amount: 25 },
+          { dataType: 'modifier', operation: 'multiplies', field: 'self.rate', amount: 2 },
+          {
+            dataType: 'modifier',
+            operation: 'increases',
+            field: 'self.rate',
+            amount: 10,
+            when: { operator: 'lte', value: 5 },
+          },
+          { dataType: 'modifier', operation: 'at-least', field: 'self.rate', amount: 20 },
+        ],
       },
     },
     {
@@ -1818,6 +2534,9 @@ test('mounted trait instance values are typed, materialized, and addressable by 
       operation: 'increases',
       path: ['speed', 'walk', 'rate'],
       amount: 5,
+      authoredAmount: { value: 1.524, unit: 'm/turn' },
+      normalizedAmount: { value: 5, unit: 'ft/turn' },
+      targetUnit: 'ft/turn',
       before: 5,
       after: 10,
     },
@@ -1828,10 +2547,65 @@ test('mounted trait instance values are typed, materialized, and addressable by 
       operation: 'increases',
       path: ['walk', 'rate'],
       amount: 2,
+      authoredAmount: { value: 2, unit: 'ft/turn' },
+      normalizedAmount: { value: 2, unit: 'ft/turn' },
+      targetUnit: 'ft/turn',
       before: 10,
       after: 12,
     },
   ]);
+
+  const tempered = previewResolutionOperation(resolution.artifact, 'operation:path-speed', {
+    actor: { id: 'actor:one', fields: {}, resources: {} },
+    target: { id: 'target:one', fields: {} },
+    activeTraitInstances: [{ instanceId: 'tempered:worn', traitId: 'trait:tempered', values: { rate: 5 } }],
+    entropy: [3],
+  }, traits.artifact);
+  const temperedWalk = tempered.activeTraitInstances.find((instance) => instance.instanceId === 'tempered:worn');
+  assert.equal(temperedWalk.values.rate, 25);
+  assert.deepEqual(
+    temperedWalk.valueModifiers.map((modifier) => ({
+      operation: modifier.operation,
+      before: modifier.before,
+      after: modifier.after,
+      applied: modifier.applied,
+      conditionMatched: modifier.conditionMatched,
+    })),
+    [
+      { operation: 'increases', before: 5, after: 15, applied: true, conditionMatched: true },
+      { operation: 'multiplies', before: 15, after: 30, applied: undefined, conditionMatched: undefined },
+      { operation: 'at-least', before: 30, after: 30, applied: undefined, conditionMatched: undefined },
+      { operation: 'at-most', before: 30, after: 25, applied: undefined, conditionMatched: undefined },
+    ],
+  );
+
+  const skipped = previewResolutionOperation(resolution.artifact, 'operation:path-speed', {
+    actor: { id: 'actor:one', fields: {}, resources: {} },
+    target: { id: 'target:one', fields: {} },
+    activeTraitInstances: [{
+      instanceId: 'tempered:skipped',
+      traitId: 'trait:tempered',
+      values: { rate: 6 },
+    }],
+    entropy: [3],
+  }, traits.artifact);
+  const skippedWalk = skipped.activeTraitInstances.find((instance) => instance.instanceId === 'tempered:skipped');
+  assert.equal(skippedWalk.values.rate, 20);
+  assert.deepEqual(
+    skippedWalk.valueModifiers.map((modifier) => [
+      modifier.operation,
+      modifier.applied,
+      modifier.conditionMatched,
+      modifier.before,
+      modifier.after,
+    ]),
+    [
+      ['increases', false, false, 6, 6],
+      ['multiplies', undefined, undefined, 6, 12],
+      ['at-least', undefined, undefined, 12, 20],
+      ['at-most', undefined, undefined, 20, 20],
+    ],
+  );
   assert.throws(
     () => previewResolutionOperation(resolution.artifact, 'operation:instance-speed', {
       actor: { id: 'actor:one', fields: {}, resources: {} },
@@ -1868,6 +2642,579 @@ test('mounted trait instance values are typed, materialized, and addressable by 
   ]);
   assert.equal(malformed.valid, false);
   assert.ok(malformed.diagnostics.some((diagnostic) => diagnostic.code === 'RULE_EXPRESSION_TRAIT_INSTANCE_INVALID'));
+});
+
+test('structural directives suppress and replace exact mounted branches with deterministic provenance', () => {
+  const traits = [
+    {
+      externalId: 'trait:walk',
+      name: 'Walk',
+      body: { metamodelVersion: 'trait/1', grants: [{ dataType: 'number', key: 'rate' }] },
+    },
+    {
+      externalId: 'trait:fly',
+      name: 'Fly',
+      body: { metamodelVersion: 'trait/1', grants: [{ dataType: 'number', key: 'rate' }] },
+    },
+    {
+      externalId: 'trait:speed',
+      name: 'Speed',
+      body: {
+        metamodelVersion: 'trait/1',
+        grants: [
+          { dataType: 'trait', key: 'walk', ref: 'trait:walk' },
+          { dataType: 'trait', key: 'fly', ref: 'trait:fly' },
+        ],
+      },
+    },
+    {
+      externalId: 'trait:creature',
+      name: 'Creature',
+      body: {
+        metamodelVersion: 'trait/1',
+        grants: [{ dataType: 'trait', key: 'speed', ref: 'trait:speed' }],
+      },
+    },
+    {
+      externalId: 'trait:grounded',
+      name: 'Grounded',
+      body: {
+        metamodelVersion: 'trait/1',
+        prerequisites: ['trait:creature'],
+        grants: [
+          { dataType: 'suppression', target: 'self.speed.fly', priority: 10 },
+          { dataType: 'suppression', target: 'self.speed.fly', priority: 10 },
+        ],
+      },
+    },
+    {
+      externalId: 'trait:adaptive',
+      name: 'Adaptive',
+      body: {
+        metamodelVersion: 'trait/1',
+        prerequisites: ['trait:creature'],
+        grants: [
+          { dataType: 'suppression', target: 'self.speed.walk', priority: 10 },
+          { dataType: 'replacement', target: 'self.speed.walk', ref: 'trait:fly', priority: 20 },
+        ],
+      },
+    },
+    {
+      externalId: 'trait:conflicted',
+      name: 'Conflicted',
+      body: {
+        metamodelVersion: 'trait/1',
+        prerequisites: ['trait:creature'],
+        grants: [
+          { dataType: 'suppression', target: 'self.speed.walk', priority: 20 },
+          { dataType: 'replacement', target: 'self.speed.walk', ref: 'trait:fly', priority: 20 },
+        ],
+      },
+    },
+  ];
+  const validTraits = traits.filter((definition) => definition.externalId !== 'trait:conflicted');
+  const compiled = compileTraitCompositions(validTraits);
+  const reordered = compileTraitCompositions([...validTraits].reverse());
+  assert.equal(compiled.valid, true, JSON.stringify(compiled.diagnostics));
+  assert.deepEqual(compiled.artifact.structuralDirectives, reordered.artifact.structuralDirectives);
+
+  const resolution = compileResolutionDefinitions([{
+    formatVersion: '1',
+    metamodelVersion: 'resolution/1',
+    definitionType: 'operation',
+    definitionId: 'operation:inspect-structure',
+    name: 'Inspect Structure',
+    startStepId: 'done',
+    budget: { maximumSteps: 1 },
+    steps: [{
+      stepId: 'done',
+      kind: 'return',
+      outcome: 'success',
+      data: { complete: { op: 'literal', value: true } },
+    }],
+  }]);
+  assert.equal(resolution.valid, true, JSON.stringify(resolution.diagnostics));
+  const contextFor = (instanceId, traitId) => ({
+    actor: { id: 'actor:one', fields: {}, resources: {} },
+    target: { id: 'target:one', fields: {} },
+    activeTraitInstances: [{ instanceId, traitId }],
+    entropy: [],
+  });
+
+  const grounded = previewResolutionOperation(
+    resolution.artifact,
+    'operation:inspect-structure',
+    contextFor('condition:grounded', 'trait:grounded'),
+    compiled.artifact,
+  );
+  assert.equal(grounded.activeTraitInstances.some((instance) => instance.traitId === 'trait:fly'), false);
+  assert.equal(grounded.activeTraitInstances.some((instance) => instance.traitId === 'trait:walk'), true);
+  assert.equal(grounded.structuralChanges.length, 1);
+  assert.equal(grounded.structuralChanges[0].kind, 'suppression');
+  assert.deepEqual(grounded.structuralChanges[0].sourceInstanceIds, ['condition:grounded']);
+  assert.equal(grounded.structuralChanges[0].inactiveInstanceIds.length, 1);
+  assert.equal(
+    grounded.activeTraits.find((trait) => trait.traitId === 'trait:fly'),
+    undefined,
+  );
+
+  const adaptive = previewResolutionOperation(
+    resolution.artifact,
+    'operation:inspect-structure',
+    contextFor('condition:adaptive', 'trait:adaptive'),
+    compiled.artifact,
+  );
+  const replacement = adaptive.structuralChanges[0];
+  assert.equal(replacement.kind, 'replacement');
+  assert.equal(replacement.priority, 20);
+  assert.equal(replacement.targetTraitId, 'trait:walk');
+  assert.equal(replacement.replacementTraitId, 'trait:fly');
+  assert.equal(adaptive.activeTraitInstances.some((instance) => instance.instanceId === replacement.targetInstanceId), false);
+  const replacementInstance = adaptive.activeTraitInstances.find((instance) =>
+    instance.instanceId === replacement.replacementInstanceId);
+  assert.equal(replacementInstance.traitId, 'trait:fly');
+  assert.deepEqual(replacementInstance.mountPath, ['speed', 'walk']);
+  assert.equal(
+    adaptive.activeTraits.find((trait) => trait.traitId === 'trait:walk'),
+    undefined,
+  );
+
+  const conflicted = compileTraitCompositions(traits);
+  assert.equal(conflicted.valid, false);
+  assert.ok(conflicted.diagnostics.some((diagnostic) =>
+    diagnostic.code === 'RULE_TRAIT_STRUCTURAL_DIRECTIVE_CONFLICT'));
+});
+
+test('structural directive compilation rejects non-branch targets and missing replacement traits', () => {
+  const baseDefinitions = [
+    {
+      externalId: 'trait:walk',
+      name: 'Walk',
+      body: { metamodelVersion: 'trait/1', grants: [{ dataType: 'number', key: 'rate' }] },
+    },
+    {
+      externalId: 'trait:speed',
+      name: 'Speed',
+      body: {
+        metamodelVersion: 'trait/1',
+        grants: [{ dataType: 'trait', key: 'walk', ref: 'trait:walk' }],
+      },
+    },
+  ];
+  const invalidDefinition = (grant) => ({
+      externalId: 'trait:invalid-structure',
+      name: 'Invalid Structure',
+      body: {
+        metamodelVersion: 'trait/1',
+        prerequisites: ['trait:speed'],
+        grants: [grant],
+      },
+    });
+  const terminal = compileTraitCompositions([
+    ...baseDefinitions,
+    invalidDefinition({ dataType: 'suppression', target: 'self.walk.rate', priority: 1 }),
+  ]);
+  const missing = compileTraitCompositions([
+    ...baseDefinitions,
+    invalidDefinition({ dataType: 'replacement', target: 'self.walk', ref: 'trait:missing', priority: 2 }),
+  ]);
+  const priority = compileTraitCompositions([
+    ...baseDefinitions,
+    invalidDefinition({ dataType: 'suppression', target: 'self.walk' }),
+  ]);
+  assert.equal(terminal.valid, false);
+  assert.equal(missing.valid, false);
+  assert.equal(priority.valid, false);
+  assert.ok(terminal.diagnostics.some((diagnostic) =>
+    diagnostic.code === 'RULE_TRAIT_STRUCTURAL_TARGET_INVALID'));
+  assert.ok(missing.diagnostics.some((diagnostic) =>
+    diagnostic.code === 'RULE_TRAIT_REPLACEMENT_REFERENCE_MISSING'));
+  assert.ok(priority.diagnostics.some((diagnostic) =>
+    diagnostic.code === 'RULE_TRAIT_STRUCTURAL_PRIORITY_INVALID'));
+});
+
+test('advanced value stacking rejects active set and clamp conflicts deterministically', () => {
+  const traits = compileTraitCompositions([
+    {
+      externalId: 'trait:pace',
+      name: 'Pace',
+      body: {
+        metamodelVersion: 'trait/1',
+        grants: [{ dataType: 'number', key: 'rate' }],
+      },
+    },
+    {
+      externalId: 'trait:conflicting-sets',
+      name: 'Conflicting Sets',
+      body: {
+        metamodelVersion: 'trait/1',
+        prerequisites: ['trait:pace'],
+        grants: [
+          { dataType: 'modifier', operation: 'sets', field: 'self.rate', amount: 20, priority: 5 },
+          { dataType: 'modifier', operation: 'sets', field: 'self.rate', amount: 30, priority: 5 },
+        ],
+      },
+    },
+    {
+      externalId: 'trait:conflicting-bounds',
+      name: 'Conflicting Bounds',
+      body: {
+        metamodelVersion: 'trait/1',
+        prerequisites: ['trait:pace'],
+        grants: [
+          { dataType: 'modifier', operation: 'at-least', field: 'self.rate', amount: 30 },
+          { dataType: 'modifier', operation: 'at-most', field: 'self.rate', amount: 20 },
+        ],
+      },
+    },
+    {
+      externalId: 'trait:conditional-sets',
+      name: 'Conditional Sets',
+      body: {
+        metamodelVersion: 'trait/1',
+        prerequisites: ['trait:pace'],
+        grants: [
+          {
+            dataType: 'modifier',
+            operation: 'sets',
+            field: 'self.rate',
+            amount: 20,
+            priority: 5,
+            when: { operator: 'lte', value: 10 },
+          },
+          {
+            dataType: 'modifier',
+            operation: 'sets',
+            field: 'self.rate',
+            amount: 30,
+            priority: 5,
+            when: { operator: 'gte', value: 11 },
+          },
+        ],
+      },
+    },
+  ]);
+  assert.equal(traits.valid, true, JSON.stringify(traits.diagnostics));
+  const resolution = compileResolutionDefinitions([{
+    formatVersion: '1',
+    metamodelVersion: 'resolution/1',
+    definitionType: 'operation',
+    definitionId: 'operation:inspect-stacking',
+    name: 'Inspect Stacking',
+    startStepId: 'done',
+    budget: { maximumSteps: 1 },
+    steps: [{ stepId: 'done', kind: 'return', outcome: 'success', data: {} }],
+  }]);
+  const contextFor = (traitId, rate) => ({
+    actor: { id: 'actor:one', fields: {}, resources: {} },
+    target: { id: 'target:one', fields: {} },
+    activeTraitInstances: [{ instanceId: `root:${traitId}`, traitId, values: { rate } }],
+    entropy: [],
+  });
+  assert.throws(
+    () => previewResolutionOperation(
+      resolution.artifact,
+      'operation:inspect-stacking',
+      contextFor('trait:conflicting-sets', 10),
+      traits.artifact,
+    ),
+    /Trait modifiers conflict.*priority 5/,
+  );
+  assert.throws(
+    () => previewResolutionOperation(
+      resolution.artifact,
+      'operation:inspect-stacking',
+      contextFor('trait:conflicting-bounds', 10),
+      traits.artifact,
+    ),
+    /minimum 30 exceeds maximum 20/,
+  );
+  const conditional = previewResolutionOperation(
+    resolution.artifact,
+    'operation:inspect-stacking',
+    contextFor('trait:conditional-sets', 8),
+    traits.artifact,
+  );
+  assert.equal(conditional.activeTraitInstances[0].values.rate, 20);
+});
+
+test('structural directives rewrite guaranteed contracts and resolve nested replacements recursively', () => {
+  const definitions = [
+    {
+      externalId: 'trait:ground',
+      name: 'Ground',
+      body: { metamodelVersion: 'trait/1', grants: [{ dataType: 'number', key: 'rate' }] },
+    },
+    {
+      externalId: 'trait:air',
+      name: 'Air',
+      body: { metamodelVersion: 'trait/1', grants: [{ dataType: 'number', key: 'rate' }] },
+    },
+    {
+      externalId: 'trait:movement',
+      name: 'Movement',
+      body: {
+        metamodelVersion: 'trait/1',
+        grants: [
+          { dataType: 'trait', key: 'ground', ref: 'trait:ground' },
+          { dataType: 'trait', key: 'air', ref: 'trait:air' },
+        ],
+      },
+    },
+    {
+      externalId: 'trait:creature',
+      name: 'Creature',
+      body: {
+        metamodelVersion: 'trait/1',
+        grants: [{ dataType: 'trait', key: 'movement', ref: 'trait:movement' }],
+      },
+    },
+    {
+      externalId: 'trait:air-only',
+      name: 'Air Only',
+      body: {
+        metamodelVersion: 'trait/1',
+        grants: [
+          { dataType: 'trait', key: 'ground', ref: 'trait:ground' },
+          { dataType: 'trait', key: 'air', ref: 'trait:air' },
+          { dataType: 'suppression', target: 'this.ground', priority: 10 },
+        ],
+      },
+    },
+    {
+      externalId: 'trait:transformed',
+      name: 'Transformed',
+      body: {
+        metamodelVersion: 'trait/1',
+        prerequisites: ['trait:creature'],
+        grants: [{
+          dataType: 'replacement',
+          target: 'self.movement',
+          ref: 'trait:air-only',
+          priority: 20,
+        }],
+      },
+    },
+    {
+      externalId: 'trait:chosen-movement',
+      name: 'Chosen Movement',
+      body: {
+        metamodelVersion: 'trait/1',
+        prerequisites: { mode: 'any', ids: ['trait:ground', 'trait:air'] },
+        grants: [],
+      },
+    },
+    {
+      externalId: 'trait:choice-transformed',
+      name: 'Choice Transformed',
+      body: {
+        metamodelVersion: 'trait/1',
+        prerequisites: ['trait:creature'],
+        grants: [{
+          dataType: 'replacement',
+          target: 'self.movement',
+          ref: 'trait:chosen-movement',
+          priority: 20,
+        }],
+      },
+    },
+  ];
+  const traits = compileTraitCompositions(definitions);
+  assert.equal(traits.valid, true, JSON.stringify(traits.diagnostics));
+  const transformedContract = traits.artifact.traits.find((trait) =>
+    trait.traitId === 'trait:transformed');
+  assert.deepEqual(
+    transformedContract.nodes.map((node) => node.path.join('.')),
+    ['movement', 'movement.air', 'movement.air.rate'],
+  );
+  const resolution = compileResolutionDefinitions([{
+    formatVersion: '1',
+    metamodelVersion: 'resolution/1',
+    definitionType: 'operation',
+    definitionId: 'operation:inspect-recursive-structure',
+    name: 'Inspect Recursive Structure',
+    startStepId: 'done',
+    budget: { maximumSteps: 1 },
+    steps: [{ stepId: 'done', kind: 'return', outcome: 'success', data: {} }],
+  }]);
+  const preview = previewResolutionOperation(
+    resolution.artifact,
+    'operation:inspect-recursive-structure',
+    {
+      actor: { id: 'actor:one', fields: {}, resources: {} },
+      target: { id: 'target:one', fields: {} },
+      activeTraitInstances: [{ instanceId: 'root:transformed', traitId: 'trait:transformed' }],
+      entropy: [],
+    },
+    traits.artifact,
+  );
+  assert.equal(preview.structuralChanges.length, 2);
+  assert.equal(preview.activeTraitInstances.some((instance) =>
+    instance.traitId === 'trait:ground'), false);
+  assert.equal(preview.activeTraitInstances.some((instance) =>
+    instance.traitId === 'trait:air'), true);
+  const choicePreview = previewResolutionOperation(
+    resolution.artifact,
+    'operation:inspect-recursive-structure',
+    {
+      actor: { id: 'actor:one', fields: {}, resources: {} },
+      target: { id: 'target:one', fields: {} },
+      activeTraitInstances: [{
+        instanceId: 'root:choice-transformed',
+        traitId: 'trait:choice-transformed',
+      }],
+      traitPrerequisiteSelections: {
+        'trait:chosen-movement': ['trait:air'],
+      },
+      entropy: [],
+    },
+    traits.artifact,
+  );
+  assert.equal(choicePreview.activeTraitInstances.some((instance) =>
+    instance.traitId === 'trait:air'), true);
+  assert.deepEqual(
+    choicePreview.traitChoices.find((choice) =>
+      choice.traitId === 'trait:chosen-movement').selectedTraitIds,
+    ['trait:air'],
+  );
+});
+
+test('structural overlap shadows descendants and repeated selectors target collection entries', () => {
+  const definitions = [
+    {
+      externalId: 'trait:die',
+      name: 'Die',
+      body: { metamodelVersion: 'trait/1', grants: [{ dataType: 'number', key: 'sides' }] },
+    },
+    {
+      externalId: 'trait:d4',
+      name: 'D4',
+      body: {
+        metamodelVersion: 'trait/1',
+        prerequisites: ['trait:die'],
+        grants: [{ dataType: 'modifier', operation: 'sets', field: 'self.sides', amount: 4 }],
+      },
+    },
+    {
+      externalId: 'trait:d10',
+      name: 'D10',
+      body: {
+        metamodelVersion: 'trait/1',
+        prerequisites: ['trait:die'],
+        grants: [{ dataType: 'modifier', operation: 'sets', field: 'self.sides', amount: 10 }],
+      },
+    },
+    {
+      externalId: 'trait:dice-roll',
+      name: 'Dice Roll',
+      body: {
+        metamodelVersion: 'trait/1',
+        grants: [
+          { dataType: 'trait-collection', key: 'dice', acceptedTraits: ['trait:die'] },
+          { dataType: 'trait', into: 'this.dice', ref: 'trait:d10', count: 3 },
+        ],
+      },
+    },
+    {
+      externalId: 'trait:trim-roll',
+      name: 'Trim Roll',
+      body: {
+        metamodelVersion: 'trait/1',
+        prerequisites: ['trait:dice-roll'],
+        grants: [{
+          dataType: 'suppression',
+          target: 'self.dice[]',
+          mountSelector: { mode: 'ordinal', ordinal: 2 },
+          priority: 10,
+        }],
+      },
+    },
+    {
+      externalId: 'trait:replace-roll',
+      name: 'Replace Roll',
+      body: {
+        metamodelVersion: 'trait/1',
+        prerequisites: ['trait:dice-roll'],
+        grants: [{
+          dataType: 'replacement',
+          target: 'self.dice[]',
+          mountSelector: { mode: 'ordinal', ordinal: 2 },
+          ref: 'trait:d4',
+          priority: 10,
+        }],
+      },
+    },
+    {
+      externalId: 'trait:overlap',
+      name: 'Overlap',
+      body: {
+        metamodelVersion: 'trait/1',
+        grants: [
+          { dataType: 'trait', key: 'roll', ref: 'trait:dice-roll' },
+          { dataType: 'suppression', target: 'self.roll', priority: 5 },
+          {
+            dataType: 'suppression',
+            target: 'self.roll.dice[]',
+            mountSelector: { mode: 'all' },
+            priority: 100,
+          },
+        ],
+      },
+    },
+  ];
+  const traits = compileTraitCompositions(definitions);
+  assert.equal(traits.valid, true, JSON.stringify(traits.diagnostics));
+  const trimContract = traits.artifact.traits.find((trait) => trait.traitId === 'trait:trim-roll');
+  assert.equal(trimContract.nodes.find((node) => node.kind === 'collection').entries[0].count, 2);
+  const replaceContract = traits.artifact.traits.find((trait) => trait.traitId === 'trait:replace-roll');
+  assert.deepEqual(
+    replaceContract.nodes.find((node) => node.kind === 'collection').entries
+      .map((entry) => [entry.traitId, entry.count]),
+    [['trait:d10', 2], ['trait:d4', 1]],
+  );
+  const resolution = compileResolutionDefinitions([{
+    formatVersion: '1',
+    metamodelVersion: 'resolution/1',
+    definitionType: 'operation',
+    definitionId: 'operation:inspect-collection-structure',
+    name: 'Inspect Collection Structure',
+    startStepId: 'done',
+    budget: { maximumSteps: 1 },
+    steps: [{ stepId: 'done', kind: 'return', outcome: 'success', data: {} }],
+  }]);
+  const contextFor = (traitId) => ({
+    actor: { id: 'actor:one', fields: {}, resources: {} },
+    target: { id: 'target:one', fields: {} },
+    activeTraitInstances: [{ instanceId: `root:${traitId}`, traitId }],
+    entropy: [],
+  });
+  const trimmed = previewResolutionOperation(
+    resolution.artifact,
+    'operation:inspect-collection-structure',
+    contextFor('trait:trim-roll'),
+    traits.artifact,
+  );
+  assert.equal(trimmed.activeTraitInstances.filter((instance) =>
+    instance.traitId === 'trait:d10').length, 2);
+  assert.equal(trimmed.structuralChanges[0].mountSelector.ordinal, 2);
+  const replaced = previewResolutionOperation(
+    resolution.artifact,
+    'operation:inspect-collection-structure',
+    contextFor('trait:replace-roll'),
+    traits.artifact,
+  );
+  assert.equal(replaced.activeTraitInstances.filter((instance) =>
+    instance.traitId === 'trait:d10').length, 2);
+  assert.equal(replaced.activeTraitInstances.filter((instance) =>
+    instance.traitId === 'trait:d4').length, 1);
+  const overlap = previewResolutionOperation(
+    resolution.artifact,
+    'operation:inspect-collection-structure',
+    contextFor('trait:overlap'),
+    traits.artifact,
+  );
+  assert.equal(overlap.structuralChanges.length, 1);
+  assert.equal(overlap.structuralChanges[0].path.join('.'), 'roll');
 });
 
 test('modifier compiler rejects ambiguous or implicit roll targeting', () => {
@@ -2029,22 +3376,205 @@ test('world deletion removes its recorded graph triples before its database reco
       triples: [{ subject: 'Hero', predicate: 'livesIn', object: 'Harbor' }],
     },
   };
-  const repository = {
-    findOne: async () => world,
-    remove: async (value) => { operations.push(['remove', value.id]); },
+  const prisma = {
+    world: {
+      findUnique: async () => world,
+      delete: async ({ where }) => { operations.push(['delete', where.id]); },
+    },
   };
   const graph = {
     del: async (triples) => { operations.push(['graph', triples]); },
   };
-  const service = new GenerateService(repository, graph, { isConfigured: false });
+  const service = new GenerateService(prisma, graph, { isConfigured: false });
 
   const result = await service.deleteWorld('world-id');
 
   assert.deepEqual(result, { deleted: true, id: 'world-id' });
   assert.deepEqual(operations, [
     ['graph', world.metadata.triples],
-    ['remove', 'world-id'],
+    ['delete', 'world-id'],
   ]);
+});
+
+test('composition creation writes the manifest and ordered members atomically without mutating input', async () => {
+  let createInput;
+  let transactions = 0;
+  const transaction = {
+    ruleSetComposition: {
+      findUnique: async () => null,
+      create: async (input) => {
+        createInput = input;
+        return { id: 'composition-id', compositionHash: input.data.compositionHash };
+      },
+    },
+  };
+  const prisma = {
+    $transaction: async (operation) => {
+      transactions++;
+      return operation(transaction);
+    },
+    ruleSetComposition: { findUnique: async () => null },
+  };
+  const service = new CompositionManifestService(prisma);
+  const members = [
+    {
+      ruleSetId: 2,
+      releaseId: 22,
+      releaseHash: 'release-b',
+      namespaceAlias: 'b',
+      sortOrder: 2,
+    },
+    {
+      ruleSetId: 1,
+      releaseId: 11,
+      releaseHash: 'release-a',
+      namespaceAlias: 'a',
+      sortOrder: 1,
+    },
+  ];
+
+  const result = await service.createComposition({
+    workspaceExternalId: 'workspace',
+    gameplayProfileName: 'default',
+    members,
+    createdBy: 'actor',
+  });
+
+  assert.equal(result.id, 'composition-id');
+  assert.equal(transactions, 1);
+  assert.deepEqual(members.map((member) => member.namespaceAlias), ['b', 'a']);
+  assert.deepEqual(
+    createInput.data.members.create.map((member) => member.namespaceAlias),
+    ['a', 'b'],
+  );
+});
+
+test('composition creation returns the concurrent winner after a unique race', async () => {
+  const uniqueConflict = new Prisma.PrismaClientKnownRequestError('unique', {
+    code: 'P2002',
+    clientVersion: '5.22.0',
+  });
+  const winner = { id: 'winner', compositionHash: 'hash' };
+  const prisma = {
+    $transaction: async () => { throw uniqueConflict; },
+    ruleSetComposition: { findUnique: async () => winner },
+  };
+  const service = new CompositionManifestService(prisma);
+
+  const result = await service.createComposition({
+    workspaceExternalId: 'workspace',
+    gameplayProfileName: 'default',
+    members: [{
+      ruleSetId: 1,
+      releaseId: 11,
+      releaseHash: 'release-a',
+      namespaceAlias: 'a',
+      sortOrder: 1,
+    }],
+    createdBy: 'actor',
+  });
+
+  assert.equal(result, winner);
+});
+
+test('snapshot capture locks, creates, and prunes within one transaction', async () => {
+  const operations = [];
+  const transaction = {
+    $queryRaw: async (_query, definitionId) => {
+      operations.push(['lock', definitionId]);
+      return [];
+    },
+    ruleDefinitionSnapshot: {
+      create: async ({ data }) => { operations.push(['create', data.definitionId]); },
+      findMany: async ({ skip }) => {
+        operations.push(['find', skip]);
+        return [{ id: 'old-1' }, { id: 'old-2' }];
+      },
+      deleteMany: async ({ where }) => { operations.push(['delete', where.id.in]); },
+    },
+  };
+  const prisma = {
+    $transaction: async (operation) => {
+      operations.push(['transaction', 'begin']);
+      const result = await operation(transaction);
+      operations.push(['transaction', 'commit']);
+      return result;
+    },
+  };
+  const service = new RuleDefinitionSnapshotService(prisma);
+
+  await service.capture({
+    ruleSetId: 7,
+    definitionId: 42,
+    definitionExternalId: 'definition',
+    name: 'Definition',
+    body: { version: 1 },
+    actorId: 'actor',
+    reason: 'autosave',
+  });
+
+  assert.deepEqual(operations, [
+    ['transaction', 'begin'],
+    ['lock', 42n],
+    ['create', 42],
+    ['find', 50],
+    ['delete', ['old-1', 'old-2']],
+    ['transaction', 'commit'],
+  ]);
+});
+
+test('Prisma errors map to stable public responses without database details', () => {
+  const cases = [
+    ['P2002', 409, 'DATABASE_UNIQUE_CONFLICT', false],
+    ['P2003', 409, 'DATABASE_RELATION_CONFLICT', false],
+    ['P2025', 404, 'DATABASE_RECORD_NOT_FOUND', false],
+    ['P2034', 409, 'DATABASE_TRANSACTION_CONFLICT', true],
+  ];
+  for (const [code, status, publicCode, retryable] of cases) {
+    const classified = classifyPrismaError(
+      new Prisma.PrismaClientKnownRequestError('sensitive database detail', {
+        code,
+        clientVersion: '5.22.0',
+      }),
+    );
+    assert.equal(classified.status, status);
+    assert.equal(classified.body.code, publicCode);
+    assert.equal(classified.body.retryable, retryable);
+    assert.equal(JSON.stringify(classified).includes('sensitive'), false);
+  }
+
+  const unavailable = classifyPrismaError(
+    new Prisma.PrismaClientInitializationError(
+      'postgresql://secret@database/internal detail',
+      '5.22.0',
+      'P1001',
+    ),
+  );
+  assert.deepEqual(unavailable, {
+    status: 503,
+    body: {
+      code: 'DATABASE_UNAVAILABLE',
+      message: 'The database is temporarily unavailable.',
+      retryable: true,
+    },
+  });
+});
+
+test('Prisma response serialization converts nested bigint values to decimal strings', () => {
+  const source = {
+    id: 'binding',
+    stateVersion: 9007199254740993n,
+    nested: [{ sequence: 9007199254740994n }],
+    createdAt: new Date('2026-07-25T17:00:00.000Z'),
+  };
+  source.self = source;
+
+  const serialized = serializePrismaValue(source);
+
+  assert.equal(serialized.stateVersion, '9007199254740993');
+  assert.equal(serialized.nested[0].sequence, '9007199254740994');
+  assert.equal(serialized.createdAt, source.createdAt);
+  assert.equal(serialized.self, serialized);
 });
 
 test('resolution subject contracts can require and enforce an any-prerequisite branch', () => {
