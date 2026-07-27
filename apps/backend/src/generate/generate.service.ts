@@ -22,7 +22,7 @@ export class GenerateService {
   private generateFallbackWorld(prompt: string) {
     const promptLower = prompt.toLowerCase();
     
-    let name = 'Aethelgard';
+    let name = 'Eldervale';
     let description = 'A classic high-fantasy realm of magic, ancient forests, and legendary kingdoms.';
     let places = ['Eldoria', 'Whispering Woods', 'Shadow Spire'];
     let characters = ['King Aethelred', 'Sylvia the Ranger', 'Malakar the Necromancer'];
@@ -81,8 +81,8 @@ export class GenerateService {
 
     if (this.llmService.isConfigured) {
       try {
-        this.logger.log(`Using ${this.llmService.provider} for RPG World generation...`);
-        const systemPrompt = `You are an RPG World Builder. Generate a fantasy or sci-fi world based on the user's prompt. 
+        this.logger.log(`Using ${this.llmService.provider} for Wanderlust VTT world generation...`);
+        const systemPrompt = `You are the world creation assistant for Wanderlust VTT. Generate a fantasy or sci-fi world based on the user's prompt.
 You must output a JSON response in the following schema:
 {
   "name": "World Name",
@@ -264,7 +264,7 @@ Ensure the JSON is valid. Only return the raw JSON object, no markdown styling. 
           contextPrompt += ` This new ${elementType} is located/nested directly within the parent location "${parentLocationName}" (which is described as: "${parentLocationDesc}"). Ensure its lore fits the parent context.`;
         }
 
-        const systemPrompt = `You are an RPG World Builder. Generate a new ${elementType} for the RPG campaign world.
+        const systemPrompt = `You are the lore creation assistant for Wanderlust VTT. Generate a new ${elementType} for the RPG campaign world.
 ${contextPrompt}
 
 You must output a JSON response in the following schema:

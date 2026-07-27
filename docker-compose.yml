@@ -1,6 +1,8 @@
 services:
   db:
     image: ankane/pgvector:latest
+    # Retain these pre-rebrand defaults so existing local PostgreSQL volumes
+    # remain connectable; they are compatibility identifiers, not product copy.
     environment:
       POSTGRES_USER: worldbuilder
       POSTGRES_PASSWORD: password123
@@ -16,7 +18,7 @@ services:
       retries: 5
 
   backend:
-    image: ${BACKEND_IMAGE:-world-building-backend:local}
+    image: ${BACKEND_IMAGE:-wanderlust-vtt-backend:local}
     build:
       context: .
       dockerfile: apps/backend/Dockerfile
@@ -40,7 +42,10 @@ services:
       - cms_private
 
   backend-migrate:
-    image: ${BACKEND_IMAGE:-world-building-backend:local}
+    image: ${BACKEND_IMAGE:-wanderlust-vtt-backend:local}
+    build:
+      context: .
+      dockerfile: apps/backend/Dockerfile
     command: ["pnpm", "run", "prisma:migrate:deploy"]
     environment:
       DATABASE_URL: ${BACKEND_DATABASE_URL:-postgresql://worldbuilder:password123@db:5432/worlddb}
@@ -50,6 +55,7 @@ services:
     restart: "no"
 
   frontend:
+    image: ${FRONTEND_IMAGE:-wanderlust-vtt-frontend:local}
     build:
       context: .
       dockerfile: apps/frontend/Dockerfile
@@ -133,6 +139,7 @@ services:
       - cms_private
 
   cms:
+    image: ${CMS_IMAGE:-wanderlust-vtt-cms:local}
     build:
       context: .
       dockerfile: apps/cms/Dockerfile

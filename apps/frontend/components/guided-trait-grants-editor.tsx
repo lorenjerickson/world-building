@@ -1,6 +1,7 @@
 'use client';
 
 import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import type { RuleDefinitionResource } from '../lib/rule-sets';
 import {
   searchTraitModifierPaths,
@@ -22,11 +23,11 @@ import {
   UNIT_DEFINITIONS,
   unitsAreCompatible,
   type CanonicalUnitId,
-} from '@world-building/common';
+} from '@wanderlust-vtt/common';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-export type GrantDataType = 'text' | 'number' | 'boolean' | 'enum' | 'trait' | 'trait-collection' | 'modifier' | 'suppression' | 'replacement' | 'slot' | 'slot-affinity';
+export type GrantDataType = 'text' | 'number' | 'boolean' | 'enum' | 'trait' | 'trait-collection' | 'modifier' | 'suppression' | 'replacement';
 export type ModifierOperation = 'increases' | 'decreases' | 'multiplies' | 'divides' | 'sets' | 'at-least' | 'at-most';
 export type ModifierMountSelectorMode = 'all' | 'ordinal' | 'trait' | 'tag';
 type MountSelectorDraft = {
@@ -76,14 +77,10 @@ export interface GrantDraft {
   structuralMountSelectorMode: ModifierMountSelectorMode;
   structuralMountOrdinal: string;
   structuralMountSelectors: MountSelectorDraft[];
-  // slot
-  slotCount: string;
-  slotGrantTypes: string[];
+  // trait collection
+  collectionCapacity: string;
   acceptedTraits: string[];
   acceptedTraitsMode: 'any' | 'all';
-  // slot-affinity
-  slotAffinityTypes: string[];
-  slotAffinityMode: 'any' | 'all';
 }
 
 export type PrerequisiteSpec = {
@@ -129,17 +126,11 @@ type GrantEntry = {
   mountSelector?: AuthoredMountSelector;
   mountSelectors?: AuthoredMountSelector[];
   target?: string;
-  // slot
   count?: number;
-  /** Type tags on the slot (e.g. ["armor", "hands"]). Replaces the old single slotType string. */
-  slotTypes?: string[];
-  /** Legacy trait/1 slot vocabulary. */
-  slotType?: string;
+  capacity?: number;
   acceptedTraits?: string[];
   /** Matching mode for acceptedTraits: 'any' (OR) or 'all' (AND). Omitted means 'any'. */
   acceptsMode?: 'any' | 'all';
-  // slot-affinity
-  mode?: 'any' | 'all';
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -166,7 +157,9 @@ export function newGrant(dataType: GrantDataType): GrantDraft {
     structuralTargetSegments: [], structuralPriority: '0',
     structuralMountSelectorMode: 'all', structuralMountOrdinal: '1',
     structuralMountSelectors: [],
-    slotCount: '1', slotGrantTypes: [], acceptedTraits: [], acceptedTraitsMode: 'any', slotAffinityTypes: [], slotAffinityMode: 'any',
+    collectionCapacity: '',
+    acceptedTraits: dataType === 'trait-collection' ? [''] : [],
+    acceptedTraitsMode: 'any',
   };
 }
 
@@ -191,6 +184,9 @@ function traitShapeGrantsFromDraft(grants: GrantDraft[]): TraitShapeGrant[] {
     ref: grant.ref,
     acceptedTraits: grant.acceptedTraits,
     acceptsMode: grant.acceptedTraitsMode,
+    ...(grant.dataType === 'trait-collection' && grant.collectionCapacity !== ''
+      ? { capacity: Number(grant.collectionCapacity) }
+      : {}),
     ...(grant.dataType === 'trait' && grant.traitPlacement === 'collection'
       ? {
         count: Number(grant.traitCount),
@@ -244,7 +240,7 @@ function writeRepeatedSelectors(
 
 export function buildGrantsBody(
   grants: GrantDraft[],
-  prerequisites: PrerequisiteSpec = { mode: 'any', ids: [] },
+  prerequisites: PrerequisiteSpec = { mode: 'all', ids: [] },
   traitDefinitions: RuleDefinitionResource[] = [],
   metamodelVersion: 'trait/1' | 'trait/2' = 'trait/2',
 ): TraitGrantsBody {
@@ -297,6 +293,7 @@ export function buildGrantsBody(
           entry.at = `this.${g.key.trim()}`;
         }
       } else if (g.dataType === 'trait-collection') {
+        if (g.collectionCapacity !== '') entry.capacity = Number(g.collectionCapacity);
         if (g.acceptedTraits.length > 0) {
           entry.acceptedTraits = g.acceptedTraits.filter(Boolean);
           if (g.acceptedTraitsMode === 'all') entry.acceptsMode = 'all';
@@ -362,18 +359,6 @@ export function buildGrantsBody(
         );
         entry.priority = Number(g.structuralPriority);
         if (g.dataType === 'replacement' && g.ref) entry.ref = g.ref;
-      } else if (g.dataType === 'slot') {
-        const tags = g.slotGrantTypes.filter(Boolean);
-        if (tags.length > 0) entry.slotTypes = tags;
-        if (g.slotCount !== '') entry.count = Number(g.slotCount);
-        if (g.acceptedTraits.length > 0) {
-          entry.acceptedTraits = g.acceptedTraits.filter(Boolean);
-          if (g.acceptedTraitsMode === 'all') entry.acceptsMode = 'all';
-        }
-      } else if (g.dataType === 'slot-affinity') {
-        const types = g.slotAffinityTypes.filter(Boolean);
-        if (types.length > 0) entry.slotTypes = types;
-        if (g.slotAffinityMode === 'all') entry.mode = 'all';
       }
       return entry;
     }),
@@ -382,13 +367,13 @@ export function buildGrantsBody(
 }
 
 export function prerequisitesDraftFromBody(body: Record<string, unknown>): PrerequisiteSpec {
-  const empty: PrerequisiteSpec = { mode: 'any', ids: [] };
+  const empty: PrerequisiteSpec = { mode: 'all', ids: [] };
   if (!['trait/1', 'trait/2'].includes(String(body.metamodelVersion))) return empty;
   const p = body.prerequisites;
   // New format: { mode, ids }
   if (p !== null && typeof p === 'object' && !Array.isArray(p)) {
     const obj = p as Record<string, unknown>;
-    const mode: 'any' | 'all' = obj.mode === 'all' ? 'all' : 'any';
+    const mode: 'any' | 'all' = obj.mode === 'any' ? 'any' : 'all';
     const ids = Array.isArray(obj.ids)
       ? (obj.ids as unknown[]).filter((v): v is string => typeof v === 'string')
       : [];
@@ -402,10 +387,18 @@ export function prerequisitesDraftFromBody(body: Record<string, unknown>): Prere
   return empty;
 }
 
+function isSupportedGrantEntry(value: unknown): value is GrantEntry {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const dataType = (value as Record<string, unknown>).dataType;
+  return typeof dataType === 'string'
+    && DATA_TYPE_OPTIONS.some((option) => option.value === dataType);
+}
+
 export function grantsDraftFromBody(body: Record<string, unknown>): GrantDraft[] | null {
   if (!['trait/1', 'trait/2'].includes(String(body.metamodelVersion))) return null;
   if (!Array.isArray(body.grants)) return null;
-  return (body.grants as GrantEntry[]).map((g): GrantDraft => ({
+  if (!body.grants.every(isSupportedGrantEntry)) return null;
+  return body.grants.map((g): GrantDraft => ({
     _id: crypto.randomUUID(),
     label: g.label ?? '',
     dataType: g.dataType ?? 'text',
@@ -458,15 +451,9 @@ export function grantsDraftFromBody(body: Record<string, unknown>): GrantDraft[]
     structuralMountOrdinal: g.mountSelector?.mode === 'ordinal' ? String(g.mountSelector.ordinal) : '1',
     structuralMountSelectors: (g.mountSelectors ?? (g.mountSelector ? [g.mountSelector] : []))
       .map(mountSelectorDraft),
-    slotCount: g.count != null ? String(g.count) : '1',
-    // slotTypes is now an array for slot grants; accept legacy single-string slotType too
-    slotGrantTypes: g.dataType === 'slot'
-      ? (Array.isArray(g.slotTypes) ? g.slotTypes : (g.slotType ? [g.slotType] : []))
-      : [],
+    collectionCapacity: g.capacity != null ? String(g.capacity) : '',
     acceptedTraits: Array.isArray(g.acceptedTraits) ? g.acceptedTraits : [],
     acceptedTraitsMode: g.acceptsMode === 'all' ? 'all' : 'any',
-    slotAffinityTypes: g.dataType === 'slot-affinity' && Array.isArray(g.slotTypes) ? g.slotTypes : [],
-    slotAffinityMode: g.mode === 'all' ? 'all' : 'any',
   }));
 }
 
@@ -483,9 +470,63 @@ function getTabFields(dataType: GrantDataType): string[] {
     case 'modifier':      return ['dataType', 'modifierOperation', 'modifierPath', 'modifierMountSelector', 'modifierMountOrdinal', 'modifierAmount', 'modifierAmountUnit', 'modifierPriority', 'modifierConditionOperator', 'modifierConditionValue', 'modifierConditionUnit'];
     case 'suppression':   return ['dataType', 'structuralTarget', 'structuralMountSelector', 'structuralMountOrdinal', 'structuralPriority'];
     case 'replacement':   return ['dataType', 'structuralTarget', 'structuralMountSelector', 'structuralMountOrdinal', 'ref', 'structuralPriority'];
-    case 'slot':          return ['dataType'];
-    case 'slot-affinity': return ['dataType'];
   }
+}
+
+function getGrantTabFields(grant: GrantDraft): string[] {
+  if (grant.dataType === 'modifier') {
+    const repeated = grant.modifierFieldSegments.some((segment) => segment.endsWith('[]'));
+    return [
+      'dataType',
+      'modifierOperation',
+      'modifierPath',
+      ...(repeated ? ['modifierMountSelector'] : []),
+      ...(repeated && grant.modifierMountSelectorMode === 'ordinal' ? ['modifierMountOrdinal'] : []),
+      'modifierAmount',
+      'modifierAmountUnit',
+      'modifierPriority',
+      ...(grant.modifierConditionEnabled
+        ? ['modifierConditionOperator', 'modifierConditionValue', 'modifierConditionUnit']
+        : []),
+    ];
+  }
+  if (grant.dataType === 'suppression' || grant.dataType === 'replacement') {
+    const repeated = grant.structuralTargetSegments.some((segment) => segment.endsWith('[]'));
+    return grant.dataType === 'replacement'
+      ? [
+        'dataType',
+        'structuralTarget',
+        ...(repeated ? ['structuralMountSelector'] : []),
+        ...(repeated && grant.structuralMountSelectorMode === 'ordinal' ? ['structuralMountOrdinal'] : []),
+        'ref',
+        'structuralPriority',
+      ]
+      : [
+        'dataType',
+        'structuralTarget',
+        ...(repeated ? ['structuralMountSelector'] : []),
+        ...(repeated && grant.structuralMountSelectorMode === 'ordinal' ? ['structuralMountOrdinal'] : []),
+        'structuralPriority',
+      ];
+  }
+  if (grant.dataType === 'trait') {
+    return grant.traitPlacement === 'collection'
+      ? ['dataType', 'traitCount', 'ref', 'traitCollection']
+      : grant.traitPlacement === 'nested'
+        ? ['dataType', 'traitParentPath', 'ref', 'key']
+        : ['dataType', 'ref', 'key'];
+  }
+  if (grant.dataType === 'trait-collection') {
+    return [
+      'dataType',
+      'key',
+      'collectionCapacity',
+      'acceptedTraitsMode',
+      ...grant.acceptedTraits.map((_, index) => `acceptedTrait_${index}`),
+      'addAcceptedTrait',
+    ];
+  }
+  return getTabFields(grant.dataType);
 }
 
 // ── Field path options ────────────────────────────────────────────────────────
@@ -614,8 +655,6 @@ const DATA_TYPE_OPTIONS: ComboOption[] = [
   { value: 'modifier', label: 'modifier',    hint: 'arithmetic change' },
   { value: 'suppression', label: 'suppression', hint: 'temporarily removes a trait branch' },
   { value: 'replacement', label: 'replacement', hint: 'swaps a trait branch' },
-  { value: 'slot',         label: 'slot',            hint: 'equipment slot' },
-  { value: 'slot-affinity', label: 'slot-affinity',  hint: 'slot compatibility' },
 ];
 
 const BOOL_OPTIONS: ComboOption[] = [
@@ -766,6 +805,37 @@ function ComboToken({
     listItems = options.map((o) => ({ kind: 'leaf' as const, ...o }));
   }
 
+  function commitBestGuess(): boolean {
+    if (highlightIdx >= 0 && highlightIdx < listItems.length) {
+      const highlighted = listItems[highlightIdx];
+      if (highlighted.kind === 'leaf') {
+        handleSelect(highlighted.value);
+        return true;
+      }
+      setBrowsePath(highlighted.fullPath.split('.'));
+      setHighlightIdx(-1);
+      return true;
+    }
+
+    const exactMatch = trimmedSearch
+      ? listItems.find((item): item is LeafItem =>
+        item.kind === 'leaf'
+        && (item.label.toLowerCase() === trimmedSearch.toLowerCase()
+          || item.value.toLowerCase() === trimmedSearch.toLowerCase()))
+      : undefined;
+    const firstMatch = listItems.find((item): item is LeafItem => item.kind === 'leaf');
+    const match = exactMatch ?? firstMatch;
+    if (match) {
+      handleSelect(match.value);
+      return true;
+    }
+    if (searchIsNew) {
+      handleSelect(trimmedSearch);
+      return true;
+    }
+    return false;
+  }
+
   return (
     <div className="combo-token-wrap" ref={wrapRef}>
       <button
@@ -818,30 +888,15 @@ function ComboToken({
                 if (e.key === 'ArrowUp') { e.preventDefault(); setHighlightIdx((i) => Math.max(i - 1, -1)); }
                 if (e.key === 'Enter') {
                   e.preventDefault();
-                  if (highlightIdx >= 0 && highlightIdx < listItems.length) {
-                    const item = listItems[highlightIdx];
-                    if (item.kind === 'leaf') handleSelect(item.value);
-                    else { setBrowsePath(item.fullPath.split('.')); setHighlightIdx(-1); }
-                  } else if (highlightIdx < 0 && listItems.length === 1 && listItems[0].kind === 'leaf') {
-                    handleSelect(listItems[0].value);
-                  } else if (searchIsNew) {
-                    handleSelect(trimmedSearch);
-                  }
+                  commitBestGuess();
                 }
                 if (e.key === 'Tab') {
                   e.preventDefault();
-                  if (!e.shiftKey && search.trim()) {
-                    // Try to match before advancing: highlighted item, single match, or exact match
-                    if (highlightIdx >= 0 && highlightIdx < listItems.length) {
-                      const item = listItems[highlightIdx];
-                      if (item.kind === 'leaf') { handleSelect(item.value); return; }
-                    } else if (listItems.length === 1 && listItems[0].kind === 'leaf') {
-                      handleSelect(listItems[0].value); return;
-                    }
-                  }
                   if (e.shiftKey) {
                     if (onTabPrev) onTabPrev();
                     else onDone();
+                  } else if (search.trim() && commitBestGuess()) {
+                    return;
                   } else if (onTabNext) {
                     onTabNext();
                   } else {
@@ -946,7 +1001,11 @@ function Token({
           onDone();
         }}
         onKeyDown={(e) => {
-          if (e.key === 'Enter') { e.preventDefault(); onDone(); }
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            onDone();
+            onTabNext?.();
+          }
           if (e.key === 'Escape') { onDone(); }
           if (e.key === 'Tab') {
             e.preventDefault();
@@ -975,36 +1034,58 @@ function Token({
   );
 }
 
-// ── Slot type vocabulary ──────────────────────────────────────────────────────
+function KeyboardModeToggle({
+  ariaLabel,
+  autoFocus = false,
+  labels,
+  onChange,
+  onNext,
+  onPrevious,
+  targetId,
+  value,
+}: {
+  ariaLabel: string;
+  autoFocus?: boolean;
+  labels: { all: string; any: string };
+  onChange: (value: 'all' | 'any') => void;
+  onNext?: () => void;
+  onPrevious?: () => void;
+  targetId?: string;
+  value: 'all' | 'any';
+}) {
+  return (
+    <button
+      aria-label={ariaLabel}
+      autoFocus={autoFocus}
+      className={`guided-mode-toggle${value === 'all' ? ' is-all' : ''}`}
+      id={targetId}
+      onClick={() => onChange(value === 'any' ? 'all' : 'any')}
+      onKeyDown={(event) => {
+        if (event.key === ' ') {
+          event.preventDefault();
+          onChange(value === 'any' ? 'all' : 'any');
+        } else if (event.key === 'Enter') {
+          event.preventDefault();
+          onNext?.();
+        } else if (event.key === 'Tab') {
+          const handler = event.shiftKey ? onPrevious : onNext;
+          if (handler) {
+            event.preventDefault();
+            handler();
+          }
+        }
+      }}
+      type="button"
+    >
+      {labels[value]}
+    </button>
+  );
+}
 
-/**
- * Collect all slotType strings currently defined in the rule set.
- * Scans the body of every trait definition in the rule set (to pick up slot types
- * authored in other traits) plus the live `currentGrants` being edited right now
- * (so newly typed values show up immediately as options in the same editor session).
- */
-function extractSlotTypes(
-  traitDefinitions: RuleDefinitionResource[],
-  currentGrants: GrantDraft[],
-): ComboOption[] {
-  const seen = new Set<string>();
-  // From persisted trait bodies
-  for (const def of traitDefinitions) {
-    if (!['trait/1', 'trait/2'].includes(String(def.body?.metamodelVersion)) || !Array.isArray(def.body.grants)) continue;
-    for (const g of def.body.grants as GrantEntry[]) {
-      if (g.dataType === 'slot') {
-        // New format: slotTypes array
-        if (Array.isArray(g.slotTypes)) { for (const t of g.slotTypes) { if (t?.trim()) seen.add(t.trim()); } }
-        // Legacy format: single slotType string
-        else if (g.slotType?.trim()) { seen.add(g.slotType.trim()); }
-      }
-    }
-  }
-  // From the grant rows being authored right now
-  for (const g of currentGrants) {
-    if (g.dataType === 'slot') { for (const t of g.slotGrantTypes) { if (t.trim()) seen.add(t.trim()); } }
-  }
-  return Array.from(seen).sort().map((t) => ({ value: t, label: t }));
+function activateButtonOnSpace(event: ReactKeyboardEvent<HTMLButtonElement>) {
+  if (event.key !== ' ' && event.key !== 'Spacebar') return;
+  event.preventDefault();
+  event.currentTarget.click();
 }
 
 // ── Terminal property resolution ──────────────────────────────────────────────
@@ -1044,7 +1125,8 @@ function resolveTerminalGrant(
 const ACTOR_RELATIVE_ROOTS = new Set(['self', 'this']);
 
 function ModifierPathEditor({
-  segments, shape, traitDefinitions, operation, isTerminalResolved, fieldKey, editingField, onEdit, onDone, onTabNext, onTabPrev, onChange,
+  segments, shape, traitDefinitions, operation, isTerminalResolved, hasAlternativePrerequisites,
+  fieldKey, editingField, onEdit, onDone, onTabNext, onTabPrev, onChange,
 }: {
   segments: string[];
   shape: TraitShape;
@@ -1053,6 +1135,8 @@ function ModifierPathEditor({
   operation: ModifierOperation;
   /** When true, the path has resolved to a known terminal property — adding further segments is blocked */
   isTerminalResolved?: boolean;
+  /** Any-of prerequisites expose only paths shared by every alternative. */
+  hasAlternativePrerequisites?: boolean;
   fieldKey: string;
   editingField: string | null;
   onEdit: (f: string) => void;
@@ -1154,12 +1238,31 @@ function ModifierPathEditor({
     : [];
   const emptyMessage = shape.diagnostics.length > 0
     ? 'Resolve the trait-structure diagnostics before choosing a path.'
+    : hasAlternativePrerequisites
+      ? '“Any of” prerequisites expose only fields shared by every alternative. Use “all of” when every listed trait is required.'
     : trimmedSearch
       ? 'No complete modifier path matches this search.'
       : activeIdx > 0
         ? 'This branch has no compatible terminal fields.'
         : 'No trait structure is available.';
   const listedOptionCount = trimmedSearch ? fullPathResults.length : options.length;
+
+  function commitBestPathGuess(): boolean {
+    if (trimmedSearch) {
+      const result = highlightIdx >= 0 && highlightIdx < fullPathResults.length
+        ? fullPathResults[highlightIdx]
+        : fullPathResults[0];
+      if (!result) return false;
+      pickCompletePath(result);
+      return true;
+    }
+    const option = highlightIdx >= 0 && highlightIdx < options.length
+      ? options[highlightIdx]
+      : options[0];
+    if (!option) return false;
+    pickValue(option.value);
+    return true;
+  }
 
   // Always render the wrapper so the dropdown anchors under the token
   return (
@@ -1243,17 +1346,7 @@ function ModifierPathEditor({
                 if (e.key === 'ArrowUp') { e.preventDefault(); setHighlightIdx((i) => Math.max(i - 1, -1)); }
                 if (e.key === 'Enter') {
                   e.preventDefault();
-                  if (trimmedSearch) {
-                    if (highlightIdx >= 0 && highlightIdx < fullPathResults.length) {
-                      pickCompletePath(fullPathResults[highlightIdx]);
-                    } else if (highlightIdx < 0 && fullPathResults.length === 1) {
-                      pickCompletePath(fullPathResults[0]);
-                    }
-                  } else if (highlightIdx >= 0 && highlightIdx < options.length) {
-                    pickValue(options[highlightIdx].value);
-                  } else if (highlightIdx < 0 && options.length === 1) {
-                    pickValue(options[0].value);
-                  }
+                  commitBestPathGuess();
                 }
                 if (e.key === 'Tab') {
                   e.preventDefault();
@@ -1261,6 +1354,7 @@ function ModifierPathEditor({
                     if (onTabPrev) onTabPrev();
                     else onDone();
                   }
+                  else if (search.trim() && commitBestPathGuess()) { return; }
                   else if (isTerminalResolved && onTabNext) { onTabNext(); }
                   else { onDone(); }
                 }
@@ -1321,93 +1415,74 @@ function ModifierPathEditor({
 // ── Grant row ─────────────────────────────────────────────────────────────────
 
 function GrantRow({
-  collectionOptions, grant, nestedParentOptions, traitDefinitions, traitShape, slotTypeOptions, autoFocus, onChange, onRemove,
+  collectionOptions, grant, nestedParentOptions, prerequisiteMode, prerequisiteCount,
+  traitDefinitions, traitShape, autoFocus, onChange, onRemove,
 }: {
   collectionOptions: ComboOption[];
   grant: GrantDraft;
   nestedParentOptions: ComboOption[];
+  prerequisiteMode: PrerequisiteSpec['mode'];
+  prerequisiteCount: number;
   traitDefinitions: RuleDefinitionResource[];
   traitShape: TraitShape;
-  slotTypeOptions: ComboOption[];
   /** When true, opens the first field for editing immediately on mount */
   autoFocus?: boolean;
   onChange: (patch: Partial<GrantDraft>) => void;
   onRemove: () => void;
 }) {
+  const initialField = autoFocus
+    ? getGrantTabFields(grant).find((field) => field !== 'dataType') ?? null
+    : null;
   const [editingField, setEditingField] = useState<string | null>(() => {
-    if (!autoFocus) return null;
-    const fields = getTabFields(grant.dataType);
-    return fields[0] === 'dataType' ? fields[1] ?? null : fields[0] ?? null;
+    return initialField;
   });
 
   function edit(f: string) { setEditingField(f); }
   function done() { setEditingField(null); }
+  function focusTargetId(fieldKey: string) {
+    return `grant-${grant._id}-${fieldKey}`;
+  }
+  function focusField(fieldKey: string | null) {
+    if (!fieldKey) {
+      setEditingField(null);
+      return;
+    }
+    if (fieldKey.startsWith('add') || fieldKey.endsWith('Mode')) {
+      setEditingField(null);
+      queueMicrotask(() => document.getElementById(focusTargetId(fieldKey))?.focus());
+    } else {
+      setEditingField(fieldKey);
+    }
+  }
 
   function tabFrom(fieldKey: string, direction: 'next' | 'prev' = 'next') {
-    // Slot and slot-affinity have dynamic field lists; compute them inline.
-    let fields: string[];
-    if (grant.dataType === 'modifier') {
-      const repeated = grant.modifierFieldSegments.some((segment) => segment.endsWith('[]'));
-      fields = [
-        'dataType',
-        'modifierOperation',
-        'modifierPath',
-        ...(repeated ? ['modifierMountSelector'] : []),
-        ...(repeated && grant.modifierMountSelectorMode === 'ordinal' ? ['modifierMountOrdinal'] : []),
-        'modifierAmount',
-        'modifierAmountUnit',
-        'modifierPriority',
-        ...(grant.modifierConditionEnabled
-          ? ['modifierConditionOperator', 'modifierConditionValue', 'modifierConditionUnit']
-          : []),
-      ];
-    } else if (grant.dataType === 'suppression' || grant.dataType === 'replacement') {
-      const repeated = grant.structuralTargetSegments.some((segment) => segment.endsWith('[]'));
-      fields = grant.dataType === 'replacement'
-        ? [
-          'dataType',
-          'structuralTarget',
-          ...(repeated ? ['structuralMountSelector'] : []),
-          ...(repeated && grant.structuralMountSelectorMode === 'ordinal' ? ['structuralMountOrdinal'] : []),
-          'ref',
-          'structuralPriority',
-        ]
-        : [
-          'dataType',
-          'structuralTarget',
-          ...(repeated ? ['structuralMountSelector'] : []),
-          ...(repeated && grant.structuralMountSelectorMode === 'ordinal' ? ['structuralMountOrdinal'] : []),
-          'structuralPriority',
-        ];
-    } else if (grant.dataType === 'trait') {
-      fields = grant.traitPlacement === 'collection'
-        ? ['dataType', 'traitCount', 'ref', 'traitCollection']
-        : grant.traitPlacement === 'nested'
-          ? ['dataType', 'traitParentPath', 'ref', 'key']
-        : ['dataType', 'ref', 'key'];
-    } else if (grant.dataType === 'trait-collection') {
-      fields = [
-        'dataType', 'key',
-        ...grant.acceptedTraits.map((_, i) => `acceptedTrait_${i}`),
-      ];
-    } else if (grant.dataType === 'slot') {
-      fields = [
-        'dataType',
-        ...grant.slotGrantTypes.map((_, i) => `slotGrantType_${i}`),
-        'slotCount', 'label',
-        ...grant.acceptedTraits.map((_, i) => `acceptedTrait_${i}`),
-      ];
-    } else if (grant.dataType === 'slot-affinity') {
-      fields = ['dataType', ...grant.slotAffinityTypes.map((_, i) => `slotAffinityType_${i}`)];
-    } else {
-      fields = getTabFields(grant.dataType);
-    }
+    const fields = getGrantTabFields(grant);
     const idx = fields.indexOf(fieldKey);
-    if (direction === 'next') {
-      setEditingField(idx >= 0 && idx < fields.length - 1 ? fields[idx + 1] : null);
-    } else {
-      setEditingField(idx > 0 ? fields[idx - 1] : null);
+    focusField(direction === 'next'
+      ? idx >= 0 && idx < fields.length - 1 ? fields[idx + 1] : null
+      : idx > 0 ? fields[idx - 1] : null);
+  }
+
+  function handleAddButtonKeyDown(
+    event: ReactKeyboardEvent<HTMLButtonElement>,
+    fieldKey: string,
+  ) {
+    if (event.key === ' ' || event.key === 'Spacebar') {
+      activateButtonOnSpace(event);
+      return;
     }
+    if (event.key !== 'Tab') return;
+
+    const fields = getGrantTabFields(grant);
+    const index = fields.indexOf(fieldKey);
+    const destination = event.shiftKey
+      ? index > 0 ? fields[index - 1] : null
+      : index >= 0 && index < fields.length - 1 ? fields[index + 1] : null;
+
+    // Terminal add buttons should retain the browser's normal tab behavior.
+    if (!destination) return;
+    event.preventDefault();
+    focusField(destination);
   }
 
   // Convenience: shared props for ComboToken / Token in this row
@@ -1649,6 +1724,7 @@ function GrantRow({
           traitDefinitions={traitDefinitions}
           operation={grant.modifierOperation}
           isTerminalResolved={terminalType !== null}
+          hasAlternativePrerequisites={prerequisiteMode === 'any' && prerequisiteCount > 1}
           editingField={editingField}
           onEdit={edit}
           onDone={done}
@@ -1756,126 +1832,7 @@ function GrantRow({
     );
   }
 
-  // ── Slot-affinity sentence: "[slot-affinity] → fits in: [head ×] [+]" ─────────
-  if (grant.dataType === 'slot-affinity') {
-    return (
-      <div className="guided-grant-sentence">
-        <ComboToken {...ct('dataType')} value={grant.dataType} placeholder="type"
-          options={DATA_TYPE_OPTIONS} onSelect={(v) => onChange({ dataType: v as GrantDataType })} />
-        → fits in
-        <button
-          type="button"
-          className={`slot-affinity-mode-toggle${grant.slotAffinityMode === 'all' ? ' is-all' : ''}`}
-          title={grant.slotAffinityMode === 'any'
-            ? 'Currently: matches any listed slot type (OR). Click to switch to ALL (AND).'
-            : 'Currently: requires all listed slot types (AND). Click to switch to ANY (OR).'}
-          onClick={() => onChange({ slotAffinityMode: grant.slotAffinityMode === 'any' ? 'all' : 'any' })}
-        >{grant.slotAffinityMode === 'any' ? 'any' : 'all'} of:</button>
-        {grant.slotAffinityTypes.map((slotType, i) => (
-          <span key={i} className="guided-grant-trait-ref">
-            <ComboToken
-              {...ct(`slotAffinityType_${i}`)}
-              value={slotType}
-              placeholder="— slot type —"
-              options={slotTypeOptions}
-              allowCreate
-              onSelect={(v) => {
-                const updated = [...grant.slotAffinityTypes];
-                updated[i] = v;
-                onChange({ slotAffinityTypes: updated });
-              }}
-            />
-            <button
-              type="button"
-              className="guided-grant-trait-ref-remove"
-              aria-label="Remove slot type"
-              onClick={() => onChange({ slotAffinityTypes: grant.slotAffinityTypes.filter((_, j) => j !== i) })}
-            >×</button>
-          </span>
-        ))}
-        <button
-          type="button"
-          className="secondary-action compact-action"
-          onClick={() => onChange({ slotAffinityTypes: [...grant.slotAffinityTypes, ''] })}
-        >+ slot type</button>
-        <button type="button" className="guided-grant-remove" aria-label="Remove" onClick={onRemove}>×</button>
-      </div>
-    );
-  }
-
-  // ── Slot sentence: "[slot] [type] → [count] [label] slot(s) accepting: [trait] [+]" ─
-  if (grant.dataType === 'slot') {
-    return (
-      <div className="guided-grant-sentence">
-        <ComboToken {...ct('dataType')} value={grant.dataType} placeholder="type"
-          options={DATA_TYPE_OPTIONS} onSelect={(v) => onChange({ dataType: v as GrantDataType })} />
-        {grant.slotGrantTypes.map((tag, i) => (
-          <span key={i} className="guided-grant-trait-ref">
-            <ComboToken
-              {...ct(`slotGrantType_${i}`)}
-              value={tag}
-              placeholder="— type —"
-              options={slotTypeOptions}
-              allowCreate
-              onSelect={(v) => {
-                const updated = [...grant.slotGrantTypes];
-                updated[i] = v;
-                onChange({ slotGrantTypes: updated });
-              }}
-            />
-            <button type="button" className="guided-grant-trait-ref-remove" aria-label="Remove type tag"
-              onClick={() => onChange({ slotGrantTypes: grant.slotGrantTypes.filter((_, j) => j !== i) })}>×</button>
-          </span>
-        ))}
-        <button type="button" className="secondary-action compact-action"
-          onClick={() => onChange({ slotGrantTypes: [...grant.slotGrantTypes, ''] })}>+ type</button>
-        →
-        <Token {...tok('slotCount')} value={grant.slotCount} placeholder="1"
-          inputType="number" onChange={(v) => onChange({ slotCount: v })} />
-        <Token {...tok('label')} value={grant.label} placeholder="slot label"
-          size="md" onChange={(v) => onChange({ label: v })} />
-        {' '}slot(s) accepting
-        <button
-          type="button"
-          className={`slot-affinity-mode-toggle${grant.acceptedTraitsMode === 'all' ? ' is-all' : ''}`}
-          title={grant.acceptedTraitsMode === 'any'
-            ? 'Currently: accepts items with any of the listed traits (OR). Click to switch to ONLY (AND).'
-            : 'Currently: requires items to have all listed traits (AND). Click to switch to ANY OF (OR).'}
-          onClick={() => onChange({ acceptedTraitsMode: grant.acceptedTraitsMode === 'any' ? 'all' : 'any' })}
-        >{grant.acceptedTraitsMode === 'any' ? 'any of:' : 'all of:'}</button>
-        {grant.acceptedTraits.map((ref, i) => (
-          <span key={i} className="guided-grant-trait-ref">
-            <ComboToken
-              {...ct(`acceptedTrait_${i}`)}
-              value={ref}
-              placeholder="— select trait —"
-              options={traitOptions}
-              hierarchical={hasHierarchy}
-              onSelect={(v) => {
-                const updated = [...grant.acceptedTraits];
-                updated[i] = v;
-                onChange({ acceptedTraits: updated });
-              }}
-            />
-            <button
-              type="button"
-              className="guided-grant-trait-ref-remove"
-              aria-label="Remove trait requirement"
-              onClick={() => onChange({ acceptedTraits: grant.acceptedTraits.filter((_, j) => j !== i) })}
-            >×</button>
-          </span>
-        ))}
-        <button
-          type="button"
-          className="secondary-action compact-action"
-          onClick={() => onChange({ acceptedTraits: [...grant.acceptedTraits, ''] })}
-        >+ trait</button>
-        <button type="button" className="guided-grant-remove" aria-label="Remove" onClick={onRemove}>×</button>
-      </div>
-    );
-  }
-
-  // ── Trait collection: "[collection] [key] accepts [base trait]" ───────────
+  // ── Trait collection: "[collection] [key] capacity [n] accepts [base trait]" ─
   if (grant.dataType === 'trait-collection') {
     return (
       <div className="guided-grant-sentence">
@@ -1883,15 +1840,20 @@ function GrantRow({
           options={DATA_TYPE_OPTIONS} onSelect={(v) => onChange({ dataType: v as GrantDataType })} />
         <Token {...tok('key')} value={grant.key} placeholder="collection name"
           size="md" onChange={(v) => onChange({ key: v })} />
+        {' '}with capacity
+        <Token {...tok('collectionCapacity')} value={grant.collectionCapacity}
+          placeholder="unbounded" inputType="number"
+          onChange={(v) => onChange({ collectionCapacity: v })} />
         {' '}accepts traits compatible with
-        <button
-          type="button"
-          className={`slot-affinity-mode-toggle${grant.acceptedTraitsMode === 'all' ? ' is-all' : ''}`}
-          title={grant.acceptedTraitsMode === 'any'
-            ? 'A trait may satisfy any listed base trait. Click to require all.'
-            : 'A trait must satisfy all listed base traits. Click to accept any.'}
-          onClick={() => onChange({ acceptedTraitsMode: grant.acceptedTraitsMode === 'any' ? 'all' : 'any' })}
-        >{grant.acceptedTraitsMode === 'any' ? 'any of:' : 'all of:'}</button>
+        <KeyboardModeToggle
+          ariaLabel="Accepted base trait matching mode"
+          labels={{ any: 'any of:', all: 'all of:' }}
+          onChange={(value) => onChange({ acceptedTraitsMode: value })}
+          onNext={() => tabFrom('acceptedTraitsMode', 'next')}
+          onPrevious={() => tabFrom('acceptedTraitsMode', 'prev')}
+          targetId={focusTargetId('acceptedTraitsMode')}
+          value={grant.acceptedTraitsMode}
+        />
         {grant.acceptedTraits.map((ref, i) => (
           <span key={i} className="guided-grant-trait-ref">
             <ComboToken
@@ -1917,7 +1879,13 @@ function GrantRow({
         <button
           type="button"
           className="secondary-action compact-action"
-          onClick={() => onChange({ acceptedTraits: [...grant.acceptedTraits, ''] })}
+          id={focusTargetId('addAcceptedTrait')}
+          onKeyDown={(event) => handleAddButtonKeyDown(event, 'addAcceptedTrait')}
+          onClick={() => {
+            const index = grant.acceptedTraits.length;
+            onChange({ acceptedTraits: [...grant.acceptedTraits, ''] });
+            edit(`acceptedTrait_${index}`);
+          }}
         >+ base trait</button>
         <button type="button" className="guided-grant-remove" aria-label="Remove" onClick={onRemove}>×</button>
       </div>
@@ -2101,6 +2069,9 @@ function TraitShapeTree({
     >
       {children.map((node) => {
         const segment = node.path.at(-1)!;
+        const collectionEntryCount = node.kind === 'collection'
+          ? node.entries.reduce((total, entry) => total + entry.count, 0)
+          : 0;
         const sourceIds = node.sourceTraitIds
           ?? (node.sourceTraitId ? [node.sourceTraitId] : []);
         const sourceName = sourceIds.length
@@ -2121,7 +2092,11 @@ function TraitShapeTree({
               <span className="trait-shape-node-name">{node.label}</span>
               <code>.{segment}</code>
               <span className="trait-shape-node-type">
-                {node.kind === 'branch' ? 'trait' : node.kind === 'collection' ? 'collection' : node.dataType}
+                {node.kind === 'branch'
+                  ? 'trait'
+                  : node.kind === 'collection'
+                    ? `collection · ${collectionEntryCount}/${node.capacity ?? 'unbounded'}`
+                    : node.dataType}
               </span>
               <span className="trait-shape-node-source">
                 {node.kind === 'branch' ? 'added by ' : node.kind === 'collection' ? 'declared by ' : 'defined by '}
@@ -2298,7 +2273,7 @@ function TraitShapeChangeRow({ change }: { change: TraitShapeChange }) {
 
 // ── Editor ────────────────────────────────────────────────────────────────────
 
-const DEFAULT_PREREQS: PrerequisiteSpec = { mode: 'any', ids: [] };
+const DEFAULT_PREREQS: PrerequisiteSpec = { mode: 'all', ids: [] };
 
 function applyDraftStructuralDirectives(
   shape: TraitShape,
@@ -2409,10 +2384,11 @@ export function GuidedTraitGrantsEditor({
   onPrerequisitesChange?: (prerequisites: PrerequisiteSpec) => void;
 }) {
   const [prereqEditingIndex, setPrereqEditingIndex] = useState<number | null>(null);
-  const [prereqModeEditing, setPrereqModeEditing] = useState(false);
   const [lastAddedId, setLastAddedId] = useState<string | null>(null);
+  const prerequisiteFocusId = useId();
+  const prerequisiteModeId = `${prerequisiteFocusId}-mode`;
+  const prerequisiteAddId = `${prerequisiteFocusId}-add`;
   const diagnosticsTitleId = useId();
-  const slotTypeOptions = useMemo(() => extractSlotTypes(traitDefinitions, grants), [traitDefinitions, grants]);
   const traitShape = useMemo(() => buildTraitShape({
     definitions: traitDefinitions,
     prerequisiteIds: prerequisites.ids,
@@ -2433,7 +2409,9 @@ export function GuidedTraitGrantsEditor({
     .map((node) => ({
       value: `self.${node.path.join('.')}`,
       label: `Self › ${node.path.map((segment) => segment.replace(/-/g, ' ')).join(' › ')}`,
-      hint: 'trait collection',
+      hint: node.capacity === undefined
+        ? 'unbounded trait collection'
+        : `trait collection · capacity ${node.capacity}`,
     })), [traitShape.nodes]);
   const nestedParentOptions = useMemo(() => traitShape.nodes
     .filter((node): node is Extract<TraitShapeNode, { kind: 'branch' }> => node.kind === 'branch')
@@ -2487,18 +2465,16 @@ export function GuidedTraitGrantsEditor({
             {prerequisites.ids.length >= 2 ? (
               <>
                 {' '}
-                <ComboToken
-                  fieldKey="prereqMode"
+                <KeyboardModeToggle
+                  ariaLabel="Prerequisite matching mode"
+                  labels={{ any: 'any of', all: 'all of' }}
+                  onChange={setPrerequisiteMode}
+                  onNext={() => {
+                    if (prerequisites.ids.length > 0) setPrereqEditingIndex(0);
+                    else document.getElementById(prerequisiteAddId)?.focus();
+                  }}
+                  targetId={prerequisiteModeId}
                   value={prerequisites.mode}
-                  placeholder="any of"
-                  options={[
-                    { value: 'any', label: 'any of', hint: 'at least one must be present' },
-                    { value: 'all', label: 'all of', hint: 'every one must be present' },
-                  ]}
-                  editingField={prereqModeEditing ? 'prereqMode' : null}
-                  onEdit={() => setPrereqModeEditing(true)}
-                  onDone={() => setPrereqModeEditing(false)}
-                  onSelect={(v) => { setPrerequisiteMode(v as 'any' | 'all'); setPrereqModeEditing(false); }}
                 />
               </>
             ) : (
@@ -2522,6 +2498,20 @@ export function GuidedTraitGrantsEditor({
                     onEdit={() => setPrereqEditingIndex(i)}
                     onDone={() => setPrereqEditingIndex(null)}
                     onSelect={(v) => { updatePrerequisiteId(i, v); setPrereqEditingIndex(null); }}
+                    onTabNext={() => {
+                      if (i < prerequisites.ids.length - 1) setPrereqEditingIndex(i + 1);
+                      else {
+                        setPrereqEditingIndex(null);
+                        queueMicrotask(() => document.getElementById(prerequisiteAddId)?.focus());
+                      }
+                    }}
+                    onTabPrev={() => {
+                      if (i > 0) setPrereqEditingIndex(i - 1);
+                      else {
+                        setPrereqEditingIndex(null);
+                        queueMicrotask(() => document.getElementById(prerequisiteModeId)?.focus());
+                      }
+                    }}
                   />
                   <button type="button" className="guided-grant-remove" aria-label="Remove prerequisite"
                     onClick={() => removePrerequisite(i)}>×</button>
@@ -2530,7 +2520,7 @@ export function GuidedTraitGrantsEditor({
             </div>
           )}
           <div className="guided-grants-add">
-            <button type="button" className="secondary-action compact-action" onClick={addPrerequisite}>+ prerequisite</button>
+            <button id={prerequisiteAddId} type="button" className="secondary-action compact-action" onKeyDown={activateButtonOnSpace} onClick={addPrerequisite}>+ prerequisite</button>
           </div>
         </div>
       )}
@@ -2541,26 +2531,26 @@ export function GuidedTraitGrantsEditor({
       </p>
 
       <div className="guided-grants-add">
-        <button type="button" className="secondary-action compact-action" onClick={() => add('text')}>+ text</button>
-        <button type="button" className="secondary-action compact-action" onClick={() => add('number')}>+ number</button>
-        <button type="button" className="secondary-action compact-action" onClick={() => add('boolean')}>+ true/false</button>
-        <button type="button" className="secondary-action compact-action" onClick={() => add('enum')}>+ enum</button>
-        <button type="button" className="secondary-action compact-action" onClick={() => add('trait')}>+ trait grant</button>
-        <button type="button" className="secondary-action compact-action" onClick={() => add('trait-collection')}>+ trait collection</button>
-        <button type="button" className="secondary-action compact-action" onClick={() => add('modifier')}>+ modifier</button>
-        <button type="button" className="secondary-action compact-action" onClick={() => add('suppression')}>+ suppression</button>
-        <button type="button" className="secondary-action compact-action" onClick={() => add('replacement')}>+ replacement</button>
-        <button type="button" className="secondary-action compact-action" onClick={() => add('slot')}>+ slot</button>
-        <button type="button" className="secondary-action compact-action" onClick={() => add('slot-affinity')}>+ slot-affinity</button>
+        <button type="button" className="secondary-action compact-action" onKeyDown={activateButtonOnSpace} onClick={() => add('text')}>+ text</button>
+        <button type="button" className="secondary-action compact-action" onKeyDown={activateButtonOnSpace} onClick={() => add('number')}>+ number</button>
+        <button type="button" className="secondary-action compact-action" onKeyDown={activateButtonOnSpace} onClick={() => add('boolean')}>+ true/false</button>
+        <button type="button" className="secondary-action compact-action" onKeyDown={activateButtonOnSpace} onClick={() => add('enum')}>+ enum</button>
+        <button type="button" className="secondary-action compact-action" onKeyDown={activateButtonOnSpace} onClick={() => add('trait')}>+ trait grant</button>
+        <button type="button" className="secondary-action compact-action" onKeyDown={activateButtonOnSpace} onClick={() => add('trait-collection')}>+ trait collection</button>
+        <button type="button" className="secondary-action compact-action" onKeyDown={activateButtonOnSpace} onClick={() => add('modifier')}>+ modifier</button>
+        <button type="button" className="secondary-action compact-action" onKeyDown={activateButtonOnSpace} onClick={() => add('suppression')}>+ suppression</button>
+        <button type="button" className="secondary-action compact-action" onKeyDown={activateButtonOnSpace} onClick={() => add('replacement')}>+ replacement</button>
       </div>
 
       {grants.length > 0 && (
         <div className="guided-grants-list">
           {grants.map((grant) => (
             <GrantRow key={grant._id} collectionOptions={collectionOptions} grant={grant}
-              nestedParentOptions={nestedParentOptions} traitDefinitions={traitDefinitions}
+              nestedParentOptions={nestedParentOptions}
+              prerequisiteMode={prerequisites.mode}
+              prerequisiteCount={prerequisites.ids.filter(Boolean).length}
+              traitDefinitions={traitDefinitions}
               traitShape={traitShape}
-              slotTypeOptions={slotTypeOptions}
               autoFocus={grant._id === lastAddedId}
               onChange={(patch) => update(grant._id, patch)}
               onRemove={() => remove(grant._id)} />

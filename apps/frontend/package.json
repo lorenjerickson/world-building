@@ -1,5 +1,5 @@
 {
-  "name": "@world-building/frontend",
+  "name": "@wanderlust-vtt/frontend",
   "version": "0.1.2",
   "private": true,
   "scripts": {
@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "test": "pnpm --filter @world-building/common build && tsc -p tsconfig.test.json && tsc -p tsconfig.component-test.json && node --test .next/trait-tests/*.test.js .next/trait-component-tests/components/*.test.js"
+    "test": "pnpm --filter @wanderlust-vtt/common build && tsc -p tsconfig.test.json && tsc -p tsconfig.component-test.json && node --test .next/trait-tests/*.test.js .next/trait-component-tests/components/*.test.js"
   },
   "dependencies": {
     "@3d-dice/dice-box": "^1.1.4",
@@ -15,7 +15,7 @@
     "@mdxeditor/editor": "^4.0.4",
     "@react-three/drei": "^10.7.7",
     "@react-three/fiber": "^9.6.1",
-    "@world-building/common": "workspace:*",
+    "@wanderlust-vtt/common": "workspace:*",
     "next": "16.2.10",
     "react": "19.2.4",
     "react-dom": "19.2.4",

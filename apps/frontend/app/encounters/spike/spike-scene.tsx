@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { Triangle } from "@world-building/common";
+import type { Triangle } from "@wanderlust-vtt/common";
 import type { EncounterEditMode, EncounterSurfaceAction, EncounterSurfaceHit } from "./webgl-scene";
 
 type ViewMode = "perspective" | "overhead" | "svg2d";

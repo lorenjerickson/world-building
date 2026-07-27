@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { WorldView, type WorldAsset, type WorldTab } from "@/components/world-view";
+import { loadStoredWorlds } from "@/lib/wanderlust-storage";
 
 export function WorldRoute({ worldId, tab = "overview", itemId = null }: {
   worldId?: string;
@@ -16,7 +17,7 @@ export function WorldRoute({ worldId, tab = "overview", itemId = null }: {
   useEffect(() => {
     if (!worldId) return;
     try {
-      const worlds: WorldAsset[] = JSON.parse(localStorage.getItem("aethelgard_worlds") || "[]");
+      const worlds = loadStoredWorlds<WorldAsset>();
       setWorld(worlds.find((candidate) => candidate.id === worldId));
     } finally {
       setLoaded(true);

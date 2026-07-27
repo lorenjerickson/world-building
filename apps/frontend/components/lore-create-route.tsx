@@ -5,6 +5,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AppBreadcrumbs } from "@/components/app-breadcrumbs";
 import type { Character, LocationNode, Organization, RelicItem, TimelineEvent, Triple, WorldAsset } from "@/components/world-view";
+import { loadStoredWorlds, saveStoredWorlds } from "@/lib/wanderlust-storage";
 
 export type LoreType = "locations" | "characters" | "organizations" | "events" | "items";
 
@@ -25,7 +26,7 @@ export function LoreCreateRoute({ worldId, loreType, parentId }: { worldId: stri
   const [error, setError] = useState<string>();
 
   useEffect(() => {
-    const worlds: WorldAsset[] = JSON.parse(localStorage.getItem("aethelgard_worlds") || "[]");
+    const worlds = loadStoredWorlds<WorldAsset>();
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setWorld(worlds.find((candidate) => candidate.id === worldId));
   }, [worldId]);
@@ -77,8 +78,8 @@ export function LoreCreateRoute({ worldId, loreType, parentId }: { worldId: stri
       });
       if (!saveResponse.ok) throw new Error("The entry was generated, but could not be saved to the world.");
 
-      const worlds: WorldAsset[] = JSON.parse(localStorage.getItem("aethelgard_worlds") || "[]");
-      localStorage.setItem("aethelgard_worlds", JSON.stringify([updated, ...worlds.filter((candidate) => candidate.id !== world.id)]));
+      const worlds = loadStoredWorlds<WorldAsset>();
+      saveStoredWorlds([updated, ...worlds.filter((candidate) => candidate.id !== world.id)]);
       router.push(`/world/${encodeURIComponent(world.id)}/${loreType}/${encodeURIComponent(id)}`);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Something went wrong while creating this entry.");

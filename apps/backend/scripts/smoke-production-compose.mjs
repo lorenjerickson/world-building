@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url));
 const suffix = `${process.pid}-${Date.now()}`;
-const image = `world-building-backend:smoke-${suffix}`;
+const image = `wanderlust-vtt-backend:smoke-${suffix}`;
 const baseProject = `wb-backend-smoke-${suffix}`;
 const failureProject = `${baseProject}-failure`;
 const composeFile = 'docker-compose.yml';

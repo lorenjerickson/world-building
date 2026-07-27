@@ -1,0 +1,14 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "stack: prepare",
+      "type": "shell",
+      "command": "pnpm db:up && pnpm --filter @wanderlust-vtt/common build && pnpm --filter @wanderlust-vtt/backend prisma:generate && node scripts/run-with-local-database.mjs pnpm db:migrate && pnpm --filter @wanderlust-vtt/cms migrate",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    }
+  ]
+}

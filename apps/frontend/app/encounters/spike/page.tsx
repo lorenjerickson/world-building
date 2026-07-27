@@ -4,7 +4,7 @@ import {
   pickFirstTriangle,
   projectTrianglesTopDown,
   type Cell,
-} from "@world-building/common";
+} from "@wanderlust-vtt/common";
 import { SpikeScene } from "./spike-scene";
 import { HydrationProbe } from "./hydration-probe";
 

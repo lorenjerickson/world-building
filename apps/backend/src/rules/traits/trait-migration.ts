@@ -2,7 +2,7 @@ import {
   buildTraitShape,
   selectTraitDefinitionScope,
   type TraitShapeNode,
-} from '@world-building/common';
+} from '@wanderlust-vtt/common';
 import {
   LEGACY_TRAIT_COMPOSITION_METAMODEL_VERSION,
   TRAIT_COMPOSITION_METAMODEL_VERSION,
@@ -118,7 +118,7 @@ function nodeMeaning(node: TraitShapeNode): string {
   if (node.kind === 'terminal') {
     return `terminal:${node.dataType}:${JSON.stringify(node.allowedValues ?? [])}`;
   }
-  return `collection:${node.acceptsMode}:${[...node.acceptedTraitIds].sort().join(',')}:${node.entries
+  return `collection:${node.acceptsMode}:${node.capacity ?? 'unbounded'}:${[...node.acceptedTraitIds].sort().join(',')}:${node.entries
     .map((entry) => `${entry.traitId}*${entry.count}`)
     .sort()
     .join(',')}`;

@@ -11,7 +11,7 @@ import {
   type TraitGrantDataType,
   type TraitShape,
   type TraitShapeNode,
-} from '@world-building/common';
+} from '@wanderlust-vtt/common';
 import {
   TRAIT_COMPOSITION_ARTIFACT_VERSION,
   TRAIT_COMPOSITION_METAMODEL_VERSION,
@@ -37,8 +37,6 @@ const DATA_TYPES: TraitGrantDataType[] = [
   'modifier',
   'suppression',
   'replacement',
-  'slot',
-  'slot-affinity',
 ];
 const MODIFIER_OPERATIONS = ['increases', 'decreases', 'multiplies', 'divides', 'sets', 'at-least', 'at-most'] as const;
 const MAXIMUM_DEFINITIONS = 2_000;
@@ -319,13 +317,29 @@ function validateGrant(
       }
     }
   }
-  if (dataType === 'trait-collection' || dataType === 'slot') {
+  if (dataType === 'trait-collection') {
     if (grant.acceptedTraits !== undefined) {
       validateStringArray(grant.acceptedTraits, `${path}.acceptedTraits`, diagnostics);
     }
     if (grant.acceptsMode !== undefined && grant.acceptsMode !== 'any' && grant.acceptsMode !== 'all') {
       diagnostic(diagnostics, 'RULE_TRAIT_ACCEPTANCE_MODE_INVALID', `${path}.acceptsMode`, "Acceptance mode must be 'any' or 'all'.");
     }
+    if (grant.capacity !== undefined
+      && (!Number.isInteger(grant.capacity) || Number(grant.capacity) < 1)) {
+      diagnostic(
+        diagnostics,
+        'RULE_TRAIT_COLLECTION_CAPACITY_INVALID',
+        `${path}.capacity`,
+        'Collection capacity must be a positive whole number.',
+      );
+    }
+  } else if (grant.capacity !== undefined) {
+    diagnostic(
+      diagnostics,
+      'RULE_TRAIT_COLLECTION_CAPACITY_UNSUPPORTED',
+      `${path}.capacity`,
+      'Only trait collections may declare capacity.',
+    );
   }
   if (dataType === 'enum' && grant.allowedValues !== undefined) {
     validateStringArray(grant.allowedValues, `${path}.allowedValues`, diagnostics);
@@ -1053,7 +1067,7 @@ export function compileTraitCompositions(inputs: TraitCompositionSourceDefinitio
     if (!Array.isArray(definition.body.grants)) return;
     definition.body.grants.forEach((grant, grantIndex) => {
       if (!record(grant)
-        || (grant.dataType !== 'trait-collection' && grant.dataType !== 'slot')
+        || grant.dataType !== 'trait-collection'
         || !Array.isArray(grant.acceptedTraits)) return;
       grant.acceptedTraits.forEach((traitId, acceptedIndex) => {
         if (typeof traitId === 'string' && !knownIds.has(traitId)) {

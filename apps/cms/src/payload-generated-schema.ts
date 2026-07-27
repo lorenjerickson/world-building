@@ -40,6 +40,18 @@ export const enum__worlds_v_version_status = pgEnum(
   "enum__worlds_v_version_status",
   ["draft", "published"],
 );
+export const enum_campaigns_status = pgEnum("enum_campaigns_status", [
+  "planning",
+  "active",
+  "paused",
+  "completed",
+]);
+export const enum_sessions_status = pgEnum("enum_sessions_status", [
+  "scheduled",
+  "live",
+  "completed",
+  "cancelled",
+]);
 export const enum_encounter_map_drafts_scale_in_feet = pgEnum(
   "enum_encounter_map_drafts_scale_in_feet",
   ["0.5", "1", "5"],
@@ -633,6 +645,186 @@ export const characters = pgTable(
     index("characters_portrait_idx").on(columns.portrait),
     index("characters_updated_at_idx").on(columns.updatedAt),
     index("characters_created_at_idx").on(columns.createdAt),
+  ],
+);
+
+export const campaigns = pgTable(
+  "campaigns",
+  {
+    id: serial("id").primaryKey(),
+    name: varchar("name").notNull(),
+    description: varchar("description"),
+    workspace: integer("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, {
+        onDelete: "set null",
+      }),
+    world: integer("world_id")
+      .notNull()
+      .references(() => worlds.id, {
+        onDelete: "set null",
+      }),
+    status: enum_campaigns_status("status").default("planning"),
+    gameplayProfileName: varchar("gameplay_profile_name").default("default"),
+    updatedAt: timestamp("updated_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    })
+      .defaultNow()
+      .notNull(),
+    createdAt: timestamp("created_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    })
+      .defaultNow()
+      .notNull(),
+  },
+  (columns) => [
+    index("campaigns_workspace_idx").on(columns.workspace),
+    index("campaigns_world_idx").on(columns.world),
+    index("campaigns_updated_at_idx").on(columns.updatedAt),
+    index("campaigns_created_at_idx").on(columns.createdAt),
+  ],
+);
+
+export const sessions = pgTable(
+  "sessions",
+  {
+    id: serial("id").primaryKey(),
+    name: varchar("name").notNull(),
+    sessionNumber: numeric("session_number", { mode: "number" }).default(1),
+    status: enum_sessions_status("status").default("scheduled"),
+    scheduledAt: timestamp("scheduled_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    }),
+    summary: varchar("summary"),
+    updatedAt: timestamp("updated_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    })
+      .defaultNow()
+      .notNull(),
+    createdAt: timestamp("created_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    })
+      .defaultNow()
+      .notNull(),
+  },
+  (columns) => [
+    index("sessions_updated_at_idx").on(columns.updatedAt),
+    index("sessions_created_at_idx").on(columns.createdAt),
+  ],
+);
+
+export const items = pgTable(
+  "items",
+  {
+    id: serial("id").primaryKey(),
+    name: varchar("name").notNull(),
+    description: varchar("description"),
+    world: integer("world_id")
+      .notNull()
+      .references(() => worlds.id, {
+        onDelete: "set null",
+      }),
+    itemType: varchar("item_type").default("artifact"),
+    properties: jsonb("properties"),
+    updatedAt: timestamp("updated_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    })
+      .defaultNow()
+      .notNull(),
+    createdAt: timestamp("created_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    })
+      .defaultNow()
+      .notNull(),
+  },
+  (columns) => [
+    index("items_world_idx").on(columns.world),
+    index("items_updated_at_idx").on(columns.updatedAt),
+    index("items_created_at_idx").on(columns.createdAt),
+  ],
+);
+
+export const organizations = pgTable(
+  "organizations",
+  {
+    id: serial("id").primaryKey(),
+    name: varchar("name").notNull(),
+    description: varchar("description"),
+    world: integer("world_id")
+      .notNull()
+      .references(() => worlds.id, {
+        onDelete: "set null",
+      }),
+    headquarters: varchar("headquarters"),
+    alignment: varchar("alignment"),
+    updatedAt: timestamp("updated_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    })
+      .defaultNow()
+      .notNull(),
+    createdAt: timestamp("created_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    })
+      .defaultNow()
+      .notNull(),
+  },
+  (columns) => [
+    index("organizations_world_idx").on(columns.world),
+    index("organizations_updated_at_idx").on(columns.updatedAt),
+    index("organizations_created_at_idx").on(columns.createdAt),
+  ],
+);
+
+export const events = pgTable(
+  "events",
+  {
+    id: serial("id").primaryKey(),
+    name: varchar("name").notNull(),
+    description: varchar("description"),
+    world: integer("world_id")
+      .notNull()
+      .references(() => worlds.id, {
+        onDelete: "set null",
+      }),
+    eventType: varchar("event_type").default("historical"),
+    timelinePosition: varchar("timeline_position"),
+    updatedAt: timestamp("updated_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    })
+      .defaultNow()
+      .notNull(),
+    createdAt: timestamp("created_at", {
+      mode: "string",
+      withTimezone: true,
+      precision: 3,
+    })
+      .defaultNow()
+      .notNull(),
+  },
+  (columns) => [
+    index("events_world_idx").on(columns.world),
+    index("events_updated_at_idx").on(columns.updatedAt),
+    index("events_created_at_idx").on(columns.createdAt),
   ],
 );
 
@@ -2058,6 +2250,11 @@ export const payload_locked_documents_rels = pgTable(
     worldsID: integer("worlds_id"),
     locationsID: integer("locations_id"),
     charactersID: integer("characters_id"),
+    campaignsID: integer("campaigns_id"),
+    sessionsID: integer("sessions_id"),
+    itemsID: integer("items_id"),
+    organizationsID: integer("organizations_id"),
+    eventsID: integer("events_id"),
     "encounter-mapsID": integer("encounter_maps_id"),
     "encounter-map-draftsID": integer("encounter_map_drafts_id"),
     "encounter-map-revisionsID": integer("encounter_map_revisions_id"),
@@ -2086,6 +2283,17 @@ export const payload_locked_documents_rels = pgTable(
     index("payload_locked_documents_rels_characters_id_idx").on(
       columns.charactersID,
     ),
+    index("payload_locked_documents_rels_campaigns_id_idx").on(
+      columns.campaignsID,
+    ),
+    index("payload_locked_documents_rels_sessions_id_idx").on(
+      columns.sessionsID,
+    ),
+    index("payload_locked_documents_rels_items_id_idx").on(columns.itemsID),
+    index("payload_locked_documents_rels_organizations_id_idx").on(
+      columns.organizationsID,
+    ),
+    index("payload_locked_documents_rels_events_id_idx").on(columns.eventsID),
     index("payload_locked_documents_rels_encounter_maps_id_idx").on(
       columns["encounter-mapsID"],
     ),
@@ -2153,6 +2361,31 @@ export const payload_locked_documents_rels = pgTable(
       columns: [columns["charactersID"]],
       foreignColumns: [characters.id],
       name: "payload_locked_documents_rels_characters_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [columns["campaignsID"]],
+      foreignColumns: [campaigns.id],
+      name: "payload_locked_documents_rels_campaigns_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [columns["sessionsID"]],
+      foreignColumns: [sessions.id],
+      name: "payload_locked_documents_rels_sessions_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [columns["itemsID"]],
+      foreignColumns: [items.id],
+      name: "payload_locked_documents_rels_items_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [columns["organizationsID"]],
+      foreignColumns: [organizations.id],
+      name: "payload_locked_documents_rels_organizations_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [columns["eventsID"]],
+      foreignColumns: [events.id],
+      name: "payload_locked_documents_rels_events_fk",
     }).onDelete("cascade"),
     foreignKey({
       columns: [columns["encounter-mapsID"]],
@@ -2441,6 +2674,40 @@ export const relations_characters = relations(characters, ({ one }) => ({
     fields: [characters.portrait],
     references: [media.id],
     relationName: "portrait",
+  }),
+}));
+export const relations_campaigns = relations(campaigns, ({ one }) => ({
+  workspace: one(workspaces, {
+    fields: [campaigns.workspace],
+    references: [workspaces.id],
+    relationName: "workspace",
+  }),
+  world: one(worlds, {
+    fields: [campaigns.world],
+    references: [worlds.id],
+    relationName: "world",
+  }),
+}));
+export const relations_sessions = relations(sessions, () => ({}));
+export const relations_items = relations(items, ({ one }) => ({
+  world: one(worlds, {
+    fields: [items.world],
+    references: [worlds.id],
+    relationName: "world",
+  }),
+}));
+export const relations_organizations = relations(organizations, ({ one }) => ({
+  world: one(worlds, {
+    fields: [organizations.world],
+    references: [worlds.id],
+    relationName: "world",
+  }),
+}));
+export const relations_events = relations(events, ({ one }) => ({
+  world: one(worlds, {
+    fields: [events.world],
+    references: [worlds.id],
+    relationName: "world",
   }),
 }));
 export const relations_encounter_maps = relations(
@@ -2936,6 +3203,31 @@ export const relations_payload_locked_documents_rels = relations(
       references: [characters.id],
       relationName: "characters",
     }),
+    campaignsID: one(campaigns, {
+      fields: [payload_locked_documents_rels.campaignsID],
+      references: [campaigns.id],
+      relationName: "campaigns",
+    }),
+    sessionsID: one(sessions, {
+      fields: [payload_locked_documents_rels.sessionsID],
+      references: [sessions.id],
+      relationName: "sessions",
+    }),
+    itemsID: one(items, {
+      fields: [payload_locked_documents_rels.itemsID],
+      references: [items.id],
+      relationName: "items",
+    }),
+    organizationsID: one(organizations, {
+      fields: [payload_locked_documents_rels.organizationsID],
+      references: [organizations.id],
+      relationName: "organizations",
+    }),
+    eventsID: one(events, {
+      fields: [payload_locked_documents_rels.eventsID],
+      references: [events.id],
+      relationName: "events",
+    }),
     "encounter-mapsID": one(encounter_maps, {
       fields: [payload_locked_documents_rels["encounter-mapsID"]],
       references: [encounter_maps.id],
@@ -3034,6 +3326,8 @@ type DatabaseSchema = {
   enum_media_purpose: typeof enum_media_purpose;
   enum_worlds_status: typeof enum_worlds_status;
   enum__worlds_v_version_status: typeof enum__worlds_v_version_status;
+  enum_campaigns_status: typeof enum_campaigns_status;
+  enum_sessions_status: typeof enum_sessions_status;
   enum_encounter_map_drafts_scale_in_feet: typeof enum_encounter_map_drafts_scale_in_feet;
   enum_encounter_map_drafts_validation_status: typeof enum_encounter_map_drafts_validation_status;
   enum_encounter_map_revisions_scale_in_feet: typeof enum_encounter_map_revisions_scale_in_feet;
@@ -3072,6 +3366,11 @@ type DatabaseSchema = {
   _worlds_v_rels: typeof _worlds_v_rels;
   locations: typeof locations;
   characters: typeof characters;
+  campaigns: typeof campaigns;
+  sessions: typeof sessions;
+  items: typeof items;
+  organizations: typeof organizations;
+  events: typeof events;
   encounter_maps: typeof encounter_maps;
   encounter_map_drafts_validation_errors: typeof encounter_map_drafts_validation_errors;
   encounter_map_drafts: typeof encounter_map_drafts;
@@ -3112,6 +3411,11 @@ type DatabaseSchema = {
   relations__worlds_v: typeof relations__worlds_v;
   relations_locations: typeof relations_locations;
   relations_characters: typeof relations_characters;
+  relations_campaigns: typeof relations_campaigns;
+  relations_sessions: typeof relations_sessions;
+  relations_items: typeof relations_items;
+  relations_organizations: typeof relations_organizations;
+  relations_events: typeof relations_events;
   relations_encounter_maps: typeof relations_encounter_maps;
   relations_encounter_map_drafts_validation_errors: typeof relations_encounter_map_drafts_validation_errors;
   relations_encounter_map_drafts: typeof relations_encounter_map_drafts;

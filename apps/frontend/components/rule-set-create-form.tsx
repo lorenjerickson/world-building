@@ -55,7 +55,7 @@ export function RuleSetCreateForm({ onCancel, onCreated }: RuleSetCreateFormProp
   return (
     <form className="rule-set-create-form" onSubmit={submit}>
       <div className="rule-set-form-heading">
-        <div><span className="eyebrow">New gameplay foundation</span><h4>Create a rule set</h4></div>
+        <div><span className="eyebrow">New gameplay foundation</span><h2>Create a rule set</h2></div>
         <button className="secondary-action" type="button" onClick={onCancel}>Cancel</button>
       </div>
       <div className="rule-set-form-grid">

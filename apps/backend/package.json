@@ -1,7 +1,7 @@
 {
-  "name": "@world-building/backend",
+  "name": "@wanderlust-vtt/backend",
   "version": "1.0.0",
-  "description": "AI RPG World Builder API in NestJS",
+  "description": "Wanderlust VTT application API",
   "private": true,
   "license": "UNLICENSED",
   "scripts": {
@@ -31,7 +31,7 @@
     "@nestjs/platform-ws": "^10.4.22",
     "@nestjs/websockets": "^10.4.22",
     "@prisma/client": "^5.22.0",
-    "@world-building/common": "workspace:*",
+    "@wanderlust-vtt/common": "workspace:*",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.1",
     "dotenv": "16.4.7",

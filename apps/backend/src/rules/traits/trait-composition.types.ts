@@ -1,4 +1,4 @@
-import type { CanonicalUnitId, TraitShapeNode, UnitAmount } from '@world-building/common';
+import type { CanonicalUnitId, TraitShapeNode, UnitAmount } from '@wanderlust-vtt/common';
 
 export const TRAIT_COMPOSITION_METAMODEL_VERSION = 'trait/2' as const;
 export const LEGACY_TRAIT_COMPOSITION_METAMODEL_VERSION = 'trait/1' as const;
@@ -109,11 +109,9 @@ export const traitCompositionMetamodelDescriptor = {
     'modifier',
     'suppression',
     'replacement',
-    'slot',
-    'slot-affinity',
   ],
   compositionOperations: ['adds', 'extends', 'requires', 'modifies', 'suppresses', 'replaces'],
   pathRoots: ['self', 'this'],
-  artifactCapabilities: ['effective-shape', 'modifier-provenance', 'trait-activation-graph', 'instance-prerequisite-choices', 'counted-trait-instances', 'typed-instance-values', 'cross-mount-value-modifiers', 'repeated-mount-selectors', 'canonical-units', 'advanced-value-stacking', 'structural-directives', 'authoritative-structural-contracts', 'recursive-structural-directives', 'structural-mount-selectors', 'recursive-repeated-paths', 'trait-identity-selectors', 'semantic-tag-selectors'],
+  artifactCapabilities: ['effective-shape', 'modifier-provenance', 'trait-activation-graph', 'instance-prerequisite-choices', 'counted-trait-instances', 'bounded-trait-collections', 'typed-instance-values', 'cross-mount-value-modifiers', 'repeated-mount-selectors', 'canonical-units', 'advanced-value-stacking', 'structural-directives', 'authoritative-structural-contracts', 'recursive-structural-directives', 'structural-mount-selectors', 'recursive-repeated-paths', 'trait-identity-selectors', 'semantic-tag-selectors'],
   compatibleSourceVersions: [LEGACY_TRAIT_COMPOSITION_METAMODEL_VERSION, TRAIT_COMPOSITION_METAMODEL_VERSION],
 };

@@ -18,7 +18,7 @@ const nextConfig: NextConfig = {
     "MacBookPro.local",
     ...additionalDevelopmentOrigins,
   ],
-  transpilePackages: ["@world-building/common"],
+  transpilePackages: ["@wanderlust-vtt/common"],
   turbopack: {
     // This only controls module resolution. Next still loads env files from
     // the application directory (apps/frontend), not from this workspace root.

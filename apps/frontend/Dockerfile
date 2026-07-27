@@ -9,7 +9,7 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY apps/frontend/package.json ./apps/frontend/
 COPY packages/common/package.json ./packages/common/
-RUN pnpm install --filter=@world-building/frontend... --frozen-lockfile
+RUN pnpm install --filter=@wanderlust-vtt/frontend... --frozen-lockfile
 
 # ── dev: hot-reload target used by docker compose ────────────────────────────
 FROM base AS dev
@@ -17,10 +17,10 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY apps/frontend/package.json ./apps/frontend/
 COPY packages/common/package.json ./packages/common/
-RUN pnpm install --filter=@world-building/frontend... --frozen-lockfile
+RUN pnpm install --filter=@wanderlust-vtt/frontend... --frozen-lockfile
 COPY apps/frontend/ ./apps/frontend/
 COPY packages/common/ ./packages/common/
-RUN pnpm --filter=@world-building/common build
+RUN pnpm --filter=@wanderlust-vtt/common build
 ENV NEXT_TELEMETRY_DISABLED=1
 EXPOSE 3000
 ENV PORT=3000
@@ -37,7 +37,7 @@ COPY apps/frontend/ ./apps/frontend/
 COPY packages/common/ ./packages/common/
 RUN mkdir -p apps/frontend/public
 ENV NEXT_TELEMETRY_DISABLED=1
-RUN pnpm --filter=@world-building/frontend... build
+RUN pnpm --filter=@wanderlust-vtt/frontend... build
 
 # ── runner: minimal production image ─────────────────────────────────────────
 FROM base AS runner

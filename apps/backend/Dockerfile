@@ -30,12 +30,12 @@ ENV NODE_LLAMA_CPP_SKIP_DOWNLOAD=true
 # Uncomment to target CPU features like AVX2:
 # ENV GGML_OPENMP=1
 
-RUN pnpm install --filter=@world-building/backend... --frozen-lockfile
+RUN pnpm install --filter=@wanderlust-vtt/backend... --frozen-lockfile
 
 COPY apps/backend/ ./apps/backend/
 COPY packages/common/ ./packages/common/
-RUN pnpm --filter=@world-building/backend prisma:generate
-RUN pnpm --filter=@world-building/backend... build
+RUN pnpm --filter=@wanderlust-vtt/backend prisma:generate
+RUN pnpm --filter=@wanderlust-vtt/backend... build
 
 # ── Stage 2: production runtime ───────────────────────────────────────────────
 FROM node:24-bookworm-slim AS runner
@@ -50,8 +50,8 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY apps/backend/package.json ./apps/backend/
 COPY apps/backend/prisma/ ./apps/backend/prisma/
 COPY packages/common/package.json ./packages/common/
-RUN pnpm install --filter=@world-building/backend... --frozen-lockfile --prod
-RUN pnpm --filter=@world-building/backend prisma:generate
+RUN pnpm install --filter=@wanderlust-vtt/backend... --frozen-lockfile --prod
+RUN pnpm --filter=@wanderlust-vtt/backend prisma:generate
 
 COPY --from=builder /app/apps/backend/dist ./apps/backend/dist
 COPY --from=builder /app/packages/common/dist ./packages/common/dist

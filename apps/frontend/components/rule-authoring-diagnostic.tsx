@@ -32,7 +32,7 @@ export function RuleAuthoringDiagnosticItem({
       {definition ? (
         <Link
           className="link link-hover"
-          href={`/rule-sets/${ruleSetId}?definition=${definition.id}#definition-editor`}
+          href={`/rule-sets/${ruleSetId}/definitions/${definition.id}`}
         >
           {definition.name}
         </Link>

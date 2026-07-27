@@ -10,9 +10,7 @@ export type TraitGrantDataType =
   | 'trait-collection'
   | 'modifier'
   | 'suppression'
-  | 'replacement'
-  | 'slot'
-  | 'slot-affinity';
+  | 'replacement';
 
 export type TraitShapeGrant = {
   key?: string;
@@ -27,6 +25,7 @@ export type TraitShapeGrant = {
   allowedValues?: string[];
   acceptedTraits?: string[];
   acceptsMode?: 'any' | 'all';
+  capacity?: number;
   count?: number;
   into?: string;
   at?: string;
@@ -68,6 +67,7 @@ export type TraitShapeNode =
     label: string;
     acceptedTraitIds: string[];
     acceptsMode: 'any' | 'all';
+    capacity?: number;
     entries: Array<{
       traitId: string;
       count: number;
@@ -86,7 +86,9 @@ export type TraitShapeDiagnostic = {
     | 'node-limit'
     | 'missing-collection'
     | 'collection-type-mismatch'
-    | 'invalid-count';
+    | 'invalid-count'
+    | 'invalid-capacity'
+    | 'collection-capacity-exceeded';
   path: string[];
   message: string;
 };
@@ -197,7 +199,7 @@ function grantsFromBody(body: Record<string, unknown>): TraitShapeGrant[] {
   return body.grants.filter(record).flatMap((grant) => {
     if (typeof grant.dataType !== 'string') return [];
     const dataType = grant.dataType as TraitGrantDataType;
-    if (!['text', 'number', 'boolean', 'enum', 'trait', 'extends', 'trait-collection', 'modifier', 'suppression', 'replacement', 'slot', 'slot-affinity'].includes(dataType)) return [];
+    if (!['text', 'number', 'boolean', 'enum', 'trait', 'extends', 'trait-collection', 'modifier', 'suppression', 'replacement'].includes(dataType)) return [];
     return [{
       dataType,
       ...(typeof grant.key === 'string' ? { key: grant.key } : {}),
@@ -214,6 +216,7 @@ function grantsFromBody(body: Record<string, unknown>): TraitShapeGrant[] {
       ...(typeof grant.at === 'string' ? { at: grant.at } : {}),
       ...(typeof grant.requiresTraitId === 'string' ? { requiresTraitId: grant.requiresTraitId } : {}),
       ...(typeof grant.count === 'number' ? { count: grant.count } : {}),
+      ...(typeof grant.capacity === 'number' ? { capacity: grant.capacity } : {}),
       ...(Array.isArray(grant.acceptedTraits) && grant.acceptedTraits.every((item) => typeof item === 'string')
         ? { acceptedTraits: grant.acceptedTraits as string[] }
         : {}),
@@ -234,6 +237,7 @@ function sameNode(left: TraitShapeNode, right: TraitShapeNode): boolean {
   if (left.kind === 'branch' && right.kind === 'branch') return left.traitId === right.traitId;
   if (left.kind === 'collection' && right.kind === 'collection') {
     return left.acceptsMode === right.acceptsMode
+      && left.capacity === right.capacity
       && JSON.stringify([...left.acceptedTraitIds].sort()) === JSON.stringify([...right.acceptedTraitIds].sort());
   }
   return left.kind === 'terminal'
@@ -580,12 +584,21 @@ function expandGrants(
     }
 
     if (grant.dataType === 'trait-collection') {
+      if (grant.capacity !== undefined
+        && (!Number.isInteger(grant.capacity) || grant.capacity < 1)) {
+        shape.diagnostics.push({
+          code: 'invalid-capacity',
+          path,
+          message: 'A collection capacity must be a positive whole number.',
+        });
+      }
       addNode(shape, {
         kind: 'collection',
         path,
         label: grant.label?.trim() || segment,
         acceptedTraitIds: grant.acceptedTraits?.filter(Boolean) ?? [],
         acceptsMode: grant.acceptsMode ?? 'any',
+        ...(grant.capacity !== undefined ? { capacity: grant.capacity } : {}),
         entries: [],
         sourceTraitId,
       }, maximumNodes);
@@ -842,6 +855,19 @@ function compareNodes(left: TraitShapeNode, right: TraitShapeNode): number {
   return pathKey(left.path).localeCompare(pathKey(right.path));
 }
 
+function validateCollectionCapacities(shape: MutableShape): void {
+  for (const node of shape.nodesByPath.values()) {
+    if (node.kind !== 'collection' || node.capacity === undefined) continue;
+    const entryCount = node.entries.reduce((total, entry) => total + entry.count, 0);
+    if (entryCount <= node.capacity) continue;
+    shape.diagnostics.push({
+      code: 'collection-capacity-exceeded',
+      path: node.path,
+      message: `Collection '${pathKey(node.path)}' contains ${entryCount} entries but has capacity ${node.capacity}.`,
+    });
+  }
+}
+
 export function buildTraitShape({
   definitions,
   prerequisiteIds,
@@ -894,6 +920,7 @@ export function buildTraitShape({
     maximumNodes,
     prerequisiteSelections,
   );
+  validateCollectionCapacities(composed);
 
   return {
     nodes: [...composed.nodesByPath.values()].sort(compareNodes),

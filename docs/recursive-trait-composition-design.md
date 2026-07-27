@@ -242,7 +242,7 @@ The first implementation should support exact paths. Trait selectors or wildcard
 
 ## 4.1 Typed repeatable trait collections
 
-A trait may declare a named, repeatable destination that accepts traits compatible with one or more base traits. This generalizes the acceptance behavior used by equipment slots without treating every repeated concept as equipment.
+A trait may declare a named, repeatable destination that accepts traits compatible with one or more base traits. Collections may also declare an optional positive whole-number `capacity`; omitting it means the collection is unbounded.
 
 Example reusable die definitions:
 
@@ -280,7 +280,8 @@ The initial `trait/1` source encoding is:
 {
   "dataType": "trait-collection",
   "key": "dice",
-  "acceptedTraits": ["trait:die"]
+  "acceptedTraits": ["trait:die"],
+  "capacity": 7
 }
 ```
 
@@ -324,9 +325,20 @@ A counted contribution contains:
 
 Count defaults to one. The first implementation supports literal positive integers; expression-based counts are deferred.
 
+A bounded collection is invalid when the sum of its counted entries exceeds its capacity. Runtime mutations must enforce the same invariant before committing an addition or move.
+
 Typed trait collections and singular named additions have different collision behavior. Multiple compatible counted contributions may coexist in a collection. A singular addition may not silently replace a collection, and a counted contribution may not target a singular trait path.
 
-Equipment slots may later share the same underlying typed-collection acceptance engine while retaining capacity and equipment-specific authoring language.
+Equipment loadouts use the same typed-collection contract rather than separate slot grant types. A capacity-one collection represents an exclusive equipment location; marker traits provide strongly typed compatibility:
+
+```text
+Equipment
+├── mainHand: collection accepting Fits Main Hand, capacity 1
+├── offHand: collection accepting Fits Off Hand, capacity 1
+└── handsWorn: collection accepting Fits Hands Worn, capacity 1
+```
+
+Containers are the same abstraction with a different capacity and presentation. A backpack equipped in a capacity-one `back` collection may itself provide a `contents` collection accepting Pack Stowable with capacity 12.
 
 Dice mechanics also require a distinction between authored traits and runtime results:
 
@@ -1171,7 +1183,7 @@ The editor should preview the effective structure and identify which trait contr
 }
 ```
 
-Every `trait/2` trait addition must use `at` or `into`. Prerequisites must use the explicit `{ mode, ids }` representation. Fields, collections, modifiers, slots, and slot affinities retain their established grant forms. New grants-editor definitions emit `trait/2`; existing `trait/1` definitions remain editable as `trait/1` until explicitly migrated.
+Every `trait/2` trait addition must use `at` or `into`. Prerequisites must use the explicit `{ mode, ids }` representation. New prerequisite lists default to `all`; an intentional `any` contract exposes only paths shared by every alternative. Fields, collections, modifiers, and structural directives retain their established grant forms. Dedicated `slot` and `slot-affinity` grants are unsupported; equipment locations and containers are capacity-limited typed collections. New grants-editor definitions emit `trait/2`; existing `trait/1` definitions remain editable as `trait/1` until explicitly migrated.
 
 Existing `trait/1` trait grants can be interpreted as:
 
@@ -1410,9 +1422,9 @@ The database addition is captured by `20260725213000_add_global_search_documents
 
 Current verification on 2026-07-25:
 
-- `pnpm --filter @world-building/common test` passes 31 tests, including recursive terminal enumeration through multiple repeated segments, canonical unit aliases, dimension compatibility, and conversion.
-- `pnpm --filter @world-building/frontend test` passes 53 tests, including affected-graph selection, nested repeated completion, ordered selector serialization, a rendered authoring-to-publication HTTP acceptance flow, and Happy DOM component cases for recursive path interaction, typed, unit-aware, conditional, clamp, suppression, and replacement controls, repeated selectors, ARIA state, and effective-shape diffs.
-- `pnpm --filter @world-building/backend test:rules` passes 67 tests, including nested repeated runtime selection by trait identity and semantic tag, scalar wildcard rejection, incremental validation isolation, named diagnostics, unit normalization, modifier conflict detection, authoritative structural contract rewriting, recursive replacement/selection behavior, provenance, and catalog validation through publication.
+- `pnpm --filter @wanderlust-vtt/common test` passes 32 tests, including recursive terminal enumeration through multiple repeated segments, bounded-collection overflow detection, canonical unit aliases, dimension compatibility, and conversion.
+- `pnpm --filter @wanderlust-vtt/frontend test` passes 60 tests, including affected-graph selection, collection-capacity authoring, safe raw-JSON fallback for removed grants, all-of prerequisite path composition, explanatory any-of intersections, nested repeated completion, ordered selector serialization, a rendered authoring-to-publication HTTP acceptance flow, and Happy DOM component cases for recursive path interaction, typed, unit-aware, conditional, clamp, suppression, and replacement controls, repeated selectors, ARIA state, and effective-shape diffs.
+- `pnpm --filter @wanderlust-vtt/backend test:rules` passes 68 tests, including bounded-collection compilation, rejection of removed slot grants, nested repeated runtime selection by trait identity and semantic tag, scalar wildcard rejection, incremental validation isolation, named diagnostics, unit normalization, modifier conflict detection, authoritative structural contract rewriting, recursive replacement/selection behavior, provenance, and catalog validation through publication.
 - Focused ESLint and the frontend production build pass. Authenticated desktop, narrow-layout, and accessibility-tree checks cover the Phase B UI, and the deterministic rendered-browser acceptance scenario spans authoring, definition persistence, and the publish HTTP boundary.
 - The post-phase navigation/search integration passes frontend and backend production builds. Its clean-database verification applies both Prisma migrations, reports no pending migrations, and confirms the generated full-text vector matches terms distributed across summary and searchable body fields.
 

@@ -1,4 +1,4 @@
-import type { EncounterMapCanonical } from '@world-building/common';
+import type { EncounterMapCanonical } from '@wanderlust-vtt/common';
 
 export interface CreateEncounterMapInput {
   campaignExternalId: string;

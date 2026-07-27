@@ -9,6 +9,7 @@ import {
   RuleDefinitionResource,
   RuleModuleResource,
 } from '@/lib/rule-sets';
+import { loadStoredWorlds } from '@/lib/wanderlust-storage';
 
 type IndexedDocument = {
   recordType: string;
@@ -42,7 +43,7 @@ const worldCollections = [
 
 function worldDocuments(): IndexedDocument[] {
   try {
-    const worlds = JSON.parse(localStorage.getItem('aethelgard_worlds') || '[]') as StoredWorld[];
+    const worlds = loadStoredWorlds<StoredWorld>();
     return worlds.flatMap((world) => {
       const worldHref = `/world/${encodeURIComponent(world.id)}`;
       const documents: IndexedDocument[] = [{
@@ -163,10 +164,7 @@ export function GlobalSearch() {
   }, []);
 
   useEffect(() => {
-    if (!open || deferredQuery.length < 2) {
-      setResults([]);
-      return;
-    }
+    if (!open || deferredQuery.length < 2) return;
     const controller = new AbortController();
     const timer = window.setTimeout(async () => {
       try {
@@ -193,7 +191,15 @@ export function GlobalSearch() {
   return (
     <div className={`global-search${open ? ' is-open' : ''}`}>
       <label className="input input-bordered global-search-input">
-        <span aria-hidden="true">⌕</span>
+        <svg
+          aria-hidden="true"
+          className="global-search-icon"
+          fill="none"
+          viewBox="0 0 24 24"
+        >
+          <circle cx="11" cy="11" r="6.5" stroke="currentColor" strokeWidth="2" />
+          <path d="m16 16 4.25 4.25" stroke="currentColor" strokeLinecap="round" strokeWidth="2" />
+        </svg>
         <input
           aria-label="Search worlds and rules"
           onBlur={() => window.setTimeout(() => setOpen(false), 150)}

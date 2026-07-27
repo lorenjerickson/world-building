@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { DashboardView } from "@/components/dashboard-view";
 import type { WorldAsset } from "@/components/world-view";
 import { deleteWorldArtifact } from "@/lib/artifact-deletion";
+import { loadStoredWorlds } from "@/lib/wanderlust-storage";
 
 export function DashboardRoute() {
   const { user, isLoading } = useUser();
@@ -13,9 +14,9 @@ export function DashboardRoute() {
   const [worlds, setWorlds] = useState<WorldAsset[]>([]);
   useEffect(() => {
     try {
-      // localStorage is the legacy persistence layer and is only available after hydration.
+      // Browser storage is only available after hydration.
       // eslint-disable-next-line react-hooks/set-state-in-effect
-      setWorlds(JSON.parse(localStorage.getItem("aethelgard_worlds") || "[]"));
+      setWorlds(loadStoredWorlds<WorldAsset>());
     } catch {
       // The empty initial state is already the correct fallback for corrupt storage.
     }

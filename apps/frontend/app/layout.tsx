@@ -1,12 +1,16 @@
 import type { Metadata } from "next";
 import { UserProvider } from "@auth0/nextjs-auth0/client";
-import { GlobalSearch } from "@/components/global-search";
+import { AppHeader } from "@/components/app-header";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Chronicles of Aethelgard | AI RPG World Builder",
+  title: {
+    default: "Wanderlust VTT",
+    template: "%s | Wanderlust VTT",
+  },
   description:
-    "An AI-assisted campaign builder and lore keeper for tabletop role-playing games.",
+    "A virtual tabletop for creating worlds, designing rules, running campaigns, and playing together.",
+  applicationName: "Wanderlust VTT",
 };
 
 export default function RootLayout({
@@ -17,7 +21,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
-        <UserProvider><GlobalSearch />{children}</UserProvider>
+        <UserProvider><AppHeader />{children}</UserProvider>
       </body>
     </html>
   );

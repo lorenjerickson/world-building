@@ -14,7 +14,7 @@ import {
   subdivideMesh,
   validateCanonicalMap,
   type EncounterMapCanonical,
-} from '@world-building/common';
+} from '@wanderlust-vtt/common';
 import { createHash, randomUUID } from 'crypto';
 import type { RuleApiActor } from '../rules/api/rule-api-actor';
 import type {

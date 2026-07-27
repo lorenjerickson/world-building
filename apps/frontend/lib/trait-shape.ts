@@ -5,7 +5,7 @@ export {
   traitSatisfiesCollection,
   traitShapeChildren,
   traitShapeTerminalPaths,
-} from '@world-building/common/trait-shape';
+} from '@wanderlust-vtt/common/trait-shape';
 export type {
   BuildTraitShapeInput,
   TraitGrantDataType,
@@ -15,4 +15,4 @@ export type {
   TraitShapeGrant,
   TraitShapeNode,
   TraitShapeTerminalPath,
-} from '@world-building/common/trait-shape';
+} from '@wanderlust-vtt/common/trait-shape';

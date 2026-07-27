@@ -82,8 +82,8 @@ Create or reset that local administrator, then restart the CMS development
 server so its authentication configuration is reloaded:
 
 ```sh
-pnpm --filter @world-building/cms admin:local
-pnpm --filter @world-building/cms dev
+pnpm --filter @wanderlust-vtt/cms admin:local
+pnpm --filter @wanderlust-vtt/cms dev
 ```
 
 Open `http://127.0.0.1:3100/admin` and sign in with those local credentials.

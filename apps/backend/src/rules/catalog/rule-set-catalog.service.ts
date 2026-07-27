@@ -29,7 +29,7 @@ import { compileTraitCompositions } from '../traits/trait-composition.compiler';
 import type { TraitCompositionSourceDefinition } from '../traits/trait-composition.types';
 import { previewTraitDefinitionMigration } from '../traits/trait-migration';
 import { compileRuleRelease } from '../releases/rule-release.compiler';
-import { selectTraitDefinitionScope } from '@world-building/common';
+import { selectTraitDefinitionScope } from '@wanderlust-vtt/common';
 
 @Injectable()
 export class RuleSetCatalogService {

@@ -6,13 +6,14 @@ import type { WorldAsset } from "@/components/world-view";
 import { DeleteArtifactButton } from "@/components/delete-artifact-button";
 import { CampaignArtifact, deleteCampaignArtifact, deleteWorldArtifact, loadCampaignArtifacts } from "@/lib/artifact-deletion";
 import { AppBreadcrumbs } from "@/components/app-breadcrumbs";
+import { loadStoredWorlds } from "@/lib/wanderlust-storage";
 
 export function ActivityIndex({ type }: { type: "worlds" | "campaigns" | "sessions" }) {
   const [worlds, setWorlds] = useState<WorldAsset[]>([]);
   const [campaigns, setCampaigns] = useState<CampaignArtifact[]>([]);
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setWorlds(JSON.parse(localStorage.getItem("aethelgard_worlds") || "[]"));
+    setWorlds(loadStoredWorlds<WorldAsset>());
     setCampaigns(loadCampaignArtifacts());
   }, []);
   const emptyMessage = type === "campaigns"

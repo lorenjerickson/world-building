@@ -32,7 +32,7 @@ importers:
       '@prisma/client':
         specifier: ^5.22.0
         version: 5.22.0(prisma@5.22.0)
-      '@world-building/common':
+      '@wanderlust-vtt/common':
         specifier: workspace:*
         version: link:../../packages/common
       class-transformer:
@@ -108,7 +108,7 @@ importers:
       '@payloadcms/ui':
         specifier: 3.86.0
         version: 3.86.0(@types/react@19.2.14)(monaco-editor@0.55.1)(next@16.2.10(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(sass@1.77.4))(payload@3.86.0(graphql@16.11.0)(typescript@6.0.2))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(typescript@6.0.2)
-      '@world-building/common':
+      '@wanderlust-vtt/common':
         specifier: workspace:*
         version: link:../../packages/common
       cross-env:
@@ -169,7 +169,7 @@ importers:
       '@react-three/fiber':
         specifier: ^9.6.1
         version: 9.6.1(@types/react@19.2.14)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(three@0.185.1)
-      '@world-building/common':
+      '@wanderlust-vtt/common':
         specifier: workspace:*
         version: link:../../packages/common
       next:

@@ -73,6 +73,11 @@ export interface Config {
     worlds: World;
     locations: Location;
     characters: Character;
+    campaigns: Campaign;
+    sessions: Session;
+    items: Item;
+    organizations: Organization;
+    events: Event;
     'encounter-maps': EncounterMap;
     'encounter-map-drafts': EncounterMapDraft;
     'encounter-map-revisions': EncounterMapRevision;
@@ -97,6 +102,11 @@ export interface Config {
     worlds: WorldsSelect<false> | WorldsSelect<true>;
     locations: LocationsSelect<false> | LocationsSelect<true>;
     characters: CharactersSelect<false> | CharactersSelect<true>;
+    campaigns: CampaignsSelect<false> | CampaignsSelect<true>;
+    sessions: SessionsSelect<false> | SessionsSelect<true>;
+    items: ItemsSelect<false> | ItemsSelect<true>;
+    organizations: OrganizationsSelect<false> | OrganizationsSelect<true>;
+    events: EventsSelect<false> | EventsSelect<true>;
     'encounter-maps': EncounterMapsSelect<false> | EncounterMapsSelect<true>;
     'encounter-map-drafts': EncounterMapDraftsSelect<false> | EncounterMapDraftsSelect<true>;
     'encounter-map-revisions': EncounterMapRevisionsSelect<false> | EncounterMapRevisionsSelect<true>;
@@ -306,6 +316,85 @@ export interface Character {
     [k: string]: unknown;
   };
   portrait?: (number | null) | Media;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "campaigns".
+ */
+export interface Campaign {
+  id: number;
+  name: string;
+  description?: string | null;
+  workspace: number | Workspace;
+  world: number | World;
+  status?: ('planning' | 'active' | 'paused' | 'completed') | null;
+  gameplayProfileName?: string | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "sessions".
+ */
+export interface Session {
+  id: number;
+  name: string;
+  sessionNumber?: number | null;
+  status?: ('scheduled' | 'live' | 'completed' | 'cancelled') | null;
+  scheduledAt?: string | null;
+  summary?: string | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "items".
+ */
+export interface Item {
+  id: number;
+  name: string;
+  description?: string | null;
+  world: number | World;
+  itemType?: string | null;
+  properties?:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "organizations".
+ */
+export interface Organization {
+  id: number;
+  name: string;
+  description?: string | null;
+  world: number | World;
+  headquarters?: string | null;
+  alignment?: string | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "events".
+ */
+export interface Event {
+  id: number;
+  name: string;
+  description?: string | null;
+  world: number | World;
+  eventType?: string | null;
+  timelinePosition?: string | null;
   updatedAt: string;
   createdAt: string;
 }
@@ -838,6 +927,26 @@ export interface PayloadLockedDocument {
         value: number | Character;
       } | null)
     | ({
+        relationTo: 'campaigns';
+        value: number | Campaign;
+      } | null)
+    | ({
+        relationTo: 'sessions';
+        value: number | Session;
+      } | null)
+    | ({
+        relationTo: 'items';
+        value: number | Item;
+      } | null)
+    | ({
+        relationTo: 'organizations';
+        value: number | Organization;
+      } | null)
+    | ({
+        relationTo: 'events';
+        value: number | Event;
+      } | null)
+    | ({
         relationTo: 'encounter-maps';
         value: number | EncounterMap;
       } | null)
@@ -1034,6 +1143,72 @@ export interface CharactersSelect<T extends boolean = true> {
   name?: T;
   biography?: T;
   portrait?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "campaigns_select".
+ */
+export interface CampaignsSelect<T extends boolean = true> {
+  name?: T;
+  description?: T;
+  workspace?: T;
+  world?: T;
+  status?: T;
+  gameplayProfileName?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "sessions_select".
+ */
+export interface SessionsSelect<T extends boolean = true> {
+  name?: T;
+  sessionNumber?: T;
+  status?: T;
+  scheduledAt?: T;
+  summary?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "items_select".
+ */
+export interface ItemsSelect<T extends boolean = true> {
+  name?: T;
+  description?: T;
+  world?: T;
+  itemType?: T;
+  properties?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "organizations_select".
+ */
+export interface OrganizationsSelect<T extends boolean = true> {
+  name?: T;
+  description?: T;
+  world?: T;
+  headquarters?: T;
+  alignment?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "events_select".
+ */
+export interface EventsSelect<T extends boolean = true> {
+  name?: T;
+  description?: T;
+  world?: T;
+  eventType?: T;
+  timelinePosition?: T;
   updatedAt?: T;
   createdAt?: T;
 }

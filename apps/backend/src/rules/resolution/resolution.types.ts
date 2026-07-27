@@ -1,4 +1,4 @@
-import type { CanonicalUnitId, UnitAmount } from '@world-building/common';
+import type { CanonicalUnitId, UnitAmount } from '@wanderlust-vtt/common';
 
 export const RESOLUTION_METAMODEL_VERSION = 'resolution/1' as const;
 export const RESOLUTION_ARTIFACT_VERSION = 'resolution-artifact/1' as const;

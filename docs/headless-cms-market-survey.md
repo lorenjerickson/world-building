@@ -79,7 +79,7 @@ The repository currently has a fragmented content system rather than a single Po
   production-safe, reviewed migration history at the time.
 - Lore relationships are also written to LevelGraph, but no durable link ties those records to a versioned CMS document.
 - Campaigns and sessions are fixture data rather than persistent content models.
-- Much of the editable world object is cached and updated in browser `localStorage` under `aethelgard_worlds`; this can contain content newer or richer than PostgreSQL.
+- Much of the editable world object is cached and updated in browser `localStorage` under `wanderlust_vtt_worlds`; the frontend adopts data from the legacy `aethelgard_worlds` key on first read. This cache can contain content newer or richer than PostgreSQL.
 
 ### 3.2 Media
 
@@ -419,7 +419,7 @@ Exit: all referenced server media is available through the CMS authorization pat
 
 ### Phase 4 — Browser legacy import
 
-- Ship an authenticated, one-time importer that reads `aethelgard_worlds`, uploads browser-only data/images, and records an import receipt.
+- Ship an authenticated, one-time importer that reads `wanderlust_vtt_worlds` (after the frontend has adopted any legacy cache), uploads browser-only data/images, and records an import receipt.
 - Show users what will be imported and resolve collisions by legacy world ID and last-known update time.
 - Keep local data read-only after successful verification, then remove it only with user confirmation or after a documented retention period.
 

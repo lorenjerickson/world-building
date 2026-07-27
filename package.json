@@ -1,15 +1,15 @@
 {
-  "name": "world-building",
+  "name": "wanderlust-vtt",
   "private": true,
   "packageManager": "pnpm@10.13.1",
   "scripts": {
     "build": "turbo build",
-    "dev": "pnpm db:up && pnpm --filter @world-building/backend prisma:generate && pnpm db:migrate && turbo dev",
+    "dev": "pnpm db:up && pnpm --filter @wanderlust-vtt/backend prisma:generate && pnpm db:migrate && turbo dev",
     "lint": "turbo lint",
     "test": "turbo test",
-    "verify:backend-release": "pnpm --filter @world-building/backend verify:release",
+    "verify:backend-release": "pnpm --filter @wanderlust-vtt/backend verify:release",
     "db:up": "docker compose stop frontend backend cms && docker compose -f docker-compose.yml -f docker-compose.local.yml up -d cms-storage-init && docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --wait db cms-db cms-db-local cms-storage-local",
-    "db:migrate": "pnpm --filter @world-building/backend prisma:migrate:deploy",
+    "db:migrate": "pnpm --filter @wanderlust-vtt/backend prisma:migrate:deploy",
     "db:down": "docker compose -f docker-compose.yml -f docker-compose.local.yml down"
   },
   "devDependencies": {

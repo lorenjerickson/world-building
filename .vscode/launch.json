@@ -1,0 +1,89 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Stack: NestJS API",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/scripts/run-with-local-database.mjs",
+      "args": [
+        "pnpm",
+        "--filter",
+        "@wanderlust-vtt/backend",
+        "start:debug"
+      ],
+      "cwd": "${workspaceFolder}",
+      "autoAttachChildProcesses": true,
+      "restart": true,
+      "sourceMaps": true,
+      "outFiles": [
+        "${workspaceFolder}/apps/backend/dist/**/*.js"
+      ],
+      "skipFiles": [
+        "<node_internals>/**"
+      ],
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen"
+    },
+    {
+      "name": "Stack: Next.js frontend + server",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/apps/frontend/node_modules/next/dist/bin/next",
+      "args": [
+        "dev",
+        "--hostname",
+        "localhost",
+        "--port",
+        "3000"
+      ],
+      "runtimeArgs": [
+        "--inspect=9231"
+      ],
+      "cwd": "${workspaceFolder}/apps/frontend",
+      "sourceMaps": true,
+      "skipFiles": [
+        "<node_internals>/**"
+      ],
+      "serverReadyAction": {
+        "action": "openExternally",
+        "pattern": "- Local:.+(https?://.+)",
+        "uriFormat": "%s"
+      },
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen"
+    },
+    {
+      "name": "Stack: Payload CMS",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "--filter",
+        "@wanderlust-vtt/cms",
+        "dev"
+      ],
+      "cwd": "${workspaceFolder}",
+      "autoAttachChildProcesses": true,
+      "restart": true,
+      "sourceMaps": true,
+      "skipFiles": [
+        "<node_internals>/**"
+      ],
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Stack: Debug everything",
+      "configurations": [
+        "Stack: NestJS API",
+        "Stack: Next.js frontend + server",
+        "Stack: Payload CMS"
+      ],
+      "preLaunchTask": "stack: prepare",
+      "stopAll": true
+    }
+  ]
+}

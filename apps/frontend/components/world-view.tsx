@@ -7,6 +7,7 @@ import { LoreDocument, MarkdownLongText, type LoreFact, type LoreReference } fro
 import { deleteLoreImage, uploadLoreImage } from "@/lib/image-uploads";
 import { CharacterArtwork } from "@/components/character-artwork";
 import { AppBreadcrumbs } from "@/components/app-breadcrumbs";
+import { loadStoredWorlds, saveStoredWorlds } from "@/lib/wanderlust-storage";
 
 // --- Data Interfaces ---
 export interface LocationNode {
@@ -219,16 +220,8 @@ export function WorldView({ initialWorld, onBackToDashboard, initialTab = "overv
   const syncWorld = async (updatedWorld: WorldAsset) => {
     setIsSaving(true);
     // 1. Sync to LocalStorage
-    const saved = localStorage.getItem("aethelgard_worlds");
-    if (saved) {
-      try {
-        const history: WorldAsset[] = JSON.parse(saved);
-        const updatedHistory = [updatedWorld, ...history.filter((w) => w.id !== updatedWorld.id)];
-        localStorage.setItem("aethelgard_worlds", JSON.stringify(updatedHistory));
-      } catch (e) {
-        console.error("LocalStorage save error", e);
-      }
-    }
+    const history = loadStoredWorlds<WorldAsset>();
+    saveStoredWorlds([updatedWorld, ...history.filter((w) => w.id !== updatedWorld.id)]);
 
     // 2. Sync to Postgres + LevelGraph
     try {
@@ -402,9 +395,8 @@ export function WorldView({ initialWorld, onBackToDashboard, initialTab = "overv
           setSelectedItemId(null);
           
           // Save to LocalStorage history
-          const saved = localStorage.getItem("aethelgard_worlds");
-          const history = saved ? JSON.parse(saved) : [];
-          localStorage.setItem("aethelgard_worlds", JSON.stringify([newWorld, ...history]));
+          const history = loadStoredWorlds<WorldAsset>();
+          saveStoredWorlds([newWorld, ...history]);
           router.replace(`/world/${encodeURIComponent(newWorld.id)}`);
         } else {
           throw new Error("Invalid response format from server");

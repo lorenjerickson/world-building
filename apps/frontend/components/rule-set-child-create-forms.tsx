@@ -131,7 +131,7 @@ export function RuleDefinitionCreateForm({ definitions, modules, onCancel, onCre
   const [bodyLabelSynced, setBodyLabelSynced] = useState(false);
   const [authoringExperience, setAuthoringExperience] = useState<'grants' | 'vision' | 'running' | 'advanced'>('grants');
   const [grantsDraft, setGrantsDraft] = useState<GrantDraft[]>(() => []);
-  const [prerequisitesDraft, setPrerequisitesDraft] = useState<PrerequisiteSpec>(() => ({ mode: 'any', ids: [] }));
+  const [prerequisitesDraft, setPrerequisitesDraft] = useState<PrerequisiteSpec>(() => ({ mode: 'all', ids: [] }));
   const [guidedDraft, setGuidedDraft] = useState<GuidedTraitDraft>(() => defaultGuidedTraitDraft('vision'));
   const [diagnostics, setDiagnostics] = useState<AuthoringDiagnostic[]>([]);
   const [resolutionDraft, setResolutionDraft] = useState<ResolutionAuthoringDraft>();
@@ -349,7 +349,7 @@ export function RuleModuleEditForm({ artifact, onCancel, onDelete, onSaved, rule
 
   return (
     <form className="rule-set-child-form rule-set-artifact-editor" onSubmit={submit}>
-      <div className="rule-set-editor-heading"><div><span className="eyebrow">Edit or rename module</span><h4>{artifact.name}</h4></div><span className="badge">{artifact.status}</span></div>
+      <div className="rule-set-editor-heading"><div><span className="eyebrow">Edit or rename module</span><h2>{artifact.name}</h2></div><span className="badge">{artifact.status}</span></div>
       <div className="rule-set-form-grid">
         <label className="rule-set-field"><span>Name</span><input required maxLength={120} value={name} onChange={(event) => setName(event.target.value)} autoFocus /></label>
         <label className="rule-set-field"><span>Namespace</span><input required maxLength={120} pattern="[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*" value={namespace} onChange={(event) => setNamespace(event.target.value.toLowerCase())} /></label>
@@ -398,7 +398,7 @@ export function RuleDefinitionEditForm({ artifact, definitions, modules, onCance
     artifact.definitionType === 'trait' ? grantsDraftFromBody(artifact.body) : null,
   );
   const [prerequisitesDraft, setPrerequisitesDraft] = useState<PrerequisiteSpec>(() =>
-    artifact.definitionType === 'trait' ? prerequisitesDraftFromBody(artifact.body) : { mode: 'any', ids: [] },
+    artifact.definitionType === 'trait' ? prerequisitesDraftFromBody(artifact.body) : { mode: 'all', ids: [] },
   );
   const [conflict, setConflict] = useState<{ serverUpdatedAt: string; serverName: string } | undefined>();
   const [showHistory, setShowHistory] = useState(false);
@@ -576,7 +576,7 @@ export function RuleDefinitionEditForm({ artifact, definitions, modules, onCance
       <div className="rule-set-editor-heading">
         <div>
           <span className="eyebrow">Edit or rename {artifact.definitionType}</span>
-          <h4>{artifact.name}</h4>
+          <h2>{artifact.name}</h2>
           <span className="definition-schema-label">schema version: &quot;{artifact.definitionType}/{schemaVersion}&quot;</span>
         </div>
         <div className="rule-set-editor-heading-right">

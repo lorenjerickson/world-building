@@ -79,13 +79,13 @@ Apply it to an empty database with:
 
 ```bash
 DATABASE_URL=postgresql://... \
-  pnpm --filter @world-building/backend prisma:migrate:deploy
+  pnpm --filter @wanderlust-vtt/backend prisma:migrate:deploy
 
 DATABASE_URL=postgresql://... \
-  pnpm --filter @world-building/backend prisma:migrate:status
+  pnpm --filter @wanderlust-vtt/backend prisma:migrate:status
 
 DATABASE_URL=postgresql://... \
-  pnpm --filter @world-building/backend prisma:verify-legacy
+  pnpm --filter @wanderlust-vtt/backend prisma:verify-legacy
 ```
 
 Despite its historical name, `prisma:verify-legacy` verifies either a
@@ -106,7 +106,7 @@ that can mask the packaged artifacts. Verify the complete empty-volume and
 failure-gate path with:
 
 ```bash
-pnpm --filter @world-building/backend smoke:production
+pnpm --filter @wanderlust-vtt/backend smoke:production
 ```
 
 Local `pnpm dev` generates Prisma Client and runs `prisma migrate deploy` after
@@ -145,14 +145,14 @@ Adoption adds Prisma migration metadata without executing the baseline's
 
    ```bash
    DATABASE_URL=postgresql://... \
-     pnpm --filter @world-building/backend prisma:verify-legacy
+     pnpm --filter @wanderlust-vtt/backend prisma:verify-legacy
    ```
 
 4. If and only if the preflight passes, run:
 
    ```bash
    DATABASE_URL=postgresql://... \
-     pnpm --filter @world-building/backend prisma:adopt-baseline \
+     pnpm --filter @wanderlust-vtt/backend prisma:adopt-baseline \
      --apply --backup-confirmed
    ```
 
@@ -171,14 +171,14 @@ The legacy `migrations` table is retained beside `_prisma_migrations`.
 Against a disposable database representing the historical pre-Prisma schema:
 
 ```bash
-pnpm --filter @world-building/backend prisma:generate
-pnpm --filter @world-building/backend build
+pnpm --filter @wanderlust-vtt/backend prisma:generate
+pnpm --filter @wanderlust-vtt/backend build
 
 DATABASE_URL=postgresql://... \
   node apps/backend/scripts/create-legacy-schema-fixture.mjs
 
 DATABASE_URL=postgresql://... \
-  pnpm --filter @world-building/backend prisma:verify-legacy --seed-fixture
+  pnpm --filter @wanderlust-vtt/backend prisma:verify-legacy --seed-fixture
 ```
 
 The command:
@@ -199,7 +199,7 @@ between two databases:
 ```bash
 LEGACY_DATABASE_URL=postgresql://... \
 PRISMA_DATABASE_URL=postgresql://... \
-  pnpm --filter @world-building/backend prisma:compare-contracts
+  pnpm --filter @wanderlust-vtt/backend prisma:compare-contracts
 ```
 
 The fixture writes only its own fixed IDs and is intended solely for a

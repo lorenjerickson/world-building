@@ -5,9 +5,9 @@ import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 import { getPayload } from 'payload'
 
-import type { Cell, EncounterMapCanonical, ShapeKind } from '@world-building/common'
+import type { Cell, EncounterMapCanonical, ShapeKind } from '@wanderlust-vtt/common'
 
-const geometry = createRequire(import.meta.url)('@world-building/common') as typeof import('@world-building/common')
+const geometry = createRequire(import.meta.url)('@wanderlust-vtt/common') as typeof import('@wanderlust-vtt/common')
 const {
   buildCanonicalMesh,
   canonicalizeMap,

@@ -1,5 +1,5 @@
 {
-  "name": "@world-building/cms",
+  "name": "@wanderlust-vtt/cms",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -17,7 +17,7 @@
     "migrate:status": "cross-env NODE_OPTIONS=--no-deprecation payload migrate:status",
     "payload": "cross-env NODE_OPTIONS=--no-deprecation payload",
     "test:acceptance": "cross-env NODE_OPTIONS=--no-deprecation tsx scripts/run-acceptance.ts",
-    "test:encounter-acceptance": "pnpm --filter @world-building/common build && cross-env NODE_OPTIONS=--no-deprecation tsx scripts/run-encounter-acceptance.ts",
+    "test:encounter-acceptance": "pnpm --filter @wanderlust-vtt/common build && cross-env NODE_OPTIONS=--no-deprecation tsx scripts/run-encounter-acceptance.ts",
     "admin:local": "cross-env NODE_OPTIONS=--no-deprecation tsx scripts/upsert-local-admin.ts",
     "verify:generated": "node scripts/verify-generated.mjs",
     "verify:migrations": "node scripts/verify-migrations.mjs",
@@ -25,7 +25,7 @@
     "cms:verify-schema": "pnpm verify:policy && pnpm verify:generated && pnpm verify:migrations && pnpm migrate:status && pnpm build"
   },
   "dependencies": {
-    "@world-building/common": "workspace:*",
+    "@wanderlust-vtt/common": "workspace:*",
     "@payloadcms/db-postgres": "3.86.0",
     "@payloadcms/next": "3.86.0",
     "@payloadcms/richtext-lexical": "3.86.0",

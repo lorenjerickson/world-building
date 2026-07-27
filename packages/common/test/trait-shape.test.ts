@@ -48,3 +48,29 @@ test('terminal paths recurse through every repeated collection segment', () => {
     ],
   }]);
 });
+
+test('collection capacity is part of the effective shape and rejects overflow', () => {
+  const definitions = [
+    trait('trait:item', []),
+    trait('trait:pack', [{
+      dataType: 'trait-collection',
+      key: 'contents',
+      capacity: 1,
+      acceptedTraits: ['trait:item'],
+    }, {
+      dataType: 'trait',
+      ref: 'trait:item',
+      into: 'this.contents',
+      count: 2,
+    }]),
+  ];
+  const shape = buildTraitShape({
+    definitions,
+    prerequisiteIds: ['trait:pack'],
+    prerequisiteMode: 'all',
+  });
+  const contents = shape.nodes.find((node) => node.path.join('.') === 'contents');
+
+  assert.equal(contents?.kind === 'collection' ? contents.capacity : undefined, 1);
+  assert.equal(shape.diagnostics[0]?.code, 'collection-capacity-exceeded');
+});

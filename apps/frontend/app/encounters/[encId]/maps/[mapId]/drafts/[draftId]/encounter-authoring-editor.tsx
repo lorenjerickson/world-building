@@ -8,7 +8,7 @@ import {
   type EncounterMapCanonical,
   type FaceName,
   type Vec3,
-} from "@world-building/common";
+} from "@wanderlust-vtt/common";
 import { SpikeScene } from "@/app/encounters/spike/spike-scene";
 import type { EncounterEditMode, EncounterSurfaceAction, EncounterSurfaceHit } from "@/app/encounters/spike/webgl-scene";
 

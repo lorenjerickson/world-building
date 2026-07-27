@@ -4,7 +4,7 @@ import { useMemo, useRef, useState } from "react";
 import { Canvas, useFrame, useThree, type ThreeEvent } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
-import { buildIndexedMeshBuffers, subdivideMesh, type FaceName, type Triangle, type Vec3 } from "@world-building/common";
+import { buildIndexedMeshBuffers, subdivideMesh, type FaceName, type Triangle, type Vec3 } from "@wanderlust-vtt/common";
 
 export type EncounterEditMode = "place" | "shape" | "texture";
 export type EncounterSurfaceHit = {

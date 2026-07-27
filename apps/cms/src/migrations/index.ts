@@ -5,6 +5,7 @@ import * as migration_20260715_003831_add_rule_set_collections from './20260715_
 import * as migration_20260715_142221_phase2_definition_types from './20260715_142221_phase2_definition_types';
 import * as migration_20260720_013818_phase1_encounter_maps from './20260720_013818_phase1_encounter_maps';
 import * as migration_20260720_013916_phase1_encounter_finalization_idempotency from './20260720_013916_phase1_encounter_finalization_idempotency';
+import * as migration_20260726_205559_add_core_content_collections from './20260726_205559_add_core_content_collections';
 
 export const migrations = [
   {
@@ -40,6 +41,11 @@ export const migrations = [
   {
     up: migration_20260720_013916_phase1_encounter_finalization_idempotency.up,
     down: migration_20260720_013916_phase1_encounter_finalization_idempotency.down,
-    name: '20260720_013916_phase1_encounter_finalization_idempotency'
+    name: '20260720_013916_phase1_encounter_finalization_idempotency',
+  },
+  {
+    up: migration_20260726_205559_add_core_content_collections.up,
+    down: migration_20260726_205559_add_core_content_collections.down,
+    name: '20260726_205559_add_core_content_collections'
   },
 ];

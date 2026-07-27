@@ -37,6 +37,7 @@ function comparableNode(node: TraitShapeNode): Record<string, unknown> {
       ...common,
       acceptedTraitIds: [...node.acceptedTraitIds].sort(),
       acceptsMode: node.acceptsMode,
+      capacity: node.capacity,
       entries: node.entries
         .map((entry) => ({ ...entry }))
         .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))),
@@ -58,7 +59,8 @@ function describeNode(node: TraitShapeNode): string {
   if (node.kind === 'branch') return `trait branch for ${node.traitId}`;
   if (node.kind === 'collection') {
     const entryCount = node.entries.reduce((total, entry) => total + entry.count, 0);
-    return `trait collection with ${entryCount} mounted ${entryCount === 1 ? 'entry' : 'entries'}`;
+    const capacity = node.capacity === undefined ? 'unbounded capacity' : `capacity ${node.capacity}`;
+    return `trait collection with ${capacity} and ${entryCount} mounted ${entryCount === 1 ? 'entry' : 'entries'}`;
   }
   const constraints = [
     node.required ? 'required' : 'optional',

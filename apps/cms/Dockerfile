@@ -7,7 +7,7 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY apps/cms/package.json ./apps/cms/
 COPY packages/common/package.json ./packages/common/
-RUN pnpm install --filter=@world-building/cms... --frozen-lockfile
+RUN pnpm install --filter=@wanderlust-vtt/cms... --frozen-lockfile
 
 # ── Stage 2: build ────────────────────────────────────────────────────────────
 FROM node:24-bookworm-slim AS build
@@ -26,7 +26,7 @@ ENV S3_ACCESS_KEY_ID=build-only-access-key
 ENV S3_SECRET_ACCESS_KEY=build-only-secret-key
 ENV S3_BUCKET=build-only-bucket
 ENV S3_ENDPOINT=http://127.0.0.1:9000
-RUN pnpm --filter=@world-building/cms... build
+RUN pnpm --filter=@wanderlust-vtt/cms... build
 
 # ── Stage 3: runtime ──────────────────────────────────────────────────────────
 FROM node:24-bookworm-slim AS runtime

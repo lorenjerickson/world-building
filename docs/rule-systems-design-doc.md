@@ -12,13 +12,13 @@ disposition: draft
 | --- | --- |
 | Status | Proposed |
 | Audience | Product, architecture, backend, frontend, content, QA, and operations |
-| Primary owner | World Building platform team |
+| Primary owner | Wanderlust VTT platform team |
 | Last updated | 2026-07-14 |
 | Related designs | [Realtime multiplayer](./realtime-multiplayer-design.md), [Headless CMS survey](./headless-cms-market-survey.md), [Payload implementation](./payload-cms-implementation.md) |
 
 ## 1. Executive summary
 
-The World Building platform will let a game master (GM) design, publish, compose, and apply original rule sets to worlds and campaigns. A rule set describes data, calculations, constraints, actions, effects, resources, generation guidance, and resolution procedures using a typed, declarative model. Familiar concepts such as characters, skills, damage, turns, or spell slots may be created by an author, but none is built into the platform's core model.
+Wanderlust VTT will let a game master (GM) design, publish, compose, and apply original rule sets to worlds and campaigns. A rule set describes data, calculations, constraints, actions, effects, resources, generation guidance, and resolution procedures using a typed, declarative model. Familiar concepts such as characters, skills, damage, turns, or spell slots may be created by an author, but none is built into the platform's core model.
 
 The design deliberately separates four concerns:
 

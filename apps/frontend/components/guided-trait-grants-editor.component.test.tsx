@@ -10,7 +10,9 @@ import {
 } from '../lib/rule-sets';
 import {
   buildGrantsBody,
+  grantsDraftFromBody,
   GuidedTraitGrantsEditor,
+  prerequisitesDraftFromBody,
   type GrantDraft,
 } from './guided-trait-grants-editor';
 
@@ -97,12 +99,9 @@ function grant(overrides: Partial<GrantDraft>): GrantDraft {
     structuralMountSelectorMode: 'all',
     structuralMountOrdinal: '1',
     structuralMountSelectors: [],
-    slotCount: '1',
-    slotGrantTypes: [],
+    collectionCapacity: '',
     acceptedTraits: [],
     acceptedTraitsMode: 'any',
-    slotAffinityTypes: [],
-    slotAffinityMode: 'any',
     ...overrides,
   };
 }
@@ -111,6 +110,10 @@ async function renderEditor(
   initialGrants: GrantDraft[],
   prerequisiteIds = ['trait:creature'],
   onPublish?: (grants: GrantDraft[]) => Promise<string>,
+  options: {
+    prerequisiteMode?: 'any' | 'all';
+    traitDefinitions?: RuleDefinitionResource[];
+  } = {},
 ) {
   const window = new Window({ url: 'http://localhost/' });
   const previousGlobals = new Map<string, PropertyDescriptor | undefined>();
@@ -145,8 +148,8 @@ async function renderEditor(
         <GuidedTraitGrantsEditor
           traitName="Winged Boots"
           grants={grants}
-          prerequisites={{ mode: 'all', ids: prerequisiteIds }}
-          traitDefinitions={traitDefinitions}
+          prerequisites={{ mode: options.prerequisiteMode ?? 'all', ids: prerequisiteIds }}
+          traitDefinitions={options.traitDefinitions ?? traitDefinitions}
           onChange={setGrants}
         />
         {onPublish && (
@@ -209,6 +212,239 @@ async function chooseHighlightedOption(
     );
   });
 }
+
+test('new trait grants focus the reference and tab confirms the best matching trait', async () => {
+  const rendered = await renderEditor([]);
+  try {
+    const addTrait = [...rendered.container.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent === '+ trait grant');
+    assert.ok(addTrait);
+    await act(async () => {
+      addTrait.click();
+      await Promise.resolve();
+    });
+
+    const search = rendered.container.querySelector<HTMLInputElement>(
+      'input[aria-label="Search ref options"]',
+    );
+    assert.ok(search);
+    assert.equal(rendered.window.document.activeElement, search);
+    assert.equal(rendered.container.querySelector('input[aria-label="Trait Count"]'), null);
+
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(rendered.window.HTMLInputElement.prototype, 'value')?.set;
+      valueSetter?.call(search, 'fl');
+      search.dispatchEvent(new rendered.window.InputEvent('input', { bubbles: true }) as unknown as Event);
+    });
+    await act(async () => {
+      search.dispatchEvent(
+        new rendered.window.KeyboardEvent('keydown', { key: 'Tab', bubbles: true }) as unknown as Event,
+      );
+    });
+
+    assert.ok(rendered.container.querySelector('button[aria-label="Ref: Fly"]'));
+    const keyInput = rendered.container.querySelector<HTMLInputElement>('input[aria-label="Key"]');
+    assert.ok(keyInput);
+    assert.equal(rendered.window.document.activeElement, keyInput);
+  } finally {
+    await rendered.cleanup();
+  }
+});
+
+test('collection capacity and accepted traits support keyboard chaining', async () => {
+  const rendered = await renderEditor([]);
+  try {
+    const addCollection = [...rendered.container.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent === '+ trait collection');
+    assert.ok(addCollection);
+    await act(async () => {
+      addCollection.click();
+      await Promise.resolve();
+    });
+
+    const key = rendered.container.querySelector<HTMLInputElement>('input[aria-label="Key"]');
+    assert.ok(key);
+    assert.equal(rendered.window.document.activeElement, key);
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(rendered.window.HTMLInputElement.prototype, 'value')?.set;
+      valueSetter?.call(key, 'belt');
+      key.dispatchEvent(new rendered.window.InputEvent('input', { bubbles: true }) as unknown as Event);
+      key.dispatchEvent(
+        new rendered.window.KeyboardEvent('keydown', { key: 'Tab', bubbles: true }) as unknown as Event,
+      );
+    });
+
+    const capacity = rendered.container.querySelector<HTMLInputElement>(
+      'input[aria-label="Collection Capacity"]',
+    );
+    assert.ok(capacity);
+    assert.equal(rendered.window.document.activeElement, capacity);
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(rendered.window.HTMLInputElement.prototype, 'value')?.set;
+      valueSetter?.call(capacity, '4');
+      capacity.dispatchEvent(new rendered.window.InputEvent('input', { bubbles: true }) as unknown as Event);
+      capacity.dispatchEvent(
+        new rendered.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }) as unknown as Event,
+      );
+    });
+
+    const mode = rendered.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Accepted base trait matching mode"]',
+    );
+    assert.ok(mode);
+    assert.equal(rendered.window.document.activeElement, mode);
+    await act(async () => {
+      mode.dispatchEvent(
+        new rendered.window.KeyboardEvent('keydown', { key: ' ', bubbles: true }) as unknown as Event,
+      );
+    });
+    assert.equal(mode.textContent, 'all of:');
+    assert.equal(rendered.window.document.activeElement, mode);
+
+    await act(async () => {
+      mode.dispatchEvent(
+        new rendered.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }) as unknown as Event,
+      );
+    });
+    const search = rendered.container.querySelector<HTMLInputElement>(
+      'input[aria-label="Search accepted trait options"]',
+    );
+    assert.ok(search);
+    assert.equal(rendered.window.document.activeElement, search);
+
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(rendered.window.HTMLInputElement.prototype, 'value')?.set;
+      valueSetter?.call(search, 'die');
+      search.dispatchEvent(new rendered.window.InputEvent('input', { bubbles: true }) as unknown as Event);
+    });
+    await act(async () => {
+      search.dispatchEvent(
+        new rendered.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }) as unknown as Event,
+      );
+      await Promise.resolve();
+    });
+
+    const addBaseTrait = [...rendered.container.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent === '+ base trait');
+    assert.ok(addBaseTrait);
+    assert.equal(rendered.window.document.activeElement, addBaseTrait);
+    await act(async () => {
+      addBaseTrait.dispatchEvent(
+        new rendered.window.KeyboardEvent('keydown', { key: ' ', bubbles: true }) as unknown as Event,
+      );
+      await Promise.resolve();
+    });
+    const nextSearch = rendered.container.querySelector<HTMLInputElement>(
+      'input[aria-label="Search accepted trait options"]',
+    );
+    assert.ok(nextSearch);
+    assert.equal(rendered.window.document.activeElement, nextSearch);
+  } finally {
+    await rendered.cleanup();
+  }
+});
+
+test('collection capacity serializes without slot-specific vocabulary', () => {
+  const body = buildGrantsBody([
+    grant({
+      dataType: 'trait-collection',
+      key: 'quickAccess',
+      collectionCapacity: '4',
+      acceptedTraits: ['trait:die'],
+    }),
+  ]);
+
+  assert.deepEqual(body.grants, [{
+    dataType: 'trait-collection',
+    key: 'quickAccess',
+    required: true,
+    capacity: 4,
+    acceptedTraits: ['trait:die'],
+  }]);
+});
+
+test('removed slot grants remain available through raw JSON instead of malformed guided controls', () => {
+  for (const dataType of ['slot', 'slot-affinity']) {
+    assert.equal(grantsDraftFromBody({
+      metamodelVersion: 'trait/2',
+      grants: [{ dataType }],
+    }), null);
+  }
+});
+
+test('new prerequisite drafts default to requiring every selected trait', () => {
+  assert.deepEqual(prerequisitesDraftFromBody({
+    metamodelVersion: 'trait/2',
+    grants: [],
+  }), {
+    mode: 'all',
+    ids: [],
+  });
+});
+
+test('modifier paths expose root fields guaranteed by all prerequisites', async () => {
+  const definitions = [
+    definition('trait:subject-a', 'Subject A', [
+      { dataType: 'number', key: 'range', label: 'Range', unit: 'ft' },
+    ]),
+    definition('trait:subject-b', 'Subject B', [
+      { dataType: 'modifier', operation: 'sets', field: 'self.range', amount: 5 },
+    ]),
+  ];
+  const rendered = await renderEditor(
+    [grant({ modifierOperation: 'increases' })],
+    ['trait:subject-a', 'trait:subject-b'],
+    undefined,
+    { prerequisiteMode: 'all', traitDefinitions: definitions },
+  );
+  try {
+    const pathButton = rendered.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Modifier path: not selected"]',
+    );
+    assert.ok(pathButton);
+    await act(async () => pathButton.click());
+    await act(async () => optionButton(rendered.container, 'self').click());
+
+    const range = optionButton(rendered.container, 'Range');
+    assert.equal(range.querySelector('.combo-option-hint')?.textContent, 'number');
+    await act(async () => range.click());
+    assert.ok(rendered.container.querySelector(
+      'button[aria-label="Modifier path: self › range"]',
+    ));
+  } finally {
+    await rendered.cleanup();
+  }
+});
+
+test('modifier paths explain empty intersections for alternative prerequisites', async () => {
+  const definitions = [
+    definition('trait:subject-a', 'Subject A', [
+      { dataType: 'number', key: 'range', label: 'Range', unit: 'ft' },
+    ]),
+    definition('trait:subject-b', 'Subject B', []),
+  ];
+  const rendered = await renderEditor(
+    [grant({ modifierOperation: 'increases' })],
+    ['trait:subject-a', 'trait:subject-b'],
+    undefined,
+    { prerequisiteMode: 'any', traitDefinitions: definitions },
+  );
+  try {
+    const pathButton = rendered.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Modifier path: not selected"]',
+    );
+    assert.ok(pathButton);
+    await act(async () => pathButton.click());
+    await act(async () => optionButton(rendered.container, 'self').click());
+
+    assert.match(
+      rendered.container.querySelector('[role="status"]')?.textContent ?? '',
+      /“Any of” prerequisites expose only fields shared by every alternative/i,
+    );
+  } finally {
+    await rendered.cleanup();
+  }
+});
 
 test('modifier paths support accessible full-path search and keyboard selection', async () => {
   const rendered = await renderEditor([grant({})]);

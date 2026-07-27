@@ -4,7 +4,7 @@ import {
   traitSatisfiesCollection,
   traitShapeTerminalPaths,
   type TraitShapeNode,
-} from '@world-building/common';
+} from '@wanderlust-vtt/common';
 import { compileCreatureCapabilities } from '../metamodel/creature-capability.compiler';
 import { compileResolutionDefinitions } from '../resolution/resolution.compiler';
 import { validateTemplateDefinition } from '../templates/template.compiler';

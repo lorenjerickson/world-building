@@ -242,7 +242,7 @@ The Phase 6 compatibility artifact is
   foreign keys, and preserves `timestamptz(6)` and database UUID defaults.
 - `prisma:verify-legacy` checks physical parity and exercises every model.
 - `prisma validate` succeeds.
-- `pnpm --filter @world-building/backend build` succeeds with the locally
+- `pnpm --filter @wanderlust-vtt/backend build` succeeds with the locally
   generated Prisma client.
 
 ### Incomplete or unsafe work

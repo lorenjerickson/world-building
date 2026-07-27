@@ -743,29 +743,97 @@ test('recursive trait compiler normalizes compatible units and rejects dimension
   assert.ok(invalidCondition.diagnostics.some((item) => item.code === 'RULE_TRAIT_MODIFIER_CONDITION_VALUE_INVALID'));
 });
 
-test('trait composition validation preserves keyless equipment-slot grants', () => {
-  const result = compileTraitCompositions([
+test('trait composition validates and enforces collection capacity', () => {
+  const valid = compileTraitCompositions([
     {
       externalId: 'trait:item',
       name: 'Item',
-      body: { metamodelVersion: 'trait/1', grants: [] },
+      body: { metamodelVersion: 'trait/2', grants: [] },
     },
     {
-      externalId: 'trait:equipped',
-      name: 'Equipped',
+      externalId: 'trait:pack',
+      name: 'Pack',
       body: {
-        metamodelVersion: 'trait/1',
+        metamodelVersion: 'trait/2',
+        grants: [
+          {
+            dataType: 'trait-collection',
+            key: 'contents',
+            capacity: 2,
+            acceptedTraits: ['trait:item'],
+          },
+          {
+            dataType: 'trait',
+            ref: 'trait:item',
+            into: 'this.contents',
+            count: 2,
+          },
+        ],
+      },
+    },
+  ]);
+  assert.equal(valid.valid, true, JSON.stringify(valid.diagnostics));
+  const contents = valid.artifact?.traits
+    .find((trait) => trait.traitId === 'trait:pack')
+    ?.nodes.find((node) => node.kind === 'collection' && node.path.join('.') === 'contents');
+  assert.equal(contents?.kind === 'collection' ? contents.capacity : undefined, 2);
+
+  const invalidCapacity = compileTraitCompositions([{
+    externalId: 'trait:pack',
+    name: 'Pack',
+    body: {
+      metamodelVersion: 'trait/2',
+      grants: [{
+        dataType: 'trait-collection',
+        key: 'contents',
+        capacity: 0,
+      }],
+    },
+  }]);
+  assert.equal(invalidCapacity.valid, false);
+  assert.ok(invalidCapacity.diagnostics.some((item) =>
+    item.code === 'RULE_TRAIT_COLLECTION_CAPACITY_INVALID'));
+
+  const overflowing = compileTraitCompositions([
+    {
+      externalId: 'trait:item',
+      name: 'Item',
+      body: { metamodelVersion: 'trait/2', grants: [] },
+    },
+    {
+      externalId: 'trait:pack',
+      name: 'Pack',
+      body: {
+        metamodelVersion: 'trait/2',
         grants: [{
-          dataType: 'slot',
-          slotTypes: ['hand'],
-          count: 2,
+          dataType: 'trait-collection',
+          key: 'contents',
+          capacity: 1,
           acceptedTraits: ['trait:item'],
+        }, {
+          dataType: 'trait',
+          ref: 'trait:item',
+          into: 'this.contents',
+          count: 2,
         }],
       },
     },
   ]);
+  assert.equal(overflowing.valid, false);
+  assert.ok(overflowing.diagnostics.some((item) =>
+    item.code === 'RULE_TRAIT_COLLECTION_CAPACITY_EXCEEDED'));
+});
 
-  assert.equal(result.valid, true, JSON.stringify(result.diagnostics));
+test('trait composition rejects removed slot grant types', () => {
+  for (const dataType of ['slot', 'slot-affinity']) {
+    const result = compileTraitCompositions([{
+      externalId: `trait:${dataType}`,
+      name: dataType,
+      body: { metamodelVersion: 'trait/2', grants: [{ dataType }] },
+    }]);
+    assert.equal(result.valid, false);
+    assert.ok(result.diagnostics.some((item) => item.code === 'RULE_TRAIT_GRANT_TYPE_INVALID'));
+  }
 });
 
 test('trait/1 migration produces explicit trait/2 placement without semantic path changes', () => {
