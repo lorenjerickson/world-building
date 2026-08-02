@@ -1,5 +1,5 @@
-import { WorldRoute } from "@/components/world-route";
+import { NewWorldForm } from '@/components/new-world-form';
 
 export default function NewWorldPage() {
-  return <WorldRoute />;
+  return <NewWorldForm />;
 }

@@ -9,7 +9,7 @@ export async function POST(
     const body = await request.json();
     const { prompt, parentId } = body;
 
-    const backendUrl = process.env.BACKEND_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+    const backendUrl = process.env.BACKEND_URL || process.env.NEXT_PUBLIC_API_URL || 'https://local.api.wanderlust-vtt.com:8444';
     const response = await fetch(`${backendUrl}/api/generate/world/${id}/${elementType}`, {
       method: 'POST',
       headers: {

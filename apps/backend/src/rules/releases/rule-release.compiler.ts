@@ -23,6 +23,9 @@ export interface RuleReleaseDiagnostic {
   message: string;
   path: string;
   severity: 'error' | 'warning';
+  definitionExternalId?: string;
+  definitionName?: string;
+  grantIndex?: number;
 }
 
 export interface CompiledRuleRelease {
@@ -61,12 +64,50 @@ function hash(value: unknown): string {
 
 function prefixDiagnostics(
   prefix: string,
-  values: Array<{ code: string; message: string; path: string; severity: 'error' | 'warning' }>,
+  values: RuleReleaseDiagnostic[],
 ): RuleReleaseDiagnostic[] {
   return values.map((diagnostic) => ({
     ...diagnostic,
     path: `${prefix}${diagnostic.path ? `.${diagnostic.path}` : ''}`,
   }));
+}
+
+function contextualizeReleaseDiagnostics(
+  diagnostics: RuleReleaseDiagnostic[],
+  definitions: {
+    all: RuleDefinitionResource[];
+    creatures: RuleDefinitionResource[];
+    resolutions: RuleDefinitionResource[];
+    templates: RuleDefinitionResource[];
+  },
+): void {
+  const definitionForPath = (path: string): RuleDefinitionResource | undefined => {
+    const indexedGroups: Array<[RegExp, RuleDefinitionResource[]]> = [
+      [/^artifacts\.creatureCapabilities\.definitions\[(\d+)\]/, definitions.creatures],
+      [/^artifacts\.resolution\.definitions\[(\d+)\]/, definitions.resolutions],
+      [/^artifacts\.templates\[(\d+)\]/, definitions.templates],
+      [/^definitions\[(\d+)\]/, definitions.all],
+    ];
+    for (const [pattern, candidates] of indexedGroups) {
+      const match = path.match(pattern);
+      if (match) return candidates[Number(match[1])];
+    }
+    return undefined;
+  };
+
+  for (const diagnostic of diagnostics) {
+    if (!diagnostic.definitionExternalId) {
+      const definition = definitionForPath(diagnostic.path);
+      if (definition) {
+        diagnostic.definitionExternalId = definition.externalId;
+        diagnostic.definitionName = definition.name;
+      }
+    }
+    if (diagnostic.grantIndex === undefined) {
+      const grantMatch = diagnostic.path.match(/\.body\.grants\[(\d+)\]/);
+      if (grantMatch) diagnostic.grantIndex = Number(grantMatch[1]);
+    }
+  }
 }
 
 function validateResolutionDieTraits(
@@ -356,12 +397,12 @@ export function compileRuleRelease(
       body: definition.body,
       tags: definition.tags,
     }));
-  const creatureSources = sortedDefinitions
-    .filter((definition) => definition.body.metamodelVersion === 'creature-capabilities/1')
-    .map((definition) => definition.body);
-  const resolutionSources = sortedDefinitions
-    .filter((definition) => definition.body.metamodelVersion === 'resolution/1')
-    .map((definition) => definition.body);
+  const creatureDefinitions = sortedDefinitions
+    .filter((definition) => definition.body.metamodelVersion === 'creature-capabilities/1');
+  const creatureSources = creatureDefinitions.map((definition) => definition.body);
+  const resolutionDefinitions = sortedDefinitions
+    .filter((definition) => definition.body.metamodelVersion === 'resolution/1');
+  const resolutionSources = resolutionDefinitions.map((definition) => definition.body);
   const templateSources = sortedDefinitions
     .filter((definition) => definition.body.metamodelVersion === 'template/1');
   const recognized = new Set([
@@ -404,6 +445,13 @@ export function compileRuleRelease(
       `artifacts.templates[${index}]`,
       validateTemplateDefinition(definition.body),
     ));
+  });
+
+  contextualizeReleaseDiagnostics(diagnostics, {
+    all: sortedDefinitions,
+    creatures: creatureDefinitions,
+    resolutions: resolutionDefinitions,
+    templates: templateSources,
   });
 
   if (diagnostics.some((diagnostic) => diagnostic.severity === 'error')) {

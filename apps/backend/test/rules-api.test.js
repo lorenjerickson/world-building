@@ -22,15 +22,21 @@ const { CompositionManifestService } = require('../dist/rules/releases/compositi
 const { RuleDefinitionSnapshotService } = require('../dist/rules/catalog/rule-definition-snapshot.service');
 const { classifyPrismaError } = require('../dist/database/prisma-exception.filter');
 const { serializePrismaValue } = require('../dist/database/prisma-response.interceptor');
+const { mediaTypeAcceptsMimeType } = require('../dist/media-assets/media-assets.types');
+const { PayloadMediaAssetsRepository } = require('../dist/media-assets/payload-media-assets.repository');
+const { CmsAdminSessionService } = require('../dist/cms/cms-admin-session.service');
 const { Prisma } = require('@prisma/client');
 
 const originalFetch = global.fetch;
 const originalRuleApiToken = process.env.RULE_API_INTERNAL_TOKEN;
+const originalCmsInternalToken = process.env.CMS_INTERNAL_TOKEN;
 
 afterEach(() => {
   global.fetch = originalFetch;
   if (originalRuleApiToken === undefined) delete process.env.RULE_API_INTERNAL_TOKEN;
   else process.env.RULE_API_INTERNAL_TOKEN = originalRuleApiToken;
+  if (originalCmsInternalToken === undefined) delete process.env.CMS_INTERNAL_TOKEN;
+  else process.env.CMS_INTERNAL_TOKEN = originalCmsInternalToken;
 });
 
 function context(headers) {
@@ -76,6 +82,120 @@ test('rule API fails closed when the trusted gateway token is not configured', (
     () => guard.canActivate(context({ 'x-auth0-sub': 'auth0|author' })),
     (error) => error.getResponse().code === 'RULE_API_NOT_CONFIGURED',
   );
+});
+
+test('CMS admin handoff is short-lived, actor-bound, and signed outside the browser', () => {
+  process.env.CMS_INTERNAL_TOKEN = 'cms-admin-secret';
+  const ticket = new CmsAdminSessionService().createTicket({
+    auth0Subject: 'auth0|gm',
+    email: 'gm@example.com',
+  });
+  const [encodedClaims, signature] = ticket.split('.');
+  const claims = JSON.parse(Buffer.from(encodedClaims, 'base64url').toString('utf8'));
+  const expectedSignature = require('node:crypto')
+    .createHmac('sha256', 'cms-admin-secret')
+    .update(encodedClaims)
+    .digest('base64url');
+
+  assert.equal(signature, expectedSignature);
+  assert.equal(claims.sub, 'auth0|gm');
+  assert.equal(claims.email, 'gm@example.com');
+  assert.equal(claims.aud, 'payload-admin');
+  assert.equal(claims.iss, 'wanderlust-api');
+  assert.equal(claims.exp - claims.iat, 30);
+  assert.match(claims.jti, /^[0-9a-f-]{36}$/);
+});
+
+test('media asset catalog filters trusted MIME metadata and uploads through Payload', async () => {
+  assert.equal(mediaTypeAcceptsMimeType('audio', 'audio/mpeg'), true);
+  assert.equal(mediaTypeAcceptsMimeType('audio', 'video/mp4'), false);
+  assert.equal(mediaTypeAcceptsMimeType('text', 'application/json'), true);
+
+  const calls = [];
+  global.fetch = async (url, options = {}) => {
+    calls.push({ url: String(url), options });
+    if (options.method === 'POST') {
+      assert.ok(options.body instanceof FormData);
+      const payload = JSON.parse(options.body.get('_payload'));
+      assert.equal(payload.purpose, 'reference');
+      assert.deepEqual(payload.tags, [{ value: 'trait-audio' }]);
+      return new Response(JSON.stringify({
+        doc: { id: 9, altText: 'rain.mp3', filename: 'rain.mp3', filesize: 5, mimeType: 'audio/mpeg', purpose: 'reference' },
+      }), { status: 200 });
+    }
+    if (String(url).includes('filesize')) {
+      return Response.json({ docs: [] });
+    }
+    return new Response(JSON.stringify({ docs: [
+      { id: 7, altText: 'Rain', filename: 'rain.mp3', filesize: 5, mimeType: 'audio/mpeg', purpose: 'reference' },
+      { id: 8, altText: 'Forest', filename: 'forest.webp', mimeType: 'image/webp', purpose: 'reference' },
+    ], page: 1, totalDocs: 1, totalPages: 1 }), { status: 200 });
+  };
+
+  const repository = new PayloadMediaAssetsRepository();
+  const actor = { auth0Subject: 'auth0|gm', email: 'gm@example.com' };
+  assert.deepEqual(await repository.list(actor, 'audio', { page: 1 }), {
+    items: [{
+      id: '7',
+      filename: 'rain.mp3',
+      label: 'Rain',
+      mediaType: 'audio',
+      mimeType: 'audio/mpeg',
+      size: 5,
+      url: '/api/media-assets/7/rain.mp3',
+    }],
+    page: 1,
+    totalItems: 1,
+    totalPages: 1,
+  });
+  assert.deepEqual(await repository.upload(actor, 'audio', {
+    buffer: Buffer.from('audio'),
+    mimetype: 'audio/mpeg',
+    originalname: 'rain.mp3',
+  }), {
+    id: '9',
+    filename: 'rain.mp3',
+    label: 'rain.mp3',
+    mediaType: 'audio',
+    mimeType: 'audio/mpeg',
+    size: 5,
+    url: '/api/media-assets/9/rain.mp3',
+  });
+  assert.equal(calls[0].options.headers['x-auth0-sub'], 'auth0|gm');
+  assert.equal(
+    calls[0].options.headers['x-cms-internal-token'],
+    process.env.CMS_INTERNAL_TOKEN || '',
+  );
+});
+
+test('media upload reuses a same-name same-size workspace asset', async () => {
+  const calls = [];
+  global.fetch = async (url, options = {}) => {
+    calls.push({ url: String(url), options });
+    return Response.json({
+      docs: [{
+        id: 12,
+        altText: 'Storm',
+        filename: 'Storm.MP3',
+        filesize: 5,
+        mimeType: 'audio/mpeg',
+        purpose: 'reference',
+      }],
+    });
+  };
+
+  const repository = new PayloadMediaAssetsRepository();
+  const result = await repository.upload(
+    { auth0Subject: 'auth0|gm', email: 'gm@example.com' },
+    'audio',
+    { buffer: Buffer.from('audio'), mimetype: 'audio/mpeg', originalname: 'storm.mp3' },
+  );
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].options.method, undefined);
+  assert.equal(result.id, '12');
+  assert.equal(result.reusedExisting, true);
+  assert.equal(result.size, 5);
 });
 
 test('rule API validation and ID parsing emit stable errors', async () => {
@@ -532,6 +652,54 @@ test('recursive trait compiler preserves terminal schemas and rejects invalid fi
   assert.ok(invalid.diagnostics.some((item) => item.code === 'RULE_TRAIT_FIELD_BOUNDS_INVALID'));
   assert.ok(invalid.diagnostics.some((item) => item.code === 'RULE_TRAIT_FIELD_DEFAULT_OUT_OF_RANGE'));
   assert.ok(invalid.diagnostics.some((item) => item.code === 'RULE_TRAIT_FIELD_DEFAULT_INVALID'));
+});
+
+test('trait media fields preserve a separately validated media type', () => {
+  const valid = compileTraitCompositions([{
+    externalId: 'trait:audio-layer',
+    name: 'Audio Layer',
+    body: {
+      metamodelVersion: 'trait/2',
+      grants: [{
+        dataType: 'media',
+        key: 'ambientAudio',
+        label: 'Ambient audio',
+        mediaType: 'audio',
+        required: true,
+        default: '42',
+      }],
+    },
+  }]);
+  assert.equal(valid.valid, true, JSON.stringify(valid.diagnostics));
+  assert.deepEqual(valid.artifact.traits[0].nodes[0], {
+    kind: 'terminal',
+    path: ['ambientAudio'],
+    label: 'Ambient audio',
+    dataType: 'media',
+    required: true,
+    default: '42',
+    allowedValues: undefined,
+    mediaType: 'audio',
+    sourceTraitId: 'trait:audio-layer',
+  });
+
+  const invalid = compileTraitCompositions([{
+    externalId: 'trait:invalid-layer',
+    name: 'Invalid Layer',
+    body: {
+      metamodelVersion: 'trait/2',
+      grants: [
+        { dataType: 'media', key: 'missingType' },
+        { dataType: 'media', key: 'document', mediaType: 'document' },
+        { dataType: 'text', key: 'label', mediaType: 'audio' },
+      ],
+    },
+  }]);
+  assert.equal(invalid.valid, false);
+  assert.equal(invalid.diagnostics.filter((item) =>
+    item.code === 'RULE_TRAIT_MEDIA_TYPE_INVALID').length, 2);
+  assert.ok(invalid.diagnostics.some((item) =>
+    item.code === 'RULE_TRAIT_MEDIA_TYPE_UNSUPPORTED'));
 });
 
 test('recursive trait compiler retains compatible singular contribution provenance', () => {
@@ -1228,9 +1396,13 @@ test('release compilation verifies normalized die sides against the selected reu
   const result = compileRuleRelease(ruleSet, modules, [...definitions, check]);
 
   assert.equal(result.valid, false);
-  assert.ok(result.diagnostics.some((diagnostic) =>
+  const mismatch = result.diagnostics.find((diagnostic) =>
     diagnostic.code === 'RULE_RELEASE_DIE_SIDES_MISMATCH'
-    && diagnostic.message.includes('compiles to 10 sides')));
+    && diagnostic.message.includes('compiles to 10 sides'));
+  assert.ok(mismatch);
+  assert.equal(mismatch.definitionExternalId, 'check:damage');
+  assert.equal(mismatch.definitionName, 'Damage');
+  assert.equal(mismatch.path, 'artifacts.resolution.definitions[0].roll.dice[0].sides');
 });
 
 test('release compilation binds a check to the exact pool produced by a Dice Roll trait', () => {
@@ -1401,6 +1573,29 @@ test('release compiler rejects unversioned definitions instead of publishing opa
 
   assert.equal(result.valid, false);
   assert.ok(result.diagnostics.some((item) => item.code === 'RULE_RELEASE_METAMODEL_UNKNOWN'));
+});
+
+test('release compiler identifies the definition and grant for every trait validation error', () => {
+  const { ruleSet, modules, definitions } = releaseFixture();
+  definitions.push({
+    ...definitions[0],
+    id: 14,
+    externalId: 'trait:invalid-field',
+    name: 'Invalid Field',
+    body: {
+      metamodelVersion: 'trait/2',
+      grants: [{ dataType: 'text', key: '' }],
+    },
+  });
+  const result = compileRuleRelease(ruleSet, modules, definitions);
+
+  assert.equal(result.valid, false);
+  const diagnostic = result.diagnostics.find((item) => item.code === 'RULE_TRAIT_GRANT_KEY_REQUIRED');
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.definitionExternalId, 'trait:invalid-field');
+  assert.equal(diagnostic.definitionName, 'Invalid Field');
+  assert.equal(diagnostic.grantIndex, 0);
+  assert.match(diagnostic.path, /definitions\["Invalid Field"\]\.body\.grants\[0\]\.key$/);
 });
 
 test('publishing compiles and persists one content-addressed release', async () => {

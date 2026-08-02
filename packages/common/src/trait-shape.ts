@@ -5,12 +5,15 @@ export type TraitGrantDataType =
   | 'number'
   | 'boolean'
   | 'enum'
+  | 'media'
   | 'trait'
   | 'extends'
   | 'trait-collection'
   | 'modifier'
   | 'suppression'
   | 'replacement';
+
+export type TraitMediaType = 'text' | 'audio' | 'video' | 'image';
 
 export type TraitShapeGrant = {
   key?: string;
@@ -21,6 +24,7 @@ export type TraitShapeGrant = {
   max?: number;
   unit?: CanonicalUnitId;
   default?: string | number | boolean;
+  mediaType?: TraitMediaType;
   ref?: string;
   allowedValues?: string[];
   acceptedTraits?: string[];
@@ -58,6 +62,7 @@ export type TraitShapeNode =
     unit?: CanonicalUnitId;
     default?: string | number | boolean;
     allowedValues?: string[];
+    mediaType?: TraitMediaType;
     sourceTraitId?: string;
     sourceTraitIds?: string[];
   }
@@ -199,7 +204,7 @@ function grantsFromBody(body: Record<string, unknown>): TraitShapeGrant[] {
   return body.grants.filter(record).flatMap((grant) => {
     if (typeof grant.dataType !== 'string') return [];
     const dataType = grant.dataType as TraitGrantDataType;
-    if (!['text', 'number', 'boolean', 'enum', 'trait', 'extends', 'trait-collection', 'modifier', 'suppression', 'replacement'].includes(dataType)) return [];
+    if (!['text', 'number', 'boolean', 'enum', 'media', 'trait', 'extends', 'trait-collection', 'modifier', 'suppression', 'replacement'].includes(dataType)) return [];
     return [{
       dataType,
       ...(typeof grant.key === 'string' ? { key: grant.key } : {}),
@@ -208,6 +213,9 @@ function grantsFromBody(body: Record<string, unknown>): TraitShapeGrant[] {
       ...(typeof grant.min === 'number' ? { min: grant.min } : {}),
       ...(typeof grant.max === 'number' ? { max: grant.max } : {}),
       ...(typeof grant.unit === 'string' ? { unit: grant.unit as CanonicalUnitId } : {}),
+      ...(['text', 'audio', 'video', 'image'].includes(String(grant.mediaType))
+        ? { mediaType: grant.mediaType as TraitMediaType }
+        : {}),
       ...(['string', 'number', 'boolean'].includes(typeof grant.default)
         ? { default: grant.default as string | number | boolean }
         : {}),
@@ -248,6 +256,7 @@ function sameNode(left: TraitShapeNode, right: TraitShapeNode): boolean {
     && left.max === right.max
     && left.unit === right.unit
     && left.default === right.default
+    && left.mediaType === right.mediaType
     && JSON.stringify(left.allowedValues ?? []) === JSON.stringify(right.allowedValues ?? []);
 }
 
@@ -621,6 +630,7 @@ function expandGrants(
         ...(grant.unit !== undefined ? { unit: grant.unit } : {}),
         ...(grant.default !== undefined ? { default: grant.default } : {}),
         allowedValues: grant.allowedValues,
+        ...(grant.mediaType !== undefined ? { mediaType: grant.mediaType } : {}),
         sourceTraitId,
       }, maximumNodes);
       continue;

@@ -52,6 +52,7 @@ function comparableNode(node: TraitShapeNode): Record<string, unknown> {
     unit: node.unit,
     default: node.default,
     allowedValues: node.allowedValues ?? [],
+    mediaType: node.mediaType,
   };
 }
 
@@ -70,6 +71,7 @@ function describeNode(node: TraitShapeNode): string {
     node.max !== undefined ? `maximum ${node.max}` : '',
     node.default !== undefined ? `default ${String(node.default)}` : '',
     node.allowedValues?.length ? `choices ${node.allowedValues.join(', ')}` : '',
+    node.mediaType ? `${node.mediaType} assets` : '',
   ].filter(Boolean);
   return `${constraints.join(', ')} field`;
 }

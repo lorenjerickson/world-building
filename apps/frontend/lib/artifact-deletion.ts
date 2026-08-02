@@ -1,5 +1,6 @@
 import type { WorldAsset } from '@/components/world-view';
 import { deleteLoreImage } from '@/lib/image-uploads';
+import { deleteCharacterModel } from '@/lib/model-uploads';
 import {
   loadStoredCampaigns,
   loadStoredWorlds,
@@ -29,14 +30,19 @@ export async function deleteWorldArtifact(world: WorldAsset): Promise<void> {
   }
 
   const imageUrls = new Set<string>();
+  const modelUrls = new Set<string>();
   if (world.mapUrl) imageUrls.add(world.mapUrl);
   world.locations?.forEach((location) => { if (location.mapUrl) imageUrls.add(location.mapUrl); });
   world.characters?.forEach((character) => {
     if (typeof character === 'string') return;
     if (character.portraitUrl) imageUrls.add(character.portraitUrl);
     if (character.tokenUrl) imageUrls.add(character.tokenUrl);
+    if (character.token3dUrl) modelUrls.add(character.token3dUrl);
   });
-  await Promise.allSettled([...imageUrls].map((url) => deleteLoreImage(url)));
+  await Promise.allSettled([
+    ...[...imageUrls].map((url) => deleteLoreImage(url)),
+    ...[...modelUrls].map((url) => deleteCharacterModel(url)),
+  ]);
 
   const worlds = loadStoredWorlds<WorldAsset>();
   saveStoredWorlds(worlds.filter((candidate) => candidate.id !== world.id));

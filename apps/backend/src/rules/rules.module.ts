@@ -16,7 +16,7 @@ import { CompositionManifestService } from './releases/composition-manifest.serv
 @Module({
   imports: [LlmModule],
   controllers: [RuleSetsController, RuleAuthoringController],
-  exports: [RuleApiActorGuard, CompositionManifestService],
+  exports: [RuleApiActorGuard, CompositionManifestService, RuleCatalogRepository],
   providers: [
     RuleApiActorGuard,
     RuleApiIdPipe,

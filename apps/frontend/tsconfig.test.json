@@ -19,6 +19,8 @@
     "lib/trait-shape-diff.ts",
     "lib/trait-shape-diff.test.ts",
     "lib/trait-shape.ts",
-    "lib/trait-shape.test.ts"
+    "lib/trait-shape.test.ts",
+    "lib/world-map-transform.ts",
+    "lib/world-map-transform.test.ts"
   ]
 }

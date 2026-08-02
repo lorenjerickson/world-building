@@ -2,12 +2,20 @@
 
 import { useState, useTransition, useEffect, useRef } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { LoreDocument, MarkdownLongText, type LoreFact, type LoreReference } from "@/components/lore-document";
 import { deleteLoreImage, uploadLoreImage } from "@/lib/image-uploads";
 import { CharacterArtwork } from "@/components/character-artwork";
 import { AppBreadcrumbs } from "@/components/app-breadcrumbs";
 import { loadStoredWorlds, saveStoredWorlds } from "@/lib/wanderlust-storage";
+import { deleteCharacterModel } from "@/lib/model-uploads";
+import {
+  clampMapZoom,
+  getContainedMapRect,
+  mapPercentToViewportPoint,
+  screenPointToMapPercent,
+  type MapSize,
+} from "@/lib/world-map-transform";
 
 // --- Data Interfaces ---
 export interface LocationNode {
@@ -30,6 +38,7 @@ export interface Character {
   factionId?: string;
   portraitUrl?: string;
   tokenUrl?: string;
+  token3dUrl?: string;
 }
 
 export interface Organization {
@@ -87,8 +96,384 @@ interface WorldViewProps {
 
 export type WorldTab = "overview" | "map" | "locations" | "characters" | "organizations" | "events" | "items" | "relations";
 
+interface LocationMapEditorProps {
+  location: LocationNode;
+  locations: LocationNode[];
+  onPositionChange: (x: number, y: number) => void;
+  onRemoveLocationMap: () => void;
+  onUploadLocationMap: (file: File) => void;
+  worldMapUrl?: string;
+}
+
+interface MapDragState {
+  moved: boolean;
+  originPanX: number;
+  originPanY: number;
+  pointerId: number;
+  startX: number;
+  startY: number;
+}
+
+const EMPTY_MAP_SIZE: MapSize = { height: 0, width: 0 };
+
+function useObservedElementSize(ref: React.RefObject<HTMLElement | null>): MapSize {
+  const [size, setSize] = useState<MapSize>(EMPTY_MAP_SIZE);
+
+  useEffect(() => {
+    const element = ref.current;
+    if (!element) return;
+    const updateSize = () => {
+      const bounds = element.getBoundingClientRect();
+      setSize((current) => (
+        current.width === bounds.width && current.height === bounds.height
+          ? current
+          : { height: bounds.height, width: bounds.width }
+      ));
+    };
+    updateSize();
+    const observer = new ResizeObserver(updateSize);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [ref]);
+
+  return size;
+}
+
+interface WorldMapCanvasProps {
+  locations: LocationNode[];
+  onSelectLocation: (locationId: string) => void;
+  worldMapUrl?: string;
+}
+
+function WorldMapCanvas({ locations, onSelectLocation, worldMapUrl }: WorldMapCanvasProps) {
+  const boardRef = useRef<HTMLDivElement>(null);
+  const boardSize = useObservedElementSize(boardRef);
+  const [loadedMap, setLoadedMap] = useState<{ size: MapSize; url: string } | null>(null);
+  const imageSize = loadedMap && loadedMap.url === worldMapUrl ? loadedMap.size : EMPTY_MAP_SIZE;
+  const mapRect = getContainedMapRect(boardSize, imageSize);
+
+  return (
+    <div className={`map-grid-board ${worldMapUrl ? "has-map-image" : ""}`} ref={boardRef}>
+      {worldMapUrl ? (
+        <>
+          <img
+            alt=""
+            className="map-grid-image"
+            draggable={false}
+            onLoad={(event) => setLoadedMap({
+              size: { height: event.currentTarget.naturalHeight, width: event.currentTarget.naturalWidth },
+              url: worldMapUrl,
+            })}
+            src={worldMapUrl}
+            style={{ height: mapRect.height, left: mapRect.left, top: mapRect.top, width: mapRect.width }}
+          />
+          {imageSize.width > 0 ? (
+            <div
+              className="map-grid-overlay"
+              style={{ height: mapRect.height, left: mapRect.left, top: mapRect.top, width: mapRect.width }}
+            >
+              {locations.map((location) => (
+                <button
+                  className="map-pin-marker"
+                  key={location.id}
+                  onClick={() => onSelectLocation(location.id)}
+                  style={{ left: `${location.x ?? 50}%`, top: `${location.y ?? 50}%` }}
+                  title={`${location.name} (${location.type})`}
+                  type="button"
+                >
+                  📍
+                  <span className="pin-label">{location.name}</span>
+                </button>
+              ))}
+            </div>
+          ) : null}
+          <div className="compass-rose">🧭</div>
+        </>
+      ) : (
+        <div className="map-empty-state">
+          <strong>No world map uploaded</strong>
+          <span>Add an image to give your location markers geographic context.</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LocationMapEditor({
+  location,
+  locations,
+  onPositionChange,
+  onRemoveLocationMap,
+  onUploadLocationMap,
+  worldMapUrl,
+}: LocationMapEditorProps) {
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const viewportSize = useObservedElementSize(viewportRef);
+  const [loadedMap, setLoadedMap] = useState<{ size: MapSize; url: string } | null>(null);
+  const imageSize = loadedMap && loadedMap.url === worldMapUrl ? loadedMap.size : EMPTY_MAP_SIZE;
+  const mapRect = getContainedMapRect(viewportSize, imageSize);
+  const initialPosition = useRef({ x: location.x ?? 50, y: location.y ?? 50 });
+  const [zoom, setZoom] = useState(4);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [isPanning, setIsPanning] = useState(false);
+  const drag = useRef<MapDragState | null>(null);
+
+  function changeZoom(nextZoom: number) {
+    const clamped = clampMapZoom(nextZoom);
+    setZoom(clamped);
+    if (clamped === 1) setPan({ x: 0, y: 0 });
+  }
+
+  function resetView() {
+    centerMapOnPosition({ x: location.x ?? 50, y: location.y ?? 50 });
+  }
+
+  function centerMapOnPosition(position: { x: number; y: number }) {
+    const targetZoom = 4;
+    const point = mapPercentToViewportPoint(position, mapRect);
+    setZoom(targetZoom);
+    setPan({
+      x: (viewportSize.width / 2 - point.x) * targetZoom,
+      y: (viewportSize.height / 2 - point.y) * targetZoom,
+    });
+  }
+
+  useEffect(() => {
+    if (!worldMapUrl || imageSize.width <= 0 || viewportSize.width <= 0) return;
+    centerMapOnPosition(initialPosition.current);
+  }, [worldMapUrl, imageSize.width, imageSize.height, viewportSize.width, viewportSize.height]);
+
+  function placePin(event: React.PointerEvent<HTMLDivElement>) {
+    if (!worldMapUrl) return;
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const position = screenPointToMapPercent(
+      { x: event.clientX - bounds.left, y: event.clientY - bounds.top },
+      {
+        height: bounds.height,
+        panX: pan.x,
+        panY: pan.y,
+        width: bounds.width,
+        zoom,
+      },
+      imageSize,
+    );
+    onPositionChange(position.x, position.y);
+  }
+
+  function startPan(event: React.PointerEvent<HTMLDivElement>) {
+    if (!worldMapUrl || event.button !== 0) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    drag.current = {
+      moved: false,
+      originPanX: pan.x,
+      originPanY: pan.y,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+    };
+  }
+
+  function movePan(event: React.PointerEvent<HTMLDivElement>) {
+    const current = drag.current;
+    if (!current || current.pointerId !== event.pointerId) return;
+    const deltaX = event.clientX - current.startX;
+    const deltaY = event.clientY - current.startY;
+    if (!current.moved && Math.hypot(deltaX, deltaY) < 4) return;
+    current.moved = true;
+    setIsPanning(true);
+    setPan({ x: current.originPanX + deltaX, y: current.originPanY + deltaY });
+  }
+
+  function finishPan(event: React.PointerEvent<HTMLDivElement>) {
+    const current = drag.current;
+    if (!current || current.pointerId !== event.pointerId) return;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    drag.current = null;
+    setIsPanning(false);
+    if (!current.moved) placePin(event);
+  }
+
+  function cancelPan(event: React.PointerEvent<HTMLDivElement>) {
+    if (drag.current?.pointerId !== event.pointerId) return;
+    drag.current = null;
+    setIsPanning(false);
+  }
+
+  function handleMapKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
+    const step = event.shiftKey ? 40 : 16;
+    if (event.key === '+' || event.key === '=') changeZoom(zoom * 1.25);
+    else if (event.key === '-') changeZoom(zoom / 1.25);
+    else if (event.key === 'ArrowLeft') setPan((current) => ({ ...current, x: current.x + step }));
+    else if (event.key === 'ArrowRight') setPan((current) => ({ ...current, x: current.x - step }));
+    else if (event.key === 'ArrowUp') setPan((current) => ({ ...current, y: current.y + step }));
+    else if (event.key === 'ArrowDown') setPan((current) => ({ ...current, y: current.y - step }));
+    else if (event.key === '0') resetView();
+    else return;
+    event.preventDefault();
+  }
+
+  return (
+    <section className="location-map-composer" aria-label="Location maps and world position">
+      <div className="location-map-primary">
+        <div className="location-map-primary-header">
+          <div>
+            <span className="eyebrow">Location map</span>
+            <h3>{location.name}</h3>
+          </div>
+          <div className="location-map-actions">
+            <label className="map-upload-button">
+              <input
+                accept="image/png,image/jpeg,image/gif,image/webp"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  event.target.value = "";
+                  if (file) onUploadLocationMap(file);
+                }}
+                type="file"
+              />
+              {location.mapUrl ? "Replace map" : "Upload map"}
+            </label>
+            {location.mapUrl ? (
+              <button className="map-remove-button" onClick={onRemoveLocationMap} type="button">
+                Remove
+              </button>
+            ) : null}
+          </div>
+        </div>
+        <div
+          className={`location-map-large-preview${location.mapUrl ? " has-image" : ""}`}
+          style={location.mapUrl ? { backgroundImage: `url(${location.mapUrl})` } : undefined}
+        >
+          {!location.mapUrl ? (
+            <div className="map-empty-state">
+              <strong>No location map</strong>
+              <span>Add a regional, city, district, or encounter map.</span>
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+      <aside className="world-map-locator">
+        <div className="world-map-locator-header">
+          <div>
+            <span className="eyebrow">World position</span>
+            <p>Pan or zoom, then click to place {location.name}.</p>
+          </div>
+          <button
+            className="secondary-action compact-action"
+            disabled={!worldMapUrl}
+            onClick={resetView}
+            type="button"
+          >
+            Reset
+          </button>
+        </div>
+        <div className="world-map-zoom-controls">
+          <button
+            aria-label="Zoom world map out"
+            className="btn btn-ghost btn-sm btn-square"
+            disabled={!worldMapUrl || zoom <= 1}
+            onClick={() => changeZoom(zoom / 1.5)}
+            type="button"
+          >
+            −
+          </button>
+          <input
+            aria-label="World map zoom"
+            className="range range-xs"
+            disabled={!worldMapUrl}
+            max={16}
+            min={1}
+            onChange={(event) => changeZoom(Number(event.target.value))}
+            step={0.1}
+            type="range"
+            value={zoom}
+          />
+          <button
+            aria-label="Zoom world map in"
+            className="btn btn-ghost btn-sm btn-square"
+            disabled={!worldMapUrl || zoom >= 16}
+            onClick={() => changeZoom(zoom * 1.5)}
+            type="button"
+          >
+            +
+          </button>
+        </div>
+        <div
+          aria-label={worldMapUrl
+            ? `World map locator for ${location.name}. Drag to pan, use the mouse wheel to zoom, and click to place the pin.`
+            : "No world map is available for location placement."}
+          className={`world-map-locator-viewport${isPanning ? " is-panning" : ""}${worldMapUrl ? " has-map" : ""}`}
+          onKeyDown={handleMapKeyDown}
+          onPointerCancel={cancelPan}
+          onPointerDown={startPan}
+          onPointerMove={movePan}
+          onPointerUp={finishPan}
+          onWheel={(event) => {
+            if (!worldMapUrl) return;
+            event.preventDefault();
+            changeZoom(event.deltaY < 0 ? zoom * 1.2 : zoom / 1.2);
+          }}
+          role="application"
+          ref={viewportRef}
+          tabIndex={worldMapUrl ? 0 : -1}
+        >
+          {worldMapUrl ? (
+            <div
+              className="world-map-locator-stage"
+              style={{ transform: `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${zoom})` }}
+            >
+              <img
+                alt=""
+                draggable={false}
+                onLoad={(event) => setLoadedMap({
+                  size: { height: event.currentTarget.naturalHeight, width: event.currentTarget.naturalWidth },
+                  url: worldMapUrl,
+                })}
+                src={worldMapUrl}
+              />
+              <div className="world-map-locator-grid" />
+              {imageSize.width > 0 ? locations.map((candidate) => {
+                const point = mapPercentToViewportPoint(
+                  { x: candidate.x ?? 50, y: candidate.y ?? 50 },
+                  mapRect,
+                );
+                return (
+                  <span
+                    aria-hidden="true"
+                    className={`world-map-locator-pin${candidate.id === location.id ? " active" : ""}`}
+                    key={candidate.id}
+                    style={{ left: point.x, top: point.y }}
+                    title={candidate.name}
+                  >
+                    {candidate.id === location.id ? "📍" : "•"}
+                  </span>
+                );
+              }) : null}
+            </div>
+          ) : (
+            <div className="world-map-locator-empty">
+              <strong>No world map</strong>
+              <span>Upload one from the World Map view to place this location.</span>
+            </div>
+          )}
+        </div>
+        <div className="world-map-position-readout" aria-live="polite">
+          <span>Zoom {zoom.toFixed(zoom < 10 ? 1 : 0)}×</span>
+          <span>X {location.x ?? 50}%</span>
+          <span>Y {location.y ?? 50}%</span>
+          <small>Click saves the new pin position immediately.</small>
+        </div>
+      </aside>
+    </section>
+  );
+}
+
 export function WorldView({ initialWorld, onBackToDashboard, initialTab = "overview", initialItemId = null }: WorldViewProps) {
   const router = useRouter();
+  const pathname = usePathname();
   // --- Prompt / World Creation State ---
   const [prompt, setPrompt] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -96,7 +481,6 @@ export function WorldView({ initialWorld, onBackToDashboard, initialTab = "overv
 
   // --- World State ---
   const [world, setWorld] = useState<WorldAsset | null>(initialWorld || null);
-  const [isSaving, setIsSaving] = useState(false);
 
   // --- Active Tab / Selected Item State ---
   const [activeTab, setActiveTab] = useState<WorldTab>(initialTab);
@@ -105,13 +489,14 @@ export function WorldView({ initialWorld, onBackToDashboard, initialTab = "overv
   // Keep the workspace addressable and browser-history friendly. The route is the
   // source of truth on initial render; interactions below update it in one place.
   useEffect(() => {
-    if (!world) return;
+    if (!world?.id) return;
     const itemPath = selectedItemId ? `/${encodeURIComponent(selectedItemId)}` : "";
     const path = activeTab === "overview"
       ? `/world/${encodeURIComponent(world.id)}`
       : `/world/${encodeURIComponent(world.id)}/${activeTab}${itemPath}`;
+    if (pathname === path) return;
     router.replace(path, { scroll: false });
-  }, [activeTab, selectedItemId, router, world]);
+  }, [activeTab, pathname, selectedItemId, router, world?.id]);
 
   useEffect(() => {
     setActiveTab(initialTab);
@@ -218,7 +603,6 @@ export function WorldView({ initialWorld, onBackToDashboard, initialTab = "overv
 
   // --- Auto-Save Sync to Backend & LocalStorage ---
   const syncWorld = async (updatedWorld: WorldAsset) => {
-    setIsSaving(true);
     // 1. Sync to LocalStorage
     const history = loadStoredWorlds<WorldAsset>();
     saveStoredWorlds([updatedWorld, ...history.filter((w) => w.id !== updatedWorld.id)]);
@@ -252,8 +636,6 @@ export function WorldView({ initialWorld, onBackToDashboard, initialTab = "overv
       }
     } catch (err) {
       console.error("Backend database sync failed", err);
-    } finally {
-      setIsSaving(false);
     }
   };
 
@@ -268,7 +650,11 @@ export function WorldView({ initialWorld, onBackToDashboard, initialTab = "overv
   const uploadMapImage = async (file: File, locationId?: string) => {
     try {
       const previousUrl = locationId ? world?.locations?.find((location) => location.id === locationId)?.mapUrl : world?.mapUrl;
-      const uploadedUrl = await uploadLoreImage(file);
+      const uploadedUrl = await uploadLoreImage(
+        file,
+        locationId ? "location-map" : "world-map",
+        locationId ? "Location map" : "World map",
+      );
       await deleteLoreImage(previousUrl);
       setError(null);
       if (locationId) {
@@ -302,12 +688,12 @@ export function WorldView({ initialWorld, onBackToDashboard, initialTab = "overv
         const migrated = { ...world };
         if (world.mapUrl?.startsWith("data:")) {
           const blob = await fetch(world.mapUrl).then((response) => response.blob());
-          migrated.mapUrl = await uploadLoreImage(new File([blob], "world-map", { type: blob.type }));
+          migrated.mapUrl = await uploadLoreImage(new File([blob], "world-map", { type: blob.type }), "world-map", "World map");
         }
         migrated.locations = await Promise.all((world.locations || []).map(async (location) => {
           if (!location.mapUrl?.startsWith("data:")) return location;
           const blob = await fetch(location.mapUrl).then((response) => response.blob());
-          return { ...location, mapUrl: await uploadLoreImage(new File([blob], `${location.id}-map`, { type: blob.type })) };
+          return { ...location, mapUrl: await uploadLoreImage(new File([blob], `${location.id}-map`, { type: blob.type }), "location-map", `${location.name} map`) };
         }));
         setWorld(migrated);
         await syncWorld(migrated);
@@ -420,8 +806,8 @@ export function WorldView({ initialWorld, onBackToDashboard, initialTab = "overv
         setEditType(loc.type);
         setEditDesc(loc.description);
         setEditParentId(loc.parentId || "");
-        setEditX(loc.x || 50);
-        setEditY(loc.y || 50);
+        setEditX(loc.x ?? 50);
+        setEditY(loc.y ?? 50);
       }
     }
   };
@@ -673,8 +1059,20 @@ export function WorldView({ initialWorld, onBackToDashboard, initialTab = "overv
   };
 
   // --- Deletion Handlers ---
-  const handleDeleteElement = (type: "locations" | "characters" | "organizations" | "events" | "items", id: string) => {
+  const handleDeleteElement = async (type: "locations" | "characters" | "organizations" | "events" | "items", id: string) => {
     if (!world) return;
+    if (type === "characters") {
+      const character = world.characters?.find(
+        (entry) => typeof entry !== "string" && entry.id === id,
+      );
+      if (character && typeof character !== "string") {
+        await Promise.allSettled([
+          deleteLoreImage(character.portraitUrl),
+          deleteLoreImage(character.tokenUrl),
+          deleteCharacterModel(character.token3dUrl),
+        ]);
+      }
+    }
     updateWorldData((prev) => {
       const fieldList = (prev[type] || []) as { id: string }[];
       const filtered = fieldList.filter((item) => item.id !== id);
@@ -927,26 +1325,6 @@ export function WorldView({ initialWorld, onBackToDashboard, initialTab = "overv
         }] : []),
         ...(activeRecordName ? [{ label: activeRecordName }] : []),
       ]} />
-      {/* Title Bar */}
-      <header className="workspace-navbar">
-        <div className="nav-left">
-          <button className="back-btn" onClick={() => onBackToDashboard ? onBackToDashboard(world) : router.push("/dashboard")}>
-            ← Back to Dashboard
-          </button>
-          <div className="nav-title-group">
-            <h2>Campaign Workspace</h2>
-            <span className="navbar-subtitle">Chronicle: <strong>{world.name}</strong></span>
-          </div>
-        </div>
-        <div className="nav-right">
-          {isSaving ? (
-            <span className="sync-badge syncing">🧙‍♂️ Syncing Spell...</span>
-          ) : (
-            <span className="sync-badge synced">🔮 Chronicles Saved</span>
-          )}
-        </div>
-      </header>
-
       {/* Main Workspace Layout */}
       <div className={`workspace-layout-grid${selectedItemId ? " record-detail-layout" : ""}`}>
         {/* Column 1: Sidebar Navigation Tree */}
@@ -962,9 +1340,6 @@ export function WorldView({ initialWorld, onBackToDashboard, initialTab = "overv
                 onClick={() => {
                   setSelectedItemId(null);
                   setActiveTab(section);
-                  router.push(section === "overview"
-                    ? `/world/${encodeURIComponent(world.id)}`
-                    : `/world/${encodeURIComponent(world.id)}/${section}`);
                 }}
               >
                 {sectionLabels[section]}
@@ -986,7 +1361,7 @@ export function WorldView({ initialWorld, onBackToDashboard, initialTab = "overv
             {/* Overview View */}
             {activeTab === "overview" && (
               <div className="tab-content-container">
-                <div className="document-edit-mode"><LoreDocument eyebrow="World chronicle" title={world.name} description={world.description} imageUrl={world.mapUrl} imageLabel="world map" facts={[]} references={loreReferences} related={loreReferences.slice(0, 12)} onTitleChange={(value) => updateWorldData((previous) => ({ ...previous, name: value }))} onDescriptionChange={(value) => updateWorldData((previous) => ({ ...previous, description: value }))} onImageChange={(value) => updateWorldData((previous) => ({ ...previous, mapUrl: value }))} /></div>
+                <div className="document-edit-mode"><LoreDocument eyebrow="World chronicle" title={world.name} description={world.description} imageUrl={world.mapUrl} imageLabel="world map" imagePurpose="world-map" facts={[]} references={loreReferences} related={loreReferences.slice(0, 12)} onTitleChange={(value) => updateWorldData((previous) => ({ ...previous, name: value }))} onDescriptionChange={(value) => updateWorldData((previous) => ({ ...previous, description: value }))} onImageChange={(value) => updateWorldData((previous) => ({ ...previous, mapUrl: value }))} /></div>
                 <span className="eyebrow">Chronicled Chronicle</span>
                 <div className="editable-section mb-6">
                   <input 
@@ -1043,29 +1418,11 @@ export function WorldView({ initialWorld, onBackToDashboard, initialTab = "overv
                   <label className="map-upload-button"><input type="file" accept="image/*" onChange={(event) => { const file = event.target.files?.[0]; if (file) uploadMapImage(file); event.target.value = ""; }} />{world.mapUrl ? "Replace map" : "Upload map"}</label>
                 </div>
                 
-                <div className={`map-grid-board ${world.mapUrl ? "has-map-image" : ""}`} style={world.mapUrl ? { backgroundImage: `url(${world.mapUrl})` } : undefined}>
-                  <div className="map-grid-overlay">
-                    <div className="compass-rose">🧭</div>
-                    {/* Render pinned locations */}
-                    {locations.map((loc) => {
-                      const px = loc.x ?? 50;
-                      const py = loc.y ?? 50;
-                      return (
-                        <div 
-                          key={loc.id} 
-                          className="map-pin-marker"
-                          style={{ left: `${px}%`, top: `${py}%` }}
-                          onClick={() => handleSelectLocation(loc.id)}
-                          title={`${loc.name} (${loc.type})`}
-                        >
-                          📍
-                          <span className="pin-label">{loc.name}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                  {!world.mapUrl && <div className="map-empty-state"><strong>No world map uploaded</strong><span>Add an image to give your location markers geographic context.</span></div>}
-                </div>
+                <WorldMapCanvas
+                  locations={locations}
+                  onSelectLocation={handleSelectLocation}
+                  worldMapUrl={world.mapUrl}
+                />
 
                 {world.mapUrl && <button className="map-remove-button" type="button" onClick={() => removeMapImage()}>Remove world map</button>}
 
@@ -1081,7 +1438,7 @@ export function WorldView({ initialWorld, onBackToDashboard, initialTab = "overv
               <div className="tab-content-container">
                 {activeLocation ? (
                   <div>
-                    <div className="document-edit-mode"><LoreDocument eyebrow={activeLocation.type || "Location"} title={activeLocation.name} description={activeLocation.description} imageUrl={activeLocation.mapUrl} imageLabel="location map" references={loreReferences.filter((reference) => reference.id !== activeLocation.id)} related={[
+                    <div className="document-edit-mode"><LoreDocument eyebrow={activeLocation.type || "Location"} title={activeLocation.name} description={activeLocation.description} references={loreReferences.filter((reference) => reference.id !== activeLocation.id)} related={[
                       ...locations.filter((entry) => entry.parentId === activeLocation.id).map((entry) => referenceFor(entry.id)!),
                       ...characters.filter((entry) => entry.locationId === activeLocation.id).map((entry) => referenceFor(entry.id)!),
                       ...organizations.filter((entry) => entry.baseLocationId === activeLocation.id).map((entry) => referenceFor(entry.id)!),
@@ -1091,7 +1448,7 @@ export function WorldView({ initialWorld, onBackToDashboard, initialTab = "overv
                       { label: "Within", value: activeLocation.parentId || "", emptyLabel: "Top-level location", options: locations.filter((entry) => entry.id !== activeLocation.id).map((entry) => ({ value: entry.id, label: entry.name })), onChange: (value) => updateWorldData((previous) => ({ ...previous, locations: (previous.locations || []).map((entry) => entry.id === activeLocation.id ? { ...entry, parentId: value || undefined } : entry) })) },
                       { label: "Map position X", value: String(activeLocation.x ?? 50), onChange: (value) => updateWorldData((previous) => ({ ...previous, locations: (previous.locations || []).map((entry) => entry.id === activeLocation.id ? { ...entry, x: Math.max(0, Math.min(100, Number(value) || 0)) } : entry) })) },
                       { label: "Map position Y", value: String(activeLocation.y ?? 50), onChange: (value) => updateWorldData((previous) => ({ ...previous, locations: (previous.locations || []).map((entry) => entry.id === activeLocation.id ? { ...entry, y: Math.max(0, Math.min(100, Number(value) || 0)) } : entry) })) },
-                    ] as LoreFact[]} onTitleChange={(value) => updateWorldData((previous) => ({ ...previous, locations: (previous.locations || []).map((entry) => entry.id === activeLocation.id ? { ...entry, name: value } : entry) }))} onDescriptionChange={(value) => updateWorldData((previous) => ({ ...previous, locations: (previous.locations || []).map((entry) => entry.id === activeLocation.id ? { ...entry, description: value } : entry) }))} onImageChange={(value) => updateWorldData((previous) => ({ ...previous, locations: (previous.locations || []).map((entry) => entry.id === activeLocation.id ? { ...entry, mapUrl: value } : entry) }))} actions={documentDeleteAction("locations", activeLocation.id)} /></div>
+                    ] as LoreFact[]} onTitleChange={(value) => updateWorldData((previous) => ({ ...previous, locations: (previous.locations || []).map((entry) => entry.id === activeLocation.id ? { ...entry, name: value } : entry) }))} onDescriptionChange={(value) => updateWorldData((previous) => ({ ...previous, locations: (previous.locations || []).map((entry) => entry.id === activeLocation.id ? { ...entry, description: value } : entry) }))} media={<LocationMapEditor key={activeLocation.id} location={activeLocation} locations={locations} worldMapUrl={world.mapUrl} onUploadLocationMap={(file) => uploadMapImage(file, activeLocation.id)} onRemoveLocationMap={() => removeMapImage(activeLocation.id)} onPositionChange={(x, y) => { setEditX(x); setEditY(y); updateWorldData((previous) => ({ ...previous, locations: (previous.locations || []).map((entry) => entry.id === activeLocation.id ? { ...entry, x, y } : entry) })); }} />} actions={documentDeleteAction("locations", activeLocation.id)} /></div>
                     {/* Breadcrumbs */}
                     <div className="breadcrumbs">
                       <span onClick={() => setSelectedItemId(null)}>Geography</span>
@@ -1250,7 +1607,7 @@ export function WorldView({ initialWorld, onBackToDashboard, initialTab = "overv
               <div className="tab-content-container">
                 {activeCharacter ? (
                   <div>
-                    <div className="document-edit-mode"><LoreDocument eyebrow="Character" title={activeCharacter.name} description={activeCharacter.description || ""} references={loreReferences.filter((reference) => reference.id !== activeCharacter.id)} related={[referenceFor(activeCharacter.locationId), referenceFor(activeCharacter.factionId)].filter(Boolean) as LoreReference[]} media={<CharacterArtwork portraitUrl={activeCharacter.portraitUrl} tokenUrl={activeCharacter.tokenUrl} character={{ name: activeCharacter.name, description: activeCharacter.description || "" }} world={{ name: world.name, description: world.description }} onPortraitChange={(portraitUrl) => updateWorldData((previous) => ({ ...previous, characters: (previous.characters || []).map((entry) => typeof entry !== "string" && entry.id === activeCharacter.id ? { ...entry, portraitUrl } : entry) }))} onTokenChange={(tokenUrl) => updateWorldData((previous) => ({ ...previous, characters: (previous.characters || []).map((entry) => typeof entry !== "string" && entry.id === activeCharacter.id ? { ...entry, tokenUrl } : entry) }))} />} facts={[
+                    <div className="document-edit-mode"><LoreDocument eyebrow="Character" title={activeCharacter.name} description={activeCharacter.description || ""} references={loreReferences.filter((reference) => reference.id !== activeCharacter.id)} related={[referenceFor(activeCharacter.locationId), referenceFor(activeCharacter.factionId)].filter(Boolean) as LoreReference[]} media={<CharacterArtwork portraitUrl={activeCharacter.portraitUrl} tokenUrl={activeCharacter.tokenUrl} token3dUrl={activeCharacter.token3dUrl} character={{ name: activeCharacter.name, description: activeCharacter.description || "" }} world={{ name: world.name, description: world.description }} onPortraitChange={(portraitUrl) => updateWorldData((previous) => ({ ...previous, characters: (previous.characters || []).map((entry) => typeof entry !== "string" && entry.id === activeCharacter.id ? { ...entry, portraitUrl } : entry) }))} onTokenChange={(tokenUrl) => updateWorldData((previous) => ({ ...previous, characters: (previous.characters || []).map((entry) => typeof entry !== "string" && entry.id === activeCharacter.id ? { ...entry, tokenUrl } : entry) }))} onToken3dChange={(token3dUrl) => updateWorldData((previous) => ({ ...previous, characters: (previous.characters || []).map((entry) => typeof entry !== "string" && entry.id === activeCharacter.id ? { ...entry, token3dUrl } : entry) }))} />} facts={[
                       { label: "Current location", value: activeCharacter.locationId || "", emptyLabel: "Uncharted", options: locations.map((entry) => ({ value: entry.id, label: entry.name })), onChange: (value) => updateWorldData((previous) => ({ ...previous, characters: (previous.characters || []).map((entry) => typeof entry !== "string" && entry.id === activeCharacter.id ? { ...entry, locationId: value || undefined } : entry) })) },
                       { label: "Affiliation", value: activeCharacter.factionId || "", emptyLabel: "Unaffiliated", options: organizations.map((entry) => ({ value: entry.id, label: entry.name })), onChange: (value) => updateWorldData((previous) => ({ ...previous, characters: (previous.characters || []).map((entry) => typeof entry !== "string" && entry.id === activeCharacter.id ? { ...entry, factionId: value || undefined } : entry) })) },
                     ]} onTitleChange={(value) => updateWorldData((previous) => ({ ...previous, characters: (previous.characters || []).map((entry) => typeof entry !== "string" && entry.id === activeCharacter.id ? { ...entry, name: value } : entry) }))} onDescriptionChange={(value) => updateWorldData((previous) => ({ ...previous, characters: (previous.characters || []).map((entry) => typeof entry !== "string" && entry.id === activeCharacter.id ? { ...entry, description: value } : entry) }))} actions={documentDeleteAction("characters", activeCharacter.id)} /></div>

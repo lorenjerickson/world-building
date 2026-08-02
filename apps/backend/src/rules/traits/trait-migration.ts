@@ -116,7 +116,7 @@ export function migrateTraitBody(body: Record<string, unknown>): TraitMigrationP
 function nodeMeaning(node: TraitShapeNode): string {
   if (node.kind === 'branch') return `branch:${node.traitId}`;
   if (node.kind === 'terminal') {
-    return `terminal:${node.dataType}:${JSON.stringify(node.allowedValues ?? [])}`;
+    return `terminal:${node.dataType}:${node.mediaType ?? ''}:${JSON.stringify(node.allowedValues ?? [])}`;
   }
   return `collection:${node.acceptsMode}:${node.capacity ?? 'unbounded'}:${[...node.acceptedTraitIds].sort().join(',')}:${node.entries
     .map((entry) => `${entry.traitId}*${entry.count}`)

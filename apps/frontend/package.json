@@ -3,7 +3,7 @@
   "version": "0.1.2",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "NODE_USE_SYSTEM_CA=1 next dev --hostname local.web.wanderlust-vtt.com --port 8443 --experimental-https --experimental-https-key ./certs/local.web.wanderlust-vtt.com-key.pem --experimental-https-cert ./certs/local.web.wanderlust-vtt.com.pem",
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",

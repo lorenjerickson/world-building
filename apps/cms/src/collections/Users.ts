@@ -1,12 +1,12 @@
 import { createHash, randomUUID } from 'node:crypto'
 
-import type { CollectionConfig, Payload } from 'payload'
+import { JWTAuthentication, parseCookies, type CollectionConfig, type Payload } from 'payload'
 import type { User } from '../payload-types'
 
 let firstUserBootstrap: Promise<User | null> | undefined
 const localAdminEnabled = process.env.NODE_ENV !== 'production' && process.env.CMS_ENABLE_LOCAL_ADMIN === 'true'
 
-function fallbackEmail(subject: string): string {
+export function fallbackEmail(subject: string): string {
   const digest = createHash('sha256').update(subject).digest('hex').slice(0, 24)
   return `auth0-${digest}@users.invalid`
 }
@@ -19,6 +19,16 @@ async function findUser(payload: Payload, subject: string): Promise<User | null>
     where: { auth0Subject: { equals: subject } },
   })
   return result.docs[0] || null
+}
+
+async function authenticateAdminSession(args: Parameters<typeof JWTAuthentication>[0]) {
+  const headers = new Headers(args.headers)
+  if (!headers.has('authorization')) {
+    const cookieName = `${args.payload.config.cookiePrefix}-token`
+    const token = parseCookies(headers).get(cookieName)
+    if (token) headers.set('authorization', `Bearer ${token}`)
+  }
+  return JWTAuthentication({ ...args, headers })
 }
 
 async function bootstrapInitialAdministrator(
@@ -59,7 +69,7 @@ async function bootstrapInitialAdministrator(
   })
 }
 
-async function findOrBootstrapUser(
+export async function findOrBootstrapUser(
   payload: Payload,
   subject: string,
   email: string,
@@ -93,6 +103,10 @@ export const Users: CollectionConfig = {
     },
   },
   auth: {
+    cookies: {
+      sameSite: 'Lax',
+      secure: process.env.NODE_ENV === 'production',
+    },
     ...(localAdminEnabled ? {} : {
       disableLocalStrategy: {
         enableFields: true as const,
@@ -113,6 +127,10 @@ export const Users: CollectionConfig = {
             user: await findOrBootstrapUser(payload, subject, email),
           }
         },
+      },
+      {
+        name: 'admin-session-jwt',
+        authenticate: authenticateAdminSession,
       },
     ],
   },

@@ -33,10 +33,18 @@
       "args": [
         "dev",
         "--hostname",
-        "localhost",
+        "local.web.wanderlust-vtt.com",
         "--port",
-        "3000"
+        "8443",
+        "--experimental-https",
+        "--experimental-https-key",
+        "./certs/local.web.wanderlust-vtt.com-key.pem",
+        "--experimental-https-cert",
+        "./certs/local.web.wanderlust-vtt.com.pem"
       ],
+      "env": {
+        "NODE_USE_SYSTEM_CA": "1"
+      },
       "runtimeArgs": [
         "--inspect=9231"
       ],

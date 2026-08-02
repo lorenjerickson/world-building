@@ -42,14 +42,26 @@ function cleanup(project, env) {
   );
 }
 
+function requestBackend(project, env, path, options = {}) {
+  const result = compose(project, env, [
+    'exec',
+    '-T',
+    'backend',
+    'node',
+    '--input-type=module',
+    '-e',
+    `const response = await fetch(${JSON.stringify(`http://127.0.0.1:8000${path}`)}, ${JSON.stringify(options)});
+console.log(JSON.stringify({ body: await response.json(), status: response.status }));`,
+  ]);
+  return JSON.parse(result.stdout.trim().split('\n').at(-1));
+}
+
 const healthyEnv = {
   BACKEND_IMAGE: image,
-  BACKEND_PORT: '0',
   DB_PORT: '0',
 };
 const failureEnv = {
   BACKEND_IMAGE: image,
-  BACKEND_PORT: '0',
   DB_PORT: '0',
   BACKEND_DATABASE_URL: 'postgresql://worldbuilder:password123@missing-database:5432/worlddb',
 };
@@ -61,17 +73,9 @@ try {
   compose(baseProject, healthyEnv, buildArgs);
   compose(baseProject, healthyEnv, ['up', '-d', '--wait', 'backend']);
 
-  const portResult = compose(baseProject, healthyEnv, [
-    'port',
-    'backend',
-    '8000',
-  ]);
-  const backendPort = Number(portResult.stdout.trim().match(/:(\d+)$/)?.[1]);
-  assert.ok(Number.isInteger(backendPort) && backendPort > 0);
-
-  const health = await fetch(`http://127.0.0.1:${backendPort}/health`);
+  const health = requestBackend(baseProject, healthyEnv, '/health');
   assert.equal(health.status, 200);
-  assert.deepEqual(await health.json(), { status: 'ok' });
+  assert.deepEqual(health.body, { status: 'ok' });
 
   compose(baseProject, healthyEnv, [
     'exec',
@@ -93,8 +97,10 @@ await prisma.world.create({
 await prisma.$disconnect();`,
   ]);
 
-  const update = await fetch(
-    `http://127.0.0.1:${backendPort}/api/generate/world/${smokeWorldId}`,
+  const update = requestBackend(
+    baseProject,
+    healthyEnv,
+    `/api/generate/world/${smokeWorldId}`,
     {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
@@ -102,7 +108,7 @@ await prisma.$disconnect();`,
     },
   );
   assert.equal(update.status, 200);
-  const updatedWorld = await update.json();
+  const updatedWorld = update.body;
   assert.equal(updatedWorld.status, 'success');
   assert.deepEqual(updatedWorld.world.metadata, { smoke: 'updated' });
 

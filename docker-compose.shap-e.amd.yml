@@ -1,0 +1,17 @@
+services:
+  shap-e:
+    image: ${SHAP_E_IMAGE:-wanderlust-vtt-shap-e:amd-local}
+    build:
+      context: ./apps/shap-e
+      dockerfile: Dockerfile.amd
+    environment:
+      SHAP_E_ACCELERATOR: amd
+      SHAP_E_DEVICE: cuda
+    devices:
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
+    group_add:
+      - video
+    ipc: host
+    security_opt:
+      - seccomp=unconfined

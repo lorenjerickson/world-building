@@ -51,15 +51,20 @@ async function proxyAuthenticatedRuleApi(request: Request, apiRoot: string, segm
     }, { status: 503 });
   }
 
-  const backendUrl = (process.env.BACKEND_URL || 'http://localhost:8000').replace(/\/$/, '');
+  const backendUrl = (process.env.BACKEND_URL || 'https://local.api.wanderlust-vtt.com:8444').replace(/\/$/, '');
   const sourceUrl = new URL(request.url);
   const encodedPath = segments.map(encodeURIComponent).join('/');
   const target = `${backendUrl}/api/${apiRoot}${encodedPath ? `/${encodedPath}` : ''}${sourceUrl.search}`;
   const hasBody = request.method === 'POST' || request.method === 'PUT' || request.method === 'PATCH';
+  const timeout = apiRoot === 'generate/character-art'
+    ? 180_000
+    : apiRoot === 'character-assets' || apiRoot === 'media-assets'
+      ? 70_000
+      : 15_000;
 
   try {
     const response = await fetch(target, {
-      body: hasBody ? await request.text() : undefined,
+      body: hasBody ? await request.arrayBuffer() : undefined,
       cache: 'no-store',
       headers: {
         ...(hasBody ? { 'content-type': request.headers.get('content-type') || 'application/json' } : {}),
@@ -68,10 +73,9 @@ async function proxyAuthenticatedRuleApi(request: Request, apiRoot: string, segm
         'x-rule-api-token': internalToken,
       },
       method: request.method,
-      signal: AbortSignal.timeout(15_000),
+      signal: AbortSignal.timeout(timeout),
     });
-    const body = await response.text();
-    return new NextResponse(body || null, {
+    return new NextResponse(response.body, {
       headers: {
         'cache-control': response.headers.get('cache-control') || 'no-store',
         'content-type': response.headers.get('content-type') || 'application/json',
@@ -101,4 +105,20 @@ export function proxyEncounterApi(request: Request, segments: string[] = []): Pr
 
 export function proxySearchApi(request: Request, segments: string[] = []): Promise<NextResponse> {
   return proxyAuthenticatedRuleApi(request, 'search', segments);
+}
+
+export function proxyCharacterAssetApi(request: Request, segments: string[] = []): Promise<NextResponse> {
+  return proxyAuthenticatedRuleApi(request, 'character-assets', segments);
+}
+
+export function proxyMediaAssetApi(request: Request, segments: string[] = []): Promise<NextResponse> {
+  return proxyAuthenticatedRuleApi(request, 'media-assets', segments);
+}
+
+export function proxyWorldApi(request: Request, segments: string[] = []): Promise<NextResponse> {
+  return proxyAuthenticatedRuleApi(request, 'worlds', segments);
+}
+
+export function proxyCharacterArtApi(request: Request): Promise<NextResponse> {
+  return proxyAuthenticatedRuleApi(request, 'generate/character-art');
 }

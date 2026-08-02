@@ -6,6 +6,7 @@ import { buildConfig } from 'payload'
 import { fileURLToPath } from 'node:url'
 import sharp from 'sharp'
 
+import { adminSsoHandler } from './auth/admin-sso'
 import { Campaigns } from './collections/Campaigns'
 import { Characters } from './collections/Characters'
 import { EncounterMapArtifacts } from './collections/EncounterMapArtifacts'
@@ -42,6 +43,7 @@ const databaseURL =
     : '')
 
 export default buildConfig({
+  serverURL: process.env.CMS_BASE_URL || 'https://local.cms.wanderlust-vtt.com:3100',
   admin: {
     user: Users.slug,
     importMap: { baseDir: path.resolve(dirname) },
@@ -77,6 +79,11 @@ export default buildConfig({
   }),
   editor: lexicalEditor(),
   endpoints: [
+    {
+      handler: adminSsoHandler,
+      method: 'get',
+      path: '/admin-sso',
+    },
     {
       handler: async () => Response.json({ status: 'ok' }),
       method: 'get',

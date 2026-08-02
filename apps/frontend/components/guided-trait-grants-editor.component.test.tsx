@@ -77,6 +77,7 @@ function grant(overrides: Partial<GrantDraft>): GrantDraft {
     unit: '',
     defaultStr: '',
     allowedValues: '',
+    mediaType: 'image',
     ref: '',
     traitPlacement: 'named',
     traitCount: '1',
@@ -105,6 +106,153 @@ function grant(overrides: Partial<GrantDraft>): GrantDraft {
     ...overrides,
   };
 }
+
+test('media grants round-trip their asset reference and separate media type', () => {
+  const draft = grant({
+    dataType: 'media',
+    defaultStr: '42',
+    key: 'ambientAudio',
+    label: 'Ambient audio',
+    mediaType: 'audio',
+  });
+  const body = buildGrantsBody([draft]);
+  assert.deepEqual(body.grants, [{
+    dataType: 'media',
+    key: 'ambientAudio',
+    label: 'Ambient audio',
+    required: true,
+    default: '42',
+    mediaType: 'audio',
+  }]);
+  const roundTrip = grantsDraftFromBody(body);
+  assert.ok(roundTrip);
+  assert.equal(roundTrip[0].dataType, 'media');
+  assert.equal(roundTrip[0].mediaType, 'audio');
+  assert.equal(roundTrip[0].defaultStr, '42');
+});
+
+test('media grants browse, preview, and select existing type-compatible assets', async () => {
+  const originalFetch = globalThis.fetch;
+  let fetchCalls = 0;
+  globalThis.fetch = async () => {
+    fetchCalls += 1;
+    return Response.json({
+    items: [{
+      id: '7',
+      filename: 'rain.mp3',
+      label: 'Rain ambience',
+      mediaType: 'audio',
+      mimeType: 'audio/mpeg',
+      size: 5,
+      url: '/api/media-assets/7/rain.mp3',
+    }],
+    page: 1,
+    totalItems: 1,
+    totalPages: 1,
+    });
+  };
+  const rendered = await renderEditor([grant({ dataType: 'media', key: 'ambience', mediaType: 'audio' })]);
+  try {
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 300)));
+    const selectControl = [...rendered.container.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.trim() === 'select');
+    assert.ok(selectControl);
+    assert.equal(selectControl.disabled, false);
+    assert.ok(selectControl.classList.contains('grant-token'));
+    const uploadInput = rendered.container.querySelector<HTMLInputElement>(
+      'input[aria-label="Upload new audio asset"]',
+    );
+    assert.equal(uploadInput?.accept, 'audio/*');
+    assert.equal(uploadInput?.hidden, true);
+    assert.equal(rendered.container.querySelector('form form'), null);
+
+    Object.defineProperty(uploadInput, 'files', {
+      configurable: true,
+      value: [new rendered.window.File(['audio'], 'RAIN.mp3', { type: 'audio/mpeg' })],
+    });
+    await act(async () => uploadInput.dispatchEvent(new rendered.window.Event(
+      'change', { bubbles: true },
+    ) as unknown as Event));
+    assert.equal(fetchCalls, 1);
+    assert.match(rendered.container.textContent ?? '', /existing media asset was selected/i);
+
+    const dataTypeControl = rendered.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Data Type: media"]',
+    );
+    assert.ok(dataTypeControl);
+    await act(async () => dataTypeControl.click());
+    const dataTypeSearch = rendered.container.querySelector<HTMLInputElement>(
+      'input[aria-label="Search data type options"]',
+    );
+    assert.ok(dataTypeSearch);
+    await act(async () => dataTypeSearch.dispatchEvent(new rendered.window.KeyboardEvent(
+      'keydown', { bubbles: true, key: 'Tab' },
+    ) as unknown as Event));
+    const labelInput = rendered.container.querySelector<HTMLInputElement>('input[aria-label="Label"]');
+    assert.ok(labelInput);
+    assert.equal(rendered.window.document.activeElement, labelInput);
+
+    await act(async () => labelInput.dispatchEvent(new rendered.window.KeyboardEvent(
+      'keydown', { bubbles: true, key: 'Tab' },
+    ) as unknown as Event));
+    const mediaTypeSearch = rendered.container.querySelector<HTMLInputElement>(
+      'input[aria-label="Search media type options"]',
+    );
+    assert.ok(mediaTypeSearch);
+    assert.equal(rendered.window.document.activeElement, mediaTypeSearch);
+
+    await act(async () => mediaTypeSearch.dispatchEvent(new rendered.window.KeyboardEvent(
+      'keydown', { bubbles: true, key: 'Tab' },
+    ) as unknown as Event));
+    const focusedSelectControl = [...rendered.container.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.trim() === 'select');
+    assert.ok(focusedSelectControl);
+    assert.equal(rendered.window.document.activeElement, focusedSelectControl);
+
+    await act(async () => focusedSelectControl.click());
+    assert.ok(rendered.container.querySelector('dialog.media-browser-dialog'));
+    assert.ok(rendered.container.querySelector('input[aria-label="Search media"]'));
+    assert.ok(rendered.container.querySelector('select[aria-label="Filter media format"]'));
+    assert.ok(rendered.container.querySelector('audio[src="/api/media-assets/7/rain.mp3"]'));
+    assert.match(rendered.container.querySelector('.media-browser-layout')?.textContent ?? '', /5 B/);
+    const useButton = [...rendered.container.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.trim() === 'Use this media');
+    assert.ok(useButton);
+    await act(async () => useButton.click());
+    const selectedReference = rendered.container.querySelector('.media-default-reference');
+    assert.equal(selectedReference?.textContent?.trim(), 'Selected: rain.mp3');
+    const changeControl = [...rendered.container.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.trim() === 'change');
+    assert.ok(changeControl);
+    assert.ok(changeControl.classList.contains('grant-token'));
+  } finally {
+    await rendered.cleanup();
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('media grants require upload when the selected type has no existing assets', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => Response.json({
+    items: [], page: 1, totalItems: 0, totalPages: 0,
+  });
+  const rendered = await renderEditor([grant({ dataType: 'media', key: 'ambience', mediaType: 'audio' })]);
+  try {
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 300)));
+    const selectControl = [...rendered.container.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.trim() === 'select');
+    assert.ok(selectControl);
+    assert.equal(selectControl.disabled, true);
+    assert.ok(selectControl.classList.contains('grant-token'));
+    assert.match(rendered.container.textContent ?? '', /default select or upload/i);
+    assert.match(rendered.container.textContent ?? '', /No audio media found\. Upload is required\./i);
+    assert.ok(rendered.container.querySelector('[role="status"].media-default-status'));
+    assert.match(rendered.container.textContent ?? '', /Upload is required/);
+  } finally {
+    await rendered.cleanup();
+    globalThis.fetch = originalFetch;
+  }
+});
 
 async function renderEditor(
   initialGrants: GrantDraft[],

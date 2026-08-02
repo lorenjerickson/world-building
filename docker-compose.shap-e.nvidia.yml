@@ -1,0 +1,10 @@
+services:
+  shap-e:
+    image: ${SHAP_E_IMAGE:-wanderlust-vtt-shap-e:nvidia-local}
+    build:
+      context: ./apps/shap-e
+      dockerfile: Dockerfile.nvidia
+    environment:
+      SHAP_E_ACCELERATOR: nvidia
+      SHAP_E_DEVICE: cuda
+    gpus: all

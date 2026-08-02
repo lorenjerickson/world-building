@@ -18,6 +18,7 @@ export {
 export type {
   BuildTraitShapeInput,
   TraitGrantDataType,
+  TraitMediaType,
   TraitShape,
   TraitShapeDefinition,
   TraitShapeDiagnostic,

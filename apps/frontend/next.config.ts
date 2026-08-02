@@ -14,6 +14,7 @@ const nextConfig: NextConfig = {
   // localhost origin, so explicitly admit the current development host. The env
   // list keeps this usable when the host name or DHCP address changes.
   allowedDevOrigins: [
+    "local.web.wanderlust-vtt.com",
     "192.168.50.221",
     "MacBookPro.local",
     ...additionalDevelopmentOrigins,

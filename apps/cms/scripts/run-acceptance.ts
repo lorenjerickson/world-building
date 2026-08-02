@@ -8,7 +8,7 @@ import { getPayload } from 'payload'
 
 import type { User, Workspace } from '../src/payload-types'
 
-const baseURL = process.env.CMS_BASE_URL || 'http://127.0.0.1:3100'
+const baseURL = process.env.CMS_BASE_URL || 'https://local.cms.wanderlust-vtt.com:3100'
 const internalToken = process.env.CMS_INTERNAL_TOKEN || ''
 const runID = Date.now().toString(36)
 

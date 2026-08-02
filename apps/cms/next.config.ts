@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 const dirname = path.dirname(fileURLToPath(import.meta.url))
 
 const nextConfig: NextConfig = {
+  allowedDevOrigins: ['local.cms.wanderlust-vtt.com'],
   images: {
     localPatterns: [{ pathname: '/api/media/file/**' }],
   },

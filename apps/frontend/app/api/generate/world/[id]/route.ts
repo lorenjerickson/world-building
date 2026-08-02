@@ -11,7 +11,7 @@ export async function PUT(
     const body = await request.json();
     const { metadata, description, triples } = body;
 
-    const backendUrl = process.env.BACKEND_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+    const backendUrl = process.env.BACKEND_URL || process.env.NEXT_PUBLIC_API_URL || 'https://local.api.wanderlust-vtt.com:8444';
     const response = await fetch(`${backendUrl}/api/generate/world/${id}`, {
       method: 'PUT',
       headers: {
@@ -47,7 +47,7 @@ export async function DELETE(
     if (!internalToken) {
       return NextResponse.json({ code: 'WORLD_GATEWAY_NOT_CONFIGURED', message: 'World deletion is not configured.' }, { status: 503 });
     }
-    const backendUrl = process.env.BACKEND_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+    const backendUrl = process.env.BACKEND_URL || process.env.NEXT_PUBLIC_API_URL || 'https://local.api.wanderlust-vtt.com:8444';
     const response = await fetch(`${backendUrl}/api/generate/world/${encodeURIComponent(id)}`, {
       headers: { 'x-auth0-sub': subject, 'x-rule-api-token': internalToken },
       method: 'DELETE',

@@ -4,12 +4,12 @@
   "packageManager": "pnpm@10.13.1",
   "scripts": {
     "build": "turbo build",
-    "dev": "pnpm db:up && pnpm --filter @wanderlust-vtt/backend prisma:generate && pnpm db:migrate && turbo dev",
+    "dev": "pnpm db:up && pnpm --filter @wanderlust-vtt/backend prisma:generate && pnpm db:migrate && DATABASE_URL=postgresql://worldbuilder:password123@127.0.0.1:${DB_PORT:-5432}/worlddb turbo dev",
     "lint": "turbo lint",
     "test": "turbo test",
     "verify:backend-release": "pnpm --filter @wanderlust-vtt/backend verify:release",
-    "db:up": "docker compose stop frontend backend cms && docker compose -f docker-compose.yml -f docker-compose.local.yml up -d cms-storage-init && docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --wait db cms-db cms-db-local cms-storage-local",
-    "db:migrate": "pnpm --filter @wanderlust-vtt/backend prisma:migrate:deploy",
+    "db:up": "docker compose stop frontend backend backend-tls cms && docker compose -f docker-compose.yml -f docker-compose.local.yml up -d cms-storage-init && docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --wait db cms-db cms-db-local cms-storage-local",
+    "db:migrate": "DATABASE_URL=postgresql://worldbuilder:password123@127.0.0.1:${DB_PORT:-5432}/worlddb pnpm --filter @wanderlust-vtt/backend prisma:migrate:deploy",
     "db:down": "docker compose -f docker-compose.yml -f docker-compose.local.yml down"
   },
   "devDependencies": {

@@ -8,12 +8,21 @@ datasource db {
 }
 
 model World {
-  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  prompt           String   @db.VarChar
-  generatedContent String   @db.Text
-  metadata         Json?
-  createdAt        DateTime @default(now()) @db.Timestamptz(6)
+  id                  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceExternalId String?  @db.VarChar
+  ownerSubject         String?  @db.VarChar
+  name                 String?  @db.VarChar
+  description          String?  @db.Text
+  ruleSetId            Int?
+  releaseId            Int?
+  releaseHash          String?  @db.VarChar
+  prompt               String?  @db.VarChar
+  generatedContent     String?  @db.Text
+  metadata             Json?
+  createdAt            DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt            DateTime @default(now()) @updatedAt @db.Timestamptz(6)
 
+  @@index([workspaceExternalId, ownerSubject], map: "IDX_world_workspace_owner")
   @@map("worlds")
 }
 
@@ -95,18 +104,45 @@ model RuleSetBinding {
 }
 
 model RuleInstance {
-  id           String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  bindingId    String         @db.Uuid
-  typeId       String         @db.VarChar
-  state        Json
-  stateVersion BigInt         @default(1)
-  createdBy    String         @db.VarChar
-  createdAt    DateTime       @default(now()) @db.Timestamptz(6)
-  updatedAt    DateTime       @default(now()) @updatedAt @db.Timestamptz(6)
-  binding      RuleSetBinding @relation(fields: [bindingId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  id                     String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  bindingId              String                 @db.Uuid
+  typeId                 String                 @db.VarChar
+  rootTraitIds           String[]               @default([])
+  satisfiedTraitIds      String[]               @default([])
+  prerequisiteSelections Json                   @default("{}")
+  migrationStatus        String                 @default("current") @db.VarChar
+  migrationDiagnostics   Json                   @default("[]")
+  retainedValues         Json                   @default("{}")
+  state                  Json
+  stateVersion           BigInt                 @default(1)
+  createdBy              String                 @db.VarChar
+  createdAt              DateTime               @default(now()) @db.Timestamptz(6)
+  updatedAt              DateTime               @default(now()) @updatedAt @db.Timestamptz(6)
+  binding                RuleSetBinding         @relation(fields: [bindingId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  outgoingReferences     WorldEntityReference[] @relation("WorldEntityReferenceParent")
+  incomingReferences     WorldEntityReference[] @relation("WorldEntityReferenceChild")
 
   @@index([bindingId, typeId], map: "IDX_rule_instance_binding_type")
+  @@index([bindingId, migrationStatus], map: "IDX_rule_instance_binding_migration_status")
   @@map("rule_instances")
+}
+
+model WorldEntityReference {
+  id                String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  bindingId         String       @db.Uuid
+  parentEntityId    String       @db.Uuid
+  childEntityId     String       @db.Uuid
+  collectionPath    String       @db.VarChar
+  sortOrder         Int          @default(0)
+  implementationMap Json         @default("{}")
+  createdAt         DateTime     @default(now()) @db.Timestamptz(6)
+  parentEntity      RuleInstance @relation("WorldEntityReferenceParent", fields: [parentEntityId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  childEntity       RuleInstance @relation("WorldEntityReferenceChild", fields: [childEntityId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+
+  @@unique([parentEntityId, collectionPath, childEntityId], map: "UQ_world_entity_reference_parent_path_child")
+  @@index([bindingId, parentEntityId, collectionPath, sortOrder], map: "IDX_world_entity_reference_collection")
+  @@index([childEntityId], map: "IDX_world_entity_reference_child")
+  @@map("world_entity_references")
 }
 
 model RuleEffect {

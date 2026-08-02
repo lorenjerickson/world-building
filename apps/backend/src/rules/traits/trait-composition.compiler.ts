@@ -32,6 +32,7 @@ const DATA_TYPES: TraitGrantDataType[] = [
   'number',
   'boolean',
   'enum',
+  'media',
   'trait',
   'trait-collection',
   'modifier',
@@ -247,7 +248,7 @@ function validateGrant(
     return;
   }
   const dataType = grant.dataType as TraitGrantDataType;
-  const keyRequired = ['text', 'number', 'boolean', 'enum', 'trait-collection'].includes(dataType)
+  const keyRequired = ['text', 'number', 'boolean', 'enum', 'media', 'trait-collection'].includes(dataType)
     || (dataType === 'trait' && typeof grant.into !== 'string' && typeof grant.at !== 'string');
   if (keyRequired && (typeof grant.key !== 'string' || !grant.key.trim())) {
     diagnostic(diagnostics, 'RULE_TRAIT_GRANT_KEY_REQUIRED', `${path}.key`, `${dataType} grants require a non-empty path name.`);
@@ -265,7 +266,7 @@ function validateGrant(
   if (grant.required !== undefined && typeof grant.required !== 'boolean') {
     diagnostic(diagnostics, 'RULE_TRAIT_FIELD_REQUIRED_INVALID', `${path}.required`, 'Field requiredness must be a Boolean.');
   }
-  if (['text', 'number', 'boolean', 'enum'].includes(dataType)) {
+  if (['text', 'number', 'boolean', 'enum', 'media'].includes(dataType)) {
     if (dataType === 'number') {
       if (grant.min !== undefined && (typeof grant.min !== 'number' || !Number.isFinite(grant.min))) {
         diagnostic(diagnostics, 'RULE_TRAIT_FIELD_BOUND_INVALID', `${path}.min`, 'Numeric minimum must be a finite number.');
@@ -296,6 +297,23 @@ function validateGrant(
         diagnostic(diagnostics, 'RULE_TRAIT_FIELD_DEFAULT_OUT_OF_RANGE', `${path}.default`, 'Numeric default must fall within the declared bounds.');
       }
     }
+  }
+  if (dataType === 'media') {
+    if (!['text', 'audio', 'video', 'image'].includes(String(grant.mediaType))) {
+      diagnostic(
+        diagnostics,
+        'RULE_TRAIT_MEDIA_TYPE_INVALID',
+        `${path}.mediaType`,
+        "Media fields require a mediaType of 'text', 'audio', 'video', or 'image'.",
+      );
+    }
+  } else if (grant.mediaType !== undefined) {
+    diagnostic(
+      diagnostics,
+      'RULE_TRAIT_MEDIA_TYPE_UNSUPPORTED',
+      `${path}.mediaType`,
+      'Only media fields may declare a media type.',
+    );
   }
   if (dataType === 'trait') {
     if (typeof grant.ref !== 'string' || !grant.ref.trim()) {

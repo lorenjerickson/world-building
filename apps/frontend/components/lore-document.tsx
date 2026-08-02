@@ -4,6 +4,7 @@ import Link from "next/link";
 import { ChangeEvent, ReactNode, useRef, useState } from "react";
 import { RichMarkdownEditor } from "@/components/mdx-editor";
 import { deleteLoreImage, uploadLoreImage } from "@/lib/image-uploads";
+import type { LoreImagePurpose } from "@/lib/image-uploads";
 
 export interface LoreReference { id: string; name: string; href: string; kind: string; }
 export interface LoreFact { label: string; value: string; emptyLabel?: string; options?: { value: string; label: string }[]; onChange: (value: string) => void; }
@@ -64,19 +65,19 @@ function InlineFact({ fact }: { fact: LoreFact }) {
   return <button className="document-fact-value" onClick={() => setEditing(true)}>{selectedLabel || fact.value || fact.emptyLabel || "Not set"}</button>;
 }
 
-function DocumentImage({ imageUrl, label, onChange }: { imageUrl?: string; label: string; onChange: (value?: string) => void }) {
+function DocumentImage({ imageUrl, label, onChange, purpose }: { imageUrl?: string; label: string; onChange: (value?: string) => void; purpose: LoreImagePurpose }) {
   const input = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string>();
-  async function upload(event: ChangeEvent<HTMLInputElement>) { const file = event.target.files?.[0]; event.target.value = ""; if (!file) return; setUploading(true); setUploadError(undefined); try { const nextUrl = await uploadLoreImage(file); await deleteLoreImage(imageUrl); onChange(nextUrl); } catch (cause) { setUploadError(cause instanceof Error ? cause.message : "Upload failed."); } finally { setUploading(false); } }
+  async function upload(event: ChangeEvent<HTMLInputElement>) { const file = event.target.files?.[0]; event.target.value = ""; if (!file) return; setUploading(true); setUploadError(undefined); try { const nextUrl = await uploadLoreImage(file, purpose, label); await deleteLoreImage(imageUrl); onChange(nextUrl); } catch (cause) { setUploadError(cause instanceof Error ? cause.message : "Upload failed."); } finally { setUploading(false); } }
   return <div className={`document-image ${imageUrl ? "has-image" : ""}`} style={imageUrl ? { backgroundImage: `url(${imageUrl})` } : undefined} onClick={() => !uploading && input.current?.click()} role="button" tabIndex={0}><input ref={input} type="file" accept="image/png,image/jpeg,image/gif,image/webp" onChange={upload} /><div className="document-image-action"><strong>{uploading ? "Uploading..." : imageUrl ? `Change ${label}` : `Add ${label}`}</strong><span>{uploadError || "PNG, JPG, GIF, or WebP · up to 5 MB"}</span></div>{imageUrl && <button type="button" onClick={async (event) => { event.stopPropagation(); await deleteLoreImage(imageUrl); onChange(undefined); }}>Remove</button>}</div>;
 }
 
-export function LoreDocument({ eyebrow, title, description, imageUrl, imageLabel = "image", facts, references, related, onTitleChange, onDescriptionChange, onImageChange, actions, media }: { eyebrow: string; title: string; description: string; imageUrl?: string; imageLabel?: string; facts: LoreFact[]; references: LoreReference[]; related?: LoreReference[]; onTitleChange: (value: string) => void; onDescriptionChange: (value: string) => void; onImageChange?: (value?: string) => void; actions?: ReactNode; media?: ReactNode; }) {
+export function LoreDocument({ eyebrow, title, description, imageUrl, imageLabel = "image", imagePurpose = "handout", facts, references, related, onTitleChange, onDescriptionChange, onImageChange, actions, media }: { eyebrow: string; title: string; description: string; imageUrl?: string; imageLabel?: string; imagePurpose?: LoreImagePurpose; facts: LoreFact[]; references: LoreReference[]; related?: LoreReference[]; onTitleChange: (value: string) => void; onDescriptionChange: (value: string) => void; onImageChange?: (value?: string) => void; actions?: ReactNode; media?: ReactNode; }) {
   return <article className={`lore-document${facts.length ? " has-facts" : ""}`}>
     <header className="lore-document-header"><div><span className="eyebrow">{eyebrow}</span><InlineTitle value={title} onChange={onTitleChange} /></div>{actions}</header>
     {media}
-    {onImageChange && <DocumentImage imageUrl={imageUrl} label={imageLabel} onChange={onImageChange} />}
+    {onImageChange && <DocumentImage imageUrl={imageUrl} label={imageLabel} onChange={onImageChange} purpose={imagePurpose} />}
     <section className="lore-document-body"><div className="document-main"><span className="document-section-label">Lore and notes</span><MarkdownLongText value={description} onChange={onDescriptionChange} references={references} label={`${title} lore`} /></div>{facts.length ? <aside className="document-facts">{facts.map((fact) => <div className="document-fact" key={fact.label}><span>{fact.label}</span><InlineFact fact={fact} /></div>)}</aside> : null}</section>
     {!!related?.length && <footer className="document-related"><span className="document-section-label">Connected lore</span><div>{related.map((reference) => <Link href={reference.href} key={`${reference.kind}-${reference.id}`}><span>{reference.kind}</span>{reference.name}</Link>)}</div></footer>}
   </article>;

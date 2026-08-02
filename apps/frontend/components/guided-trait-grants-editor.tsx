@@ -14,6 +14,7 @@ import {
   traitShapeChildren,
   type TraitShape,
   type TraitShapeGrant,
+  type TraitMediaType,
   type TraitShapeNode,
 } from '../lib/trait-shape';
 import { diffTraitShapes, type TraitShapeChange } from '../lib/trait-shape-diff';
@@ -27,7 +28,7 @@ import {
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-export type GrantDataType = 'text' | 'number' | 'boolean' | 'enum' | 'trait' | 'trait-collection' | 'modifier' | 'suppression' | 'replacement';
+export type GrantDataType = 'text' | 'number' | 'boolean' | 'enum' | 'media' | 'trait' | 'trait-collection' | 'modifier' | 'suppression' | 'replacement';
 export type ModifierOperation = 'increases' | 'decreases' | 'multiplies' | 'divides' | 'sets' | 'at-least' | 'at-most';
 export type ModifierMountSelectorMode = 'all' | 'ordinal' | 'trait' | 'tag';
 type MountSelectorDraft = {
@@ -52,6 +53,8 @@ export interface GrantDraft {
   defaultStr: string;
   // enum allowed values (comma-separated)
   allowedValues: string;
+  // media category is separate from the media reference value/default.
+  mediaType: TraitMediaType;
   // trait reference (externalId)
   ref: string;
   traitPlacement: 'named' | 'collection' | 'nested';
@@ -111,6 +114,7 @@ type GrantEntry = {
   unit?: CanonicalUnitId;
   default?: number | string | boolean;
   allowedValues?: string[];
+  mediaType?: TraitMediaType;
   ref?: string;
   into?: string;
   at?: string;
@@ -147,7 +151,7 @@ export function newGrant(dataType: GrantDataType): GrantDraft {
   return {
     _id: crypto.randomUUID(),
     key: '', label: '', dataType, required: true,
-    min: '', max: '', defaultNum: '', unit: '1', defaultStr: '', allowedValues: '', ref: '',
+    min: '', max: '', defaultNum: '', unit: '1', defaultStr: '', allowedValues: '', mediaType: 'image', ref: '',
     traitPlacement: 'named', traitCount: '1', traitCollection: '', traitParentPath: '',
     modifierOperation: 'increases', modifierFieldSegments: [], modifierAmount: '', modifierAmountUnit: '',
     modifierPriority: '0', modifierConditionEnabled: false, modifierConditionOperator: 'equals',
@@ -168,16 +172,17 @@ function traitShapeGrantsFromDraft(grants: GrantDraft[]): TraitShapeGrant[] {
     key: grant.key,
     label: grant.label,
     dataType: grant.dataType,
-    ...(['text', 'number', 'boolean', 'enum'].includes(grant.dataType)
+    ...(['text', 'number', 'boolean', 'enum', 'media'].includes(grant.dataType)
       ? { required: grant.required }
       : {}),
     ...(grant.dataType === 'number' && grant.min !== '' ? { min: Number(grant.min) } : {}),
     ...(grant.dataType === 'number' && grant.max !== '' ? { max: Number(grant.max) } : {}),
     ...(grant.dataType === 'number' && grant.defaultNum !== '' ? { default: Number(grant.defaultNum) } : {}),
     ...(grant.dataType === 'number' && grant.unit ? { unit: grant.unit } : {}),
-    ...((grant.dataType === 'text' || grant.dataType === 'enum') && grant.defaultStr !== ''
+    ...((grant.dataType === 'text' || grant.dataType === 'enum' || grant.dataType === 'media') && grant.defaultStr !== ''
       ? { default: grant.defaultStr }
       : {}),
+    ...(grant.dataType === 'media' ? { mediaType: grant.mediaType } : {}),
     ...(grant.dataType === 'boolean' && (grant.defaultStr === 'true' || grant.defaultStr === 'false')
       ? { default: grant.defaultStr === 'true' }
       : {}),
@@ -265,12 +270,13 @@ export function buildGrantsBody(
         if (g.max !== '') entry.max = Number(g.max);
         if (g.defaultNum !== '') entry.default = Number(g.defaultNum);
         if (g.unit) entry.unit = g.unit;
-      } else if (g.dataType === 'text' || g.dataType === 'enum') {
+      } else if (g.dataType === 'text' || g.dataType === 'enum' || g.dataType === 'media') {
         if (g.defaultStr.trim()) entry.default = g.defaultStr.trim();
         if (g.dataType === 'enum') {
           const vals = g.allowedValues.split(',').map((v) => v.trim()).filter(Boolean);
           if (vals.length) entry.allowedValues = vals;
         }
+        if (g.dataType === 'media') entry.mediaType = g.mediaType;
       } else if (g.dataType === 'boolean') {
         if (g.defaultStr === 'true') entry.default = true;
         else if (g.defaultStr === 'false') entry.default = false;
@@ -314,7 +320,7 @@ export function buildGrantsBody(
           const tt = resolved?.dataType ?? null;
           if (tt === 'boolean') {
             entry.amount = g.modifierAmount === 'true';
-          } else if (tt === 'text' || tt === 'enum') {
+          } else if (tt === 'text' || tt === 'enum' || tt === 'media') {
             entry.amount = g.modifierAmount;
           } else {
             const n = Number(g.modifierAmount);
@@ -334,7 +340,7 @@ export function buildGrantsBody(
           let conditionValue: NonNullable<GrantEntry['when']>['value'];
           if (tt === 'boolean') {
             conditionValue = g.modifierConditionValue === 'true';
-          } else if (tt === 'text' || tt === 'enum') {
+          } else if (tt === 'text' || tt === 'enum' || tt === 'media') {
             conditionValue = g.modifierConditionValue;
           } else {
             const numericValue = Number(g.modifierConditionValue);
@@ -410,6 +416,9 @@ export function grantsDraftFromBody(body: Record<string, unknown>): GrantDraft[]
     defaultStr: g.default != null && g.dataType !== 'number' && g.dataType !== 'trait'
       ? String(g.default) : '',
     allowedValues: Array.isArray(g.allowedValues) ? g.allowedValues.join(', ') : '',
+    mediaType: g.mediaType === 'text' || g.mediaType === 'audio' || g.mediaType === 'video'
+      ? g.mediaType
+      : 'image',
     ref: g.ref ?? '',
     traitPlacement: g.into
       ? 'collection'
@@ -465,6 +474,7 @@ function getTabFields(dataType: GrantDataType): string[] {
     case 'number':  return ['key', 'dataType', 'label', 'unit', 'min', 'max', 'defaultNum'];
     case 'boolean': return ['key', 'dataType', 'defaultStr', 'label'];
     case 'enum':    return ['key', 'dataType', 'allowedValues', 'defaultStr', 'label'];
+    case 'media':   return ['key', 'dataType', 'label', 'mediaType', 'mediaDefault'];
     case 'trait':         return ['dataType', 'traitCount', 'ref', 'key'];
     case 'trait-collection': return ['dataType', 'key'];
     case 'modifier':      return ['dataType', 'modifierOperation', 'modifierPath', 'modifierMountSelector', 'modifierMountOrdinal', 'modifierAmount', 'modifierAmountUnit', 'modifierPriority', 'modifierConditionOperator', 'modifierConditionValue', 'modifierConditionUnit'];
@@ -650,11 +660,19 @@ const DATA_TYPE_OPTIONS: ComboOption[] = [
   { value: 'number',   label: 'number',      hint: 'numeric' },
   { value: 'boolean',  label: 'true / false', hint: 'boolean' },
   { value: 'enum',     label: 'one of…',     hint: 'enumerated' },
+  { value: 'media',    label: 'media',       hint: 'asset reference' },
   { value: 'trait',    label: 'trait',       hint: 'trait reference' },
   { value: 'trait-collection', label: 'trait collection', hint: 'repeatable typed traits' },
   { value: 'modifier', label: 'modifier',    hint: 'arithmetic change' },
   { value: 'suppression', label: 'suppression', hint: 'temporarily removes a trait branch' },
   { value: 'replacement', label: 'replacement', hint: 'swaps a trait branch' },
+];
+
+const MEDIA_TYPE_OPTIONS: ComboOption[] = [
+  { value: 'text', label: 'text', hint: 'text asset' },
+  { value: 'audio', label: 'audio', hint: 'audio asset' },
+  { value: 'video', label: 'video', hint: 'video asset' },
+  { value: 'image', label: 'image', hint: 'image asset' },
 ];
 
 const BOOL_OPTIONS: ComboOption[] = [
@@ -1093,6 +1111,7 @@ function activateButtonOnSpace(event: ReactKeyboardEvent<HTMLButtonElement>) {
 type ResolvedGrant = {
   dataType: GrantDataType;
   allowedValues?: string[];
+  mediaType?: TraitMediaType;
   unit?: CanonicalUnitId;
 };
 
@@ -1116,7 +1135,7 @@ function resolveTerminalGrant(
       : undefined
     : resolveTraitShapeTerminal(shape, segments.slice(1));
   return terminal
-    ? { dataType: terminal.dataType, allowedValues: terminal.allowedValues, unit: terminal.unit }
+    ? { dataType: terminal.dataType, allowedValues: terminal.allowedValues, mediaType: terminal.mediaType, unit: terminal.unit }
     : null;
 }
 
@@ -1414,6 +1433,381 @@ function ModifierPathEditor({
 
 // ── Grant row ─────────────────────────────────────────────────────────────────
 
+type MediaAssetOption = {
+  id: string;
+  filename: string;
+  label: string;
+  mediaType: TraitMediaType;
+  mimeType: string;
+  reusedExisting?: boolean;
+  size: number;
+  url: string;
+};
+
+type MediaAssetCatalogPage = {
+  items: MediaAssetOption[];
+  page: number;
+  totalItems: number;
+  totalPages: number;
+};
+
+const MEDIA_ACCEPT: Record<TraitMediaType, string> = {
+  audio: 'audio/*',
+  image: 'image/*',
+  text: '.json,.md,.txt,application/json,text/markdown,text/plain',
+  video: 'video/*',
+};
+
+const MEDIA_MIME_FILTERS: Record<TraitMediaType, Array<{ label: string; value: string }>> = {
+  audio: [
+    { label: 'All audio', value: '' },
+    { label: 'MP3', value: 'audio/mpeg' },
+    { label: 'WAV', value: 'audio/wav' },
+    { label: 'Ogg', value: 'audio/ogg' },
+    { label: 'WebM', value: 'audio/webm' },
+    { label: 'FLAC', value: 'audio/flac' },
+    { label: 'MP4 audio', value: 'audio/mp4' },
+  ],
+  image: [
+    { label: 'All images', value: '' },
+    { label: 'PNG', value: 'image/png' },
+    { label: 'JPEG', value: 'image/jpeg' },
+    { label: 'WebP', value: 'image/webp' },
+    { label: 'GIF', value: 'image/gif' },
+  ],
+  text: [
+    { label: 'All text', value: '' },
+    { label: 'Plain text', value: 'text/plain' },
+    { label: 'Markdown', value: 'text/markdown' },
+    { label: 'JSON', value: 'application/json' },
+  ],
+  video: [
+    { label: 'All video', value: '' },
+    { label: 'MP4', value: 'video/mp4' },
+    { label: 'WebM', value: 'video/webm' },
+    { label: 'Ogg', value: 'video/ogg' },
+    { label: 'QuickTime', value: 'video/quicktime' },
+  ],
+};
+
+function formatMediaSize(size: number): string {
+  if (!Number.isFinite(size) || size <= 0) return 'Size unavailable';
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function normalizedMediaFilename(filename: string): string {
+  return filename.normalize('NFKC').trim().toLocaleLowerCase('en-US');
+}
+
+function MediaAssetPreview({ asset }: { asset: MediaAssetOption }) {
+  if (asset.mediaType === 'image') {
+    return (
+      <object
+        aria-label={asset.label}
+        className="media-browser-preview-visual"
+        data={asset.url}
+        type={asset.mimeType}
+      />
+    );
+  }
+  if (asset.mediaType === 'audio') {
+    return <audio className="media-browser-preview-audio" controls preload="metadata" src={asset.url} />;
+  }
+  if (asset.mediaType === 'video') {
+    return <video aria-label={asset.label} className="media-browser-preview-visual" controls preload="metadata" src={asset.url} />;
+  }
+  return (
+    <iframe
+      className="media-browser-preview-visual"
+      sandbox=""
+      src={asset.url}
+      title={`Preview ${asset.label}`}
+    />
+  );
+}
+
+export function MediaAssetPicker({
+  focusRequested = false,
+  mediaType,
+  onChange,
+  onFocusHandled,
+  value,
+}: {
+  focusRequested?: boolean;
+  mediaType: TraitMediaType;
+  onChange: (value: string) => void;
+  onFocusHandled?: () => void;
+  value: string;
+}) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const selectControlRef = useRef<HTMLButtonElement>(null);
+  const uploadControlRef = useRef<HTMLButtonElement>(null);
+  const [assets, setAssets] = useState<MediaAssetOption[]>([]);
+  const [chosenAsset, setChosenAsset] = useState<MediaAssetOption | null>(null);
+  const [error, setError] = useState('');
+  const [hasAny, setHasAny] = useState(false);
+  const [mimeType, setMimeType] = useState('');
+  const [notice, setNotice] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [page, setPage] = useState(1);
+  const [previewAsset, setPreviewAsset] = useState<MediaAssetOption | null>(null);
+  const [search, setSearch] = useState('');
+  const [totalPages, setTotalPages] = useState(0);
+
+  const loadAssets = useCallback(async (signal?: AbortSignal) => {
+    setLoading(true);
+    setError('');
+    try {
+      const query = new URLSearchParams({ page: String(page), type: mediaType });
+      if (mimeType) query.set('mimeType', mimeType);
+      if (search.trim()) query.set('search', search.trim());
+      const response = await fetch(`/api/media-assets?${query}`, {
+        cache: 'no-store',
+        signal,
+      });
+      const body = await response.json().catch(() => null) as MediaAssetCatalogPage | { message?: string } | null;
+      if (!response.ok || !body || !('items' in body) || !Array.isArray(body.items)) {
+        throw new Error(body && 'message' in body && body.message
+          ? body.message
+          : 'Media assets could not be loaded.');
+      }
+      setAssets(body.items);
+      setTotalPages(body.totalPages);
+      if (!mimeType && !search.trim() && page === 1) setHasAny(body.totalItems > 0);
+      const current = body.items.find((asset) => asset.id === value);
+      if (current) setChosenAsset(current);
+      setPreviewAsset((existing) => existing
+        ? body.items.find((asset) => asset.id === existing.id) ?? body.items[0] ?? null
+        : body.items[0] ?? null);
+    } catch (loadError) {
+      if (signal?.aborted) return;
+      setError(loadError instanceof Error ? loadError.message : 'Media assets could not be loaded.');
+      if (!mimeType && !search.trim() && page === 1) setHasAny(false);
+    } finally {
+      if (!signal?.aborted) setLoading(false);
+    }
+  }, [mediaType, mimeType, page, search, value]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => void loadAssets(controller.signal), 250);
+    return () => {
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [loadAssets]);
+
+  useEffect(() => {
+    if (!focusRequested || loading) return;
+    const control = hasAny ? selectControlRef.current : uploadControlRef.current;
+    if (!control) return;
+    control.focus();
+    onFocusHandled?.();
+  }, [focusRequested, hasAny, loading, onFocusHandled]);
+
+  async function upload(file: File | undefined) {
+    if (!file) return;
+    setLoading(true);
+    setError('');
+    setNotice('');
+    try {
+      const duplicate = assets.find((asset) =>
+        normalizedMediaFilename(asset.filename) === normalizedMediaFilename(file.name)
+        && asset.size === file.size);
+      if (duplicate) {
+        setChosenAsset(duplicate);
+        setPreviewAsset(duplicate);
+        setNotice('That file already exists. The existing media asset was selected.');
+        onChange(duplicate.id);
+        return;
+      }
+      const form = new FormData();
+      form.append('file', file);
+      const response = await fetch(`/api/media-assets?type=${encodeURIComponent(mediaType)}`, {
+        body: form,
+        method: 'POST',
+      });
+      const body = await response.json().catch(() => null) as MediaAssetOption | { message?: string } | null;
+      if (!response.ok || !body || !('id' in body)) {
+        throw new Error(body && 'message' in body && body.message
+          ? body.message
+          : 'The media asset could not be uploaded.');
+      }
+      setAssets((current) => [body, ...current.filter((asset) => asset.id !== body.id)]);
+      setChosenAsset(body);
+      setHasAny(true);
+      setPreviewAsset(body);
+      if (body.reusedExisting) {
+        setNotice('That file already exists. The existing media asset was selected.');
+      }
+      onChange(body.id);
+    } catch (uploadError) {
+      setError(uploadError instanceof Error ? uploadError.message : 'The media asset could not be uploaded.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <>
+      <span className="media-default-editor">
+        <span className="media-default-controls">
+        <button
+          className="grant-token"
+          disabled={loading || !hasAny}
+          ref={selectControlRef}
+          title={!hasAny ? `No ${mediaType} media is available; upload is required.` : `Select existing ${mediaType} media`}
+          type="button"
+          onClick={() => dialogRef.current?.showModal()}
+        >
+          select
+        </button>
+        {' '}<span>or</span>{' '}
+        <button
+          className="grant-token"
+          disabled={loading}
+          ref={uploadControlRef}
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+        >
+          {value ? 'change' : 'upload'}
+        </button>
+        <input
+          aria-label={`Upload new ${mediaType} asset`}
+          className="media-asset-file-input"
+          disabled={loading}
+          hidden
+          ref={fileInputRef}
+          type="file"
+          accept={MEDIA_ACCEPT[mediaType]}
+          onChange={(event) => {
+            void upload(event.target.files?.[0]);
+            event.currentTarget.value = '';
+          }}
+        />
+        </span>
+        {value && (
+          <span className="media-default-reference">
+            Selected: {chosenAsset?.filename || chosenAsset?.label || `media reference ${value}`}
+          </span>
+        )}
+        {!loading && !hasAny && !error && (
+          <span className="media-default-status" role="status">
+            No {mediaType} media found. Upload is required.
+          </span>
+        )}
+        {notice && <span className="media-default-status" role="status">{notice}</span>}
+        {error && <span className="media-default-status is-error" role="alert">{error}</span>}
+      </span>
+      <dialog
+        aria-label={`Select ${mediaType} media`}
+        className="media-browser-dialog"
+        ref={dialogRef}
+        onClick={(event) => {
+          if (event.target === event.currentTarget) dialogRef.current?.close();
+        }}
+      >
+        <div className="media-browser-panel">
+          <header className="media-browser-header">
+            <div>
+              <h3>Select {mediaType} media</h3>
+              <p>Search, filter, and preview an existing asset.</p>
+            </div>
+            <button className="secondary-action compact-action" type="button" onClick={() => dialogRef.current?.close()}>Close</button>
+          </header>
+          <div className="media-browser-filters">
+            <label className="rule-set-field">
+              <span className="sr-only">Search media</span>
+              <input
+                aria-label="Search media"
+                placeholder="Search by name or filename"
+                type="search"
+                value={search}
+                onChange={(event) => { setPage(1); setSearch(event.target.value); }}
+              />
+            </label>
+            <label className="rule-set-field">
+              <span className="sr-only">Filter media format</span>
+              <select
+                aria-label="Filter media format"
+                value={mimeType}
+                onChange={(event) => { setMimeType(event.target.value); setPage(1); }}
+              >
+                {MEDIA_MIME_FILTERS[mediaType].map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div className="media-browser-layout">
+            <section aria-label="Media results">
+              {loading ? (
+                <p className="media-browser-empty">Loading media…</p>
+              ) : assets.length ? (
+                <ul className="media-browser-list">
+                  {assets.map((asset) => (
+                    <li key={asset.id}>
+                      <button
+                        aria-pressed={previewAsset?.id === asset.id}
+                        className={`media-browser-asset${previewAsset?.id === asset.id ? ' is-selected' : ''}`}
+                        type="button"
+                        onClick={() => setPreviewAsset(asset)}
+                      >
+                        <span>
+                          <strong>{asset.label || asset.filename}</strong>
+                          {asset.label !== asset.filename && <small>{asset.filename}</small>}
+                          <small>{asset.mimeType} · {formatMediaSize(asset.size)}</small>
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="media-browser-empty">No media matches this search and filter.</p>
+              )}
+              {totalPages > 1 && (
+                <div className="media-browser-pagination">
+                  <button className="secondary-action compact-action" disabled={page <= 1 || loading} type="button" onClick={() => setPage((current) => current - 1)}>Previous</button>
+                  <span>Page {page} of {totalPages}</span>
+                  <button className="secondary-action compact-action" disabled={page >= totalPages || loading} type="button" onClick={() => setPage((current) => current + 1)}>Next</button>
+                </div>
+              )}
+            </section>
+            <section className="card-surface media-browser-preview" aria-label="Media preview">
+                {previewAsset ? (
+                  <>
+                    <h4>{previewAsset.label || previewAsset.filename}</h4>
+                    <MediaAssetPreview asset={previewAsset} />
+                    <p>{previewAsset.filename} · {previewAsset.mimeType} · {formatMediaSize(previewAsset.size)}</p>
+                    <div className="media-browser-preview-actions">
+                      <button
+                        className="primary-action compact-action"
+                        type="button"
+                        onClick={() => {
+                          setChosenAsset(previewAsset);
+                          setNotice('');
+                          onChange(previewAsset.id);
+                          dialogRef.current?.close();
+                        }}
+                      >
+                        Use this media
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <p className="media-browser-empty">Choose an asset to preview it.</p>
+                )}
+            </section>
+          </div>
+        </div>
+      </dialog>
+    </>
+  );
+}
+
 function GrantRow({
   collectionOptions, grant, nestedParentOptions, prerequisiteMode, prerequisiteCount,
   traitDefinitions, traitShape, autoFocus, onChange, onRemove,
@@ -1646,7 +2040,7 @@ function GrantRow({
           options={resolvedTerminal.allowedValues.map((v) => ({ value: v, label: v }))}
           onSelect={(v) => onChange({ modifierAmount: v })} />
       );
-    } else if (terminalType === 'text') {
+    } else if (terminalType === 'text' || terminalType === 'media') {
       valueNode = (
         <Token {...tok('modifierAmount')} value={grant.modifierAmount}
           placeholder="value" inputType="text"
@@ -1682,7 +2076,7 @@ function GrantRow({
           options={resolvedTerminal.allowedValues.map((value) => ({ value, label: value }))}
           onSelect={(value) => onChange({ modifierConditionValue: value })} />
       );
-    } else if (terminalType === 'text') {
+    } else if (terminalType === 'text' || terminalType === 'media') {
       conditionValueNode = (
         <Token {...tok('modifierConditionValue')} value={grant.modifierConditionValue}
           placeholder="value" inputType="text"
@@ -2030,6 +2424,20 @@ function GrantRow({
              placeholder="fire, ice, lightning" size="lg"
              onChange={(v) => onChange({ allowedValues: v })} />){', '}
           default {defaultNode}
+        </>
+      )}
+
+      {grant.dataType === 'media' && (
+        <>, accepting{' '}
+          <ComboToken {...ct('mediaType')} value={grant.mediaType} placeholder="media type"
+            options={MEDIA_TYPE_OPTIONS}
+            onSelect={(value) => onChange({ mediaType: value as TraitMediaType, defaultStr: '' })} />
+          {' '}assets, default{' '}
+          <MediaAssetPicker key={grant.mediaType}
+            focusRequested={editingField === 'mediaDefault'}
+            mediaType={grant.mediaType} value={grant.defaultStr}
+            onFocusHandled={done}
+            onChange={(value) => onChange({ defaultStr: value })} />
         </>
       )}
 
@@ -2535,6 +2943,7 @@ export function GuidedTraitGrantsEditor({
         <button type="button" className="secondary-action compact-action" onKeyDown={activateButtonOnSpace} onClick={() => add('number')}>+ number</button>
         <button type="button" className="secondary-action compact-action" onKeyDown={activateButtonOnSpace} onClick={() => add('boolean')}>+ true/false</button>
         <button type="button" className="secondary-action compact-action" onKeyDown={activateButtonOnSpace} onClick={() => add('enum')}>+ enum</button>
+        <button type="button" className="secondary-action compact-action" onKeyDown={activateButtonOnSpace} onClick={() => add('media')}>+ media</button>
         <button type="button" className="secondary-action compact-action" onKeyDown={activateButtonOnSpace} onClick={() => add('trait')}>+ trait grant</button>
         <button type="button" className="secondary-action compact-action" onKeyDown={activateButtonOnSpace} onClick={() => add('trait-collection')}>+ trait collection</button>
         <button type="button" className="secondary-action compact-action" onKeyDown={activateButtonOnSpace} onClick={() => add('modifier')}>+ modifier</button>

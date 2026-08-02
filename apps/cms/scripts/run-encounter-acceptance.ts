@@ -21,8 +21,8 @@ const scriptDirectory = path.dirname(fileURLToPath(import.meta.url))
 loadEnvironment({ path: path.resolve(scriptDirectory, '../.env') })
 loadEnvironment({ path: path.resolve(scriptDirectory, '../../backend/.env') })
 
-const backendURL = (process.env.BACKEND_URL || 'http://127.0.0.1:8000').replace(/\/$/, '')
-const cmsURL = (process.env.CMS_BASE_URL || 'http://127.0.0.1:3100').replace(/\/$/, '')
+const backendURL = (process.env.BACKEND_URL || 'https://local.api.wanderlust-vtt.com:8444').replace(/\/$/, '')
+const cmsURL = (process.env.CMS_BASE_URL || 'https://local.cms.wanderlust-vtt.com:3100').replace(/\/$/, '')
 const cmsToken = process.env.CMS_INTERNAL_TOKEN || ''
 const gatewayToken = process.env.RULE_API_INTERNAL_TOKEN || ''
 const runID = Date.now().toString(36)

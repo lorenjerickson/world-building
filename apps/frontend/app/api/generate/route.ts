@@ -6,7 +6,7 @@ export async function POST(request: Request) {
     const { prompt } = body;
 
     // Call the NestJS backend (use BACKEND_URL for server-side calls within Docker)
-    const backendUrl = process.env.BACKEND_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+    const backendUrl = process.env.BACKEND_URL || process.env.NEXT_PUBLIC_API_URL || 'https://local.api.wanderlust-vtt.com:8444';
     const response = await fetch(`${backendUrl}/api/generate`, {
       method: 'POST',
       headers: {

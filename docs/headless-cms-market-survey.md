@@ -83,18 +83,16 @@ The repository currently has a fragmented content system rather than a single Po
 
 ### 3.2 Media
 
-- User uploads and OpenAI-generated character images are written to `backend/data/uploads` with a UUID filename.
-- A Docker named volume makes that directory persistent for the current single backend deployment.
-- Files are served directly by Express under `/uploads` and proxied by Next.js API routes.
-- The upload record contains no owner, world, character, purpose, tags, prompt, model, generation parameters, checksum, dimensions, alt text, licensing/source, or lifecycle state.
-- URLs are embedded in world metadata or browser storage; there is no reverse relationship from a file to the content that uses it.
-- Replacement and deletion can orphan files or delete a file still referenced elsewhere.
-- Synchronous filesystem reads/writes and a local volume do not support multiple backend replicas or durable cloud deployment.
+- User uploads and generated 2D/3D artwork are stored as workspace-scoped Payload Media records with bytes in private S3-compatible storage. Browser access is proxied through NestJS.
+- Media records carry workspace ownership, purpose, tags, alt text, and optional generation provider/model/prompt metadata.
+- Stable application URLs identify Payload media records and are resolved only through the authenticated NestJS gateway.
+- Filename-and-size duplicate checks are scoped by workspace and purpose before upload.
+- World metadata and browser caches still store media URLs rather than relationship IDs; full structured-content migration remains separate work.
 - Legacy `data:` images may still exist in browser storage and are migrated only opportunistically when the user opens a world.
 
 ### 3.3 Consequences
 
-The migration inventory must include PostgreSQL, LevelGraph relationships, `backend/data/uploads`, and discoverable client-side `localStorage`. A server-side migration alone cannot recover browser-only content from users' devices. The application needs a temporary authenticated browser import flow before removing legacy storage.
+The legacy `backend/data/uploads` references in PostgreSQL were migrated through the checked-in idempotent media importer. Discoverable client-side `localStorage` remains a separate inventory concern because a server-side migration cannot recover browser-only content from users' devices.
 
 ## 4. Evaluation method
 

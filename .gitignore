@@ -5,10 +5,13 @@ dist
 .env.local
 .env.*.local
 docker-compose.local.yml
+docker-compose.override.yml
 *.tsbuildinfo
 apps/backend/data/uploads/
 apps/backend/data/levelgraph-db/
 models/*.gguf
+apps/*/certs/
+apps/certs/
 
 # pnpm / turbo
 .turbo

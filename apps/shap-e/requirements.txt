@@ -1,0 +1,7 @@
+fastapi==0.115.14
+numpy<2
+python-multipart==0.0.20
+PyYAML==6.0.2
+uvicorn==0.34.3
+trimesh==4.4.9
+shap-e @ git+https://github.com/openai/shap-e.git@50131012ee11c9d2617f3886c10f000d3c7a3b43

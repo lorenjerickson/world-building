@@ -62,8 +62,15 @@ pnpm run dev
 
 This starts PostgreSQL and the private CMS dependencies through Docker, then
 runs the three application development servers through Turbo. The UI is at
-`http://localhost:3000`, Payload is loopback-only at `http://127.0.0.1:3100`,
-and NestJS is at `http://localhost:8000`.
+`https://local.web.wanderlust-vtt.com:8443`, Payload is at
+`https://local.cms.wanderlust-vtt.com:3100`, and NestJS is at
+`https://local.api.wanderlust-vtt.com:8444`. These processes use the
+development certificates under `apps/frontend/certs`, `apps/backend/certs`,
+and `apps/certs`, respectively. These machine-local certificates and private
+keys are ignored by Git. Keep the three custom host names mapped to loopback in
+the host machine's hosts file.
+If `DB_PORT` overrides PostgreSQL's published port, the root development and
+migration scripts propagate that value to the host-run NestJS process.
 
 ### Local Payload admin access
 
@@ -86,15 +93,24 @@ pnpm --filter @wanderlust-vtt/cms admin:local
 pnpm --filter @wanderlust-vtt/cms dev
 ```
 
-Open `http://127.0.0.1:3100/admin` and sign in with those local credentials.
+Open `https://local.cms.wanderlust-vtt.com:3100/admin` and sign in with those
+local credentials.
+Authenticated application users can also open this private operator interface
+from the **Content** item in the main navigation. The application opens
+`/content` in a new tab, obtains a 30-second single-use handoff from NestJS, and
+exchanges it for a normal Payload admin session. Payload still enforces the
+mapped user's admin role. `CMS_ADMIN_URL` is resolved on the server and is not
+embedded in the client bundle. Production must
+set this variable to an HTTPS VPN- or identity-aware-proxy-protected admin URL.
 The mode is ignored when `NODE_ENV=production`, and Docker Compose explicitly
 forces it off. Do not publish port 3100 or put these credentials in a tracked
 environment file.
 
-The preparation step stops only the frontend, backend, and CMS application
-containers from a previous full Compose run. It does not remove containers,
-images, networks, databases, storage, or volumes. The two local proxy containers
-publish loopback access without changing or recreating the internal CMS network.
+The preparation step stops only the frontend, backend, backend TLS edge, and CMS
+application containers from a previous full Compose run. It does not remove
+containers, images, networks, databases, storage, or volumes. The two local
+proxy containers publish loopback access without changing or recreating the
+internal CMS network.
 
 ## Docker Compose
 
@@ -105,7 +121,31 @@ docker compose up --build
 Compose loads the same app-owned env files. It overrides only URLs and model
 paths that differ on the container network. Payload, its PostgreSQL database,
 and S3-compatible storage remain unpublished on the internal `cms_private`
-network; only NestJS can reach Payload.
+network; only NestJS can reach Payload. The frontend is published with TLS at
+`https://local.web.wanderlust-vtt.com:8443`, and an nginx TLS edge publishes
+the API at `https://local.api.wanderlust-vtt.com:8444`. Behind that edge,
+containers continue to use the `backend:8000` and `cms:3000` service aliases
+over their private Docker networks.
+
+### Legacy artwork migration
+
+The runtime no longer mounts or serves `backend/data/uploads`. Before removing a
+legacy deployment's upload volume, run the idempotent importer with the volume
+mounted read-only into the current backend image:
+
+```sh
+docker compose run --rm --no-deps \
+  -v world-building_uploads_data:/app/apps/backend/data/uploads:ro \
+  -e LEGACY_MEDIA_AUTH0_SUBJECT \
+  -e LEGACY_MEDIA_EMAIL \
+  backend pnpm run migrate:legacy-media
+```
+
+Set `LEGACY_MEDIA_DRY_RUN=true` for the inventory-only pass. The importer copies
+referenced 2D and 3D files into workspace-scoped Payload Media, updates the
+PostgreSQL world metadata only after successful uploads, and safely returns zero
+changes when rerun. Keep the detached volume until the migrated objects and
+application references have been backed up and verified.
 
 ## API pathing convention
 

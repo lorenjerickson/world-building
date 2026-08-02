@@ -10,7 +10,7 @@ disposition: unknown
 
 | Field | Value |
 | --- | --- |
-| Status | Foundation implemented; content migration pending |
+| Status | Foundation implemented; legacy artwork migrated |
 | Implemented | 2026-07-14 |
 | CMS runtime | Payload 3.86.0, Next.js 16.2.10, Node.js 24 |
 | Structured store | Dedicated PostgreSQL 17 database |
@@ -107,12 +107,12 @@ npm run build
 
 ## Remaining migration work
 
-This change establishes the Phase 1 service boundary; it does not move production content. Follow-up work must:
+The service boundary and server-side legacy artwork migration are complete. Follow-up work must:
 
 - expand the model to campaigns, sessions, organizations, events, items, documents, tags, and generation records with reviewed migrations;
 - implement create/update/media methods and contract tests on `ContentRepository`;
 - route content APIs and generation persistence through the repository behind a feature flag;
-- inventory and idempotently migrate existing PostgreSQL, upload, browser-local, and LevelGraph content;
+- inventory and idempotently migrate the remaining structured PostgreSQL, browser-local, and LevelGraph content;
 - add MIME sniffing, upload limits, quarantine/virus scanning, checksums, lifecycle processing, backups, restore tests, and object reconciliation; and
 - replace the static internal token with a short-lived signed assertion or mutually authenticated service transport.
 

@@ -6,6 +6,7 @@ import * as migration_20260715_142221_phase2_definition_types from './20260715_1
 import * as migration_20260720_013818_phase1_encounter_maps from './20260720_013818_phase1_encounter_maps';
 import * as migration_20260720_013916_phase1_encounter_finalization_idempotency from './20260720_013916_phase1_encounter_finalization_idempotency';
 import * as migration_20260726_205559_add_core_content_collections from './20260726_205559_add_core_content_collections';
+import * as migration_20260801_155255_trait_media_upload_types from './20260801_155255_trait_media_upload_types';
 
 export const migrations = [
   {
@@ -46,6 +47,11 @@ export const migrations = [
   {
     up: migration_20260726_205559_add_core_content_collections.up,
     down: migration_20260726_205559_add_core_content_collections.down,
-    name: '20260726_205559_add_core_content_collections'
+    name: '20260726_205559_add_core_content_collections',
+  },
+  {
+    up: migration_20260801_155255_trait_media_upload_types.up,
+    down: migration_20260801_155255_trait_media_upload_types.down,
+    name: '20260801_155255_trait_media_upload_types',
   },
 ];

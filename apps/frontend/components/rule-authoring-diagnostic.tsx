@@ -16,10 +16,12 @@ export function RuleAuthoringDiagnosticItem({
   definitions,
   diagnostic,
   ruleSetId,
+  showPath = false,
 }: {
   definitions: RuleDefinitionResource[];
   diagnostic: AuthoringDiagnostic;
   ruleSetId: number;
+  showPath?: boolean;
 }) {
   const definition = definitions.find((candidate) =>
     candidate.externalId === diagnostic.definitionExternalId)
@@ -44,6 +46,7 @@ export function RuleAuthoringDiagnosticItem({
           ? ` ${conciseMessage}`
           : `: ${diagnostic.message}`
         : diagnostic.message}
+      {showPath ? <span>{diagnostic.path}</span> : null}
     </li>
   );
 }
